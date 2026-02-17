@@ -1,5 +1,10 @@
 Python conversion of the C++ simulation sources in ../src.
 
+Starter simulator (recommended first run):
+- atom_simulator_app.py (Tkinter-based, no external packages needed)
+- Includes material presets, velocity assignment, runtime physics controls, and in-frame GUI panel
+- If Tk runtime libs are missing on your system, it auto-falls back to console mode (no crash)
+
 Converted entry points:
 - atom.py                      <- src/atom.cpp
 - atom_realtime.py             <- src/atom_realtime.cpp
@@ -18,6 +23,8 @@ Install deps:
 - pip install -r requirements.txt
 
 Run examples:
+- python atom_simulator_app.py
+- python atom_simulator_app.py --self-test
 - python atom.py
 - python atom_realtime.py
 - python atom_raytracer.py
