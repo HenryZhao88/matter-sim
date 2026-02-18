@@ -8,10 +8,12 @@ from dataclasses import dataclass
 try:
     import tkinter as tk
     from tkinter import ttk
+    from tkinter import messagebox
     TK_AVAILABLE = True
 except Exception:
     tk = None  # type: ignore[assignment]
     ttk = None  # type: ignore[assignment]
+    messagebox = None  # type: ignore[assignment]
     TK_AVAILABLE = False
 
 # -----------------------------
@@ -34,6 +36,15 @@ MATERIALS: dict[str, Material] = {
     "neutron": Material("neutron", mass=1839.0, charge=0.0, radius=7.0, color="#b5b5b5"),
     "ion+": Material("ion+", mass=4000.0, charge=+2.0, radius=9.0, color="#ffb347"),
     "ion-": Material("ion-", mass=4000.0, charge=-2.0, radius=9.0, color="#8f7dff"),
+    "aluminum": Material("aluminum", mass=26.98, charge=0.0, radius=2.2, color="#d8dce4"),
+}
+
+
+SCALE_PROFILES: dict[str, dict[str, float]] = {
+    "macro": {"render_radius": 1.0, "distance": 1.0, "velocity": 1.0},
+    "micro": {"render_radius": 0.55, "distance": 0.7, "velocity": 0.8},
+    "nano": {"render_radius": 0.35, "distance": 0.5, "velocity": 0.65},
+    "atomic": {"render_radius": 0.2, "distance": 0.35, "velocity": 0.45},
 }
 
 
@@ -58,6 +69,14 @@ class Particle:
         return self.material.radius
 
 
+@dataclass
+class Bond:
+    i: int
+    j: int
+    rest_length: float
+    k: float
+
+
 class PhysicsWorld:
     def __init__(self, world_w: int, world_h: int) -> None:
         self.world_w = world_w
@@ -70,39 +89,63 @@ class PhysicsWorld:
         self.repulsion_k = 16000.0
         self.drag = 0.9995
         self.max_speed = 450.0
+        self.bonds: list[Bond] = []
+        self.last_note: str = ""
+
+        # Mode-A approximation controls
+        self.mode_a_pair_samples = 48
+        self.mode_a_bond_factor = 0.35
 
     def clear_all(self) -> None:
         self.particles.clear()
+        self.bonds.clear()
 
-    def load_preset(self, name: str) -> None:
+    def load_preset(self, name: str, distance_scale: float = 1.0, velocity_scale: float = 1.0) -> None:
         self.clear_all()
+        self.last_note = ""
 
         cx = self.world_w * 0.5
         cy = self.world_h * 0.5
 
         if name == "Hydrogen":
             self.particles.append(Particle(cx, cy, 0.0, 0.0, MATERIALS["proton"]))
-            self.particles.append(Particle(cx + 90.0, cy, 0.0, -145.0, MATERIALS["electron"]))
+            self.particles.append(Particle(cx + 90.0 * distance_scale, cy, 0.0, -145.0 * velocity_scale, MATERIALS["electron"]))
 
         elif name == "Helium":
-            self.particles.append(Particle(cx - 4.0, cy, 0.0, 0.0, MATERIALS["proton"]))
-            self.particles.append(Particle(cx + 4.0, cy, 0.0, 0.0, MATERIALS["proton"]))
-            self.particles.append(Particle(cx + 70.0, cy, 0.0, -150.0, MATERIALS["electron"]))
-            self.particles.append(Particle(cx - 85.0, cy, 0.0, 130.0, MATERIALS["electron"]))
+            self.particles.append(Particle(cx - 4.0 * distance_scale, cy, 0.0, 0.0, MATERIALS["proton"]))
+            self.particles.append(Particle(cx + 4.0 * distance_scale, cy, 0.0, 0.0, MATERIALS["proton"]))
+            self.particles.append(Particle(cx + 70.0 * distance_scale, cy, 0.0, -150.0 * velocity_scale, MATERIALS["electron"]))
+            self.particles.append(Particle(cx - 85.0 * distance_scale, cy, 0.0, 130.0 * velocity_scale, MATERIALS["electron"]))
 
         elif name == "Carbon":
             for i in range(6):
                 a = 2 * math.pi * i / 6
-                self.particles.append(Particle(cx + 8 * math.cos(a), cy + 8 * math.sin(a), 0.0, 0.0, MATERIALS["proton"]))
+                self.particles.append(Particle(cx + 8 * distance_scale * math.cos(a), cy + 8 * distance_scale * math.sin(a), 0.0, 0.0, MATERIALS["proton"]))
             for i in range(6):
                 a = 2 * math.pi * i / 6
-                self.particles.append(Particle(cx + 15 * math.cos(a), cy + 15 * math.sin(a), 0.0, 0.0, MATERIALS["neutron"]))
+                self.particles.append(Particle(cx + 15 * distance_scale * math.cos(a), cy + 15 * distance_scale * math.sin(a), 0.0, 0.0, MATERIALS["neutron"]))
             for i in range(2):
                 a = 2 * math.pi * i / 2
-                self.particles.append(Particle(cx + 80 * math.cos(a), cy + 80 * math.sin(a), -140 * math.sin(a), 140 * math.cos(a), MATERIALS["electron"]))
+                self.particles.append(
+                    Particle(
+                        cx + 80 * distance_scale * math.cos(a),
+                        cy + 80 * distance_scale * math.sin(a),
+                        -140 * velocity_scale * math.sin(a),
+                        140 * velocity_scale * math.cos(a),
+                        MATERIALS["electron"],
+                    )
+                )
             for i in range(4):
                 a = 2 * math.pi * i / 4 + 0.3
-                self.particles.append(Particle(cx + 150 * math.cos(a), cy + 150 * math.sin(a), -120 * math.sin(a), 120 * math.cos(a), MATERIALS["electron"]))
+                self.particles.append(
+                    Particle(
+                        cx + 150 * distance_scale * math.cos(a),
+                        cy + 150 * distance_scale * math.sin(a),
+                        -120 * velocity_scale * math.sin(a),
+                        120 * velocity_scale * math.cos(a),
+                        MATERIALS["electron"],
+                    )
+                )
 
         elif name == "Plasma Box":
             for _ in range(80):
@@ -110,11 +153,58 @@ class PhysicsWorld:
                     Particle(
                         random.uniform(150, self.world_w - 150),
                         random.uniform(120, self.world_h - 120),
-                        random.uniform(-60, 60),
-                        random.uniform(-60, 60),
+                        random.uniform(-60, 60) * velocity_scale,
+                        random.uniform(-60, 60) * velocity_scale,
                         MATERIALS["ion+"] if random.random() < 0.5 else MATERIALS["ion-"],
                     )
                 )
+        elif name == "Aluminum Cube (50nm, scaled)":
+            self._load_aluminum_cube_50nm_scaled()
+
+    def _load_aluminum_cube_50nm_scaled(self) -> None:
+        self.clear_all()
+
+        # Real 50nm^3 Al statistics (metadata + projected 2D crystalline render)
+        density_kg_m3 = 2700.0
+        molar_mass_kg = 0.0269815
+        avogadro = 6.02214076e23
+        volume_m3 = (50e-9) ** 3
+        moles = density_kg_m3 * volume_m3 / molar_mass_kg
+        real_atom_count = int(moles * avogadro)
+
+        # Projected crystalline lattice chunk for rendering in 2D.
+        # Large enough to stress-test interactions while still drawable on canvas.
+        nx, ny = 96, 96
+        spacing = 8.4
+        x0 = (self.world_w - (nx - 1) * spacing) * 0.5
+        y0 = (self.world_h - (ny - 1) * spacing) * 0.5
+
+        for j in range(ny):
+            for i in range(nx):
+                offset = (spacing * 0.5) if (j % 2 == 1) else 0.0
+                x = x0 + i * spacing + offset
+                y = y0 + j * spacing * 0.8660254  # ~sqrt(3)/2 for close-packed projection
+                x += random.uniform(-0.25, 0.25)
+                y += random.uniform(-0.25, 0.25)
+                self.particles.append(Particle(x, y, 0.0, 0.0, MATERIALS["aluminum"]))
+
+        # Bonds: nearest-neighbor links for crystal-like structure.
+        for j in range(ny):
+            for i in range(nx):
+                idx = j * nx + i
+                if i + 1 < nx:
+                    self.bonds.append(Bond(idx, j * nx + (i + 1), spacing, 35.0))
+                if j + 1 < ny:
+                    self.bonds.append(Bond(idx, (j + 1) * nx + i, spacing * 0.8660254, 35.0))
+                if j + 1 < ny and i + (1 if j % 2 == 0 else -1) >= 0 and i + (1 if j % 2 == 0 else -1) < nx:
+                    ni = i + (1 if j % 2 == 0 else -1)
+                    self.bonds.append(Bond(idx, (j + 1) * nx + ni, spacing, 35.0))
+
+        downsample_factor = real_atom_count / max(1, len(self.particles))
+        self.last_note = (
+            f"50nm^3 Al contains ~{real_atom_count:.3e} atoms. "
+            f"Showing {len(self.particles)} atoms (downsample ~{downsample_factor:.3e}x) with lattice bonds."
+        )
 
     def spawn_random(self, material_name: str, count: int) -> None:
         mat = MATERIALS[material_name]
@@ -129,7 +219,13 @@ class PhysicsWorld:
                 )
             )
 
-    def step(self) -> None:
+    def step(self, mode: str = "B") -> None:
+        if mode.upper() == "A":
+            self._step_approximate()
+        else:
+            self._step_exact()
+
+    def _step_exact(self) -> None:
         if len(self.particles) <= 1:
             return
 
@@ -162,6 +258,87 @@ class PhysicsWorld:
                 fx[j] -= fx_i
                 fy[j] -= fy_i
 
+        # Bond spring forces for crystalline structures.
+        for b in self.bonds:
+            if b.i < 0 or b.j < 0 or b.i >= len(self.particles) or b.j >= len(self.particles):
+                continue
+            pi = self.particles[b.i]
+            pj = self.particles[b.j]
+            dx = pj.x - pi.x
+            dy = pj.y - pi.y
+            r = math.hypot(dx, dy)
+            if r < 1e-9:
+                continue
+            nx = dx / r
+            ny = dy / r
+            extension = r - b.rest_length
+            f = b.k * extension
+            fx[b.i] += f * nx
+            fy[b.i] += f * ny
+            fx[b.j] -= f * nx
+            fy[b.j] -= f * ny
+
+        self._integrate_forces(fx, fy)
+
+    def _step_approximate(self) -> None:
+        if len(self.particles) <= 1:
+            return
+
+        n = len(self.particles)
+        fx = [0.0] * n
+        fy = [0.0] * n
+
+        samples = max(4, min(self.mode_a_pair_samples, n - 1))
+        stride = max(1, (n // samples) + 1)
+        scale_back = n / float(samples)
+
+        # Approximate interactions: each particle samples only a subset of partners.
+        for i in range(n):
+            pi = self.particles[i]
+            for s in range(1, samples + 1):
+                j = (i + s * stride) % n
+                if j == i:
+                    continue
+                pj = self.particles[j]
+
+                dx = pj.x - pi.x
+                dy = pj.y - pi.y
+                r2 = dx * dx + dy * dy + self.softening
+                r = math.sqrt(r2)
+                nx = dx / r
+                ny = dy / r
+
+                f_c = self.k_coulomb * pi.charge * pj.charge / r2
+                overlap = (pi.radius + pj.radius) - r
+                f_rep = self.repulsion_k * overlap if overlap > 0 else 0.0
+                f_total = (f_c - f_rep) * scale_back
+
+                fx[i] += f_total * nx
+                fy[i] += f_total * ny
+
+        # Keep bonded structure but soften in mode A.
+        for b in self.bonds:
+            if b.i < 0 or b.j < 0 or b.i >= len(self.particles) or b.j >= len(self.particles):
+                continue
+            pi = self.particles[b.i]
+            pj = self.particles[b.j]
+            dx = pj.x - pi.x
+            dy = pj.y - pi.y
+            r = math.hypot(dx, dy)
+            if r < 1e-9:
+                continue
+            nx = dx / r
+            ny = dy / r
+            extension = r - b.rest_length
+            f = b.k * self.mode_a_bond_factor * extension
+            fx[b.i] += f * nx
+            fy[b.i] += f * ny
+            fx[b.j] -= f * nx
+            fy[b.j] -= f * ny
+
+        self._integrate_forces(fx, fy)
+
+    def _integrate_forces(self, fx: list[float], fy: list[float]) -> None:
         for i, p in enumerate(self.particles):
             ax = fx[i] / max(1e-9, p.mass)
             ay = fy[i] / max(1e-9, p.mass)
@@ -199,8 +376,8 @@ class AtomSimulatorApp:
             raise RuntimeError("Tk is unavailable")
 
         self.root = tk.Tk()
-        self.root.title("Matter Sim - Atom Simulator (starter)")
-        self.root.geometry("1400x900")
+        self.root.title("Matter Sim - Physics World")
+        self.root.geometry("1020x920")
 
         self.world_w = 1000
         self.world_h = 860
@@ -211,26 +388,106 @@ class AtomSimulatorApp:
         self.drag_start: tuple[float, float] | None = None
         self.drag_current: tuple[float, float] | None = None
 
+        self.command_specs: dict[str, dict[str, str]] = {
+            "help": {
+                "usage": "help [query]",
+                "desc": "Show all commands or help for matching commands.",
+            },
+            "spawn": {
+                "usage": "spawn <material> <count>",
+                "desc": "Spawn random particles using a material. Materials: electron, proton, neutron, ion+, ion-, aluminum",
+            },
+            "preset": {
+                "usage": "preset <Hydrogen|Helium|Carbon|Plasma Box|Aluminum Cube (50nm, scaled)>",
+                "desc": "Load a full scene preset.",
+            },
+            "scale": {
+                "usage": "scale <macro|micro|nano|atomic>",
+                "desc": "Set rendering/spacing scale profile.",
+            },
+            "mode": {
+                "usage": "mode <A|B|status>",
+                "desc": "Switch simulation mode. A=approximate ray-traced proxy, B=full equations.",
+            },
+            "step": {
+                "usage": "step [n]",
+                "desc": "Advance simulation by n steps (default 1).",
+            },
+            "pause": {
+                "usage": "pause",
+                "desc": "Pause continuous simulation.",
+            },
+            "run": {
+                "usage": "run",
+                "desc": "Resume continuous simulation.",
+            },
+            "clear": {
+                "usage": "clear",
+                "desc": "Delete all particles.",
+            },
+            "list": {
+                "usage": "list [count]",
+                "desc": "Log first N particles (default 12).",
+            },
+            "setv": {
+                "usage": "setv <idx> <vx> <vy>",
+                "desc": "Set velocity for one particle index.",
+            },
+            "physics": {
+                "usage": "physics <k|rep|drag|dt> <value>",
+                "desc": "Set physics parameter directly.",
+            },
+            "emergency": {
+                "usage": "emergency <on|off|status>",
+                "desc": "Configure emergency pause warning when interaction count is near crash territory.",
+            },
+        }
+
+        self.sim_mode_var = tk.StringVar(value="A")
+        self.scale_profile_var = tk.StringVar(value="micro")
+        self.render_radius_scale = SCALE_PROFILES["micro"]["render_radius"]
+        self.emergency_pause_enabled = True
+        self.emergency_suppress = False
+        self.emergency_grace_ticks = 0
+        self.emergency_pair_threshold = 30_000_000
+
         self._build_ui()
+        self._build_command_center()
         self._bind_events()
         self.world.load_preset("Hydrogen")
         self.selected_index = 0 if self.world.particles else None
+
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self.command_window.protocol("WM_DELETE_WINDOW", self._on_close)
         self._tick()
 
     # -----------------------------
     # UI
     # -----------------------------
     def _build_ui(self) -> None:
-        main = ttk.Frame(self.root)
+        main = ttk.Frame(self.root, padding=8)
         main.pack(fill=tk.BOTH, expand=True)
 
+        ttk.Label(main, text="Physics World", font=("TkDefaultFont", 12, "bold")).pack(anchor="w", pady=(0, 4))
         self.canvas = tk.Canvas(main, width=self.world_w, height=self.world_h, bg="#0b0f14", highlightthickness=0)
-        self.canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.canvas.pack(fill=tk.BOTH, expand=True)
 
-        panel = ttk.Frame(main, padding=10)
-        panel.pack(side=tk.RIGHT, fill=tk.Y)
+    def _build_command_center(self) -> None:
+        self.command_window = tk.Toplevel(self.root)
+        self.command_window.title("Matter Sim - Command Center")
+        self.command_window.geometry("540x920")
+
+        panel = ttk.Frame(self.command_window, padding=10)
+        panel.pack(fill=tk.BOTH, expand=True)
 
         ttk.Label(panel, text="Simulation", font=("TkDefaultFont", 13, "bold")).pack(anchor="w", pady=(0, 6))
+
+        mode_row = ttk.Frame(panel)
+        mode_row.pack(fill=tk.X, pady=(0, 4))
+        ttk.Label(mode_row, text="Mode").pack(side=tk.LEFT)
+        self.mode_combo = ttk.Combobox(mode_row, textvariable=self.sim_mode_var, values=["A", "B"], state="readonly", width=8)
+        self.mode_combo.pack(side=tk.LEFT, padx=6)
+        self.mode_combo.bind("<<ComboboxSelected>>", lambda _e: self.apply_sim_mode(self.sim_mode_var.get()))
 
         self.run_btn = ttk.Button(panel, text="Pause", command=self.toggle_running)
         self.run_btn.pack(fill=tk.X, pady=2)
@@ -242,10 +499,15 @@ class AtomSimulatorApp:
 
         ttk.Label(panel, text="Presets").pack(anchor="w")
         self.preset_var = tk.StringVar(value="Hydrogen")
-        preset_values = ["Hydrogen", "Helium", "Carbon", "Plasma Box"]
+        preset_values = ["Hydrogen", "Helium", "Carbon", "Plasma Box", "Aluminum Cube (50nm, scaled)"]
         self.preset_combo = ttk.Combobox(panel, textvariable=self.preset_var, values=preset_values, state="readonly")
         self.preset_combo.pack(fill=tk.X, pady=2)
         ttk.Button(panel, text="Load Preset", command=lambda: self.load_preset(self.preset_var.get())).pack(fill=tk.X, pady=2)
+
+        ttk.Label(panel, text="Scale Profile").pack(anchor="w", pady=(6, 0))
+        self.scale_combo = ttk.Combobox(panel, textvariable=self.scale_profile_var, values=list(SCALE_PROFILES.keys()), state="readonly")
+        self.scale_combo.pack(fill=tk.X, pady=2)
+        self.scale_combo.bind("<<ComboboxSelected>>", lambda _e: self.apply_scale_profile(self.scale_profile_var.get()))
 
         ttk.Separator(panel).pack(fill=tk.X, pady=8)
 
@@ -290,6 +552,48 @@ class AtomSimulatorApp:
         self.info_var = tk.StringVar(value="Ready")
         ttk.Label(panel, textvariable=self.info_var, wraplength=330, foreground="#225").pack(fill=tk.X, pady=(8, 0))
 
+        ttk.Separator(panel).pack(fill=tk.X, pady=8)
+        ttk.Label(panel, text="Command Console", font=("TkDefaultFont", 12, "bold")).pack(anchor="w")
+
+        cmd_row = ttk.Frame(panel)
+        cmd_row.pack(fill=tk.X, pady=(4, 2))
+        self.command_var = tk.StringVar(value="spawn electron 10")
+        self.command_entry = ttk.Entry(cmd_row, textvariable=self.command_var)
+        self.command_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.command_entry.bind("<Return>", lambda _e: self.execute_command())
+        ttk.Button(cmd_row, text="Run", command=self.execute_command).pack(side=tk.LEFT, padx=4)
+
+        help_row = ttk.Frame(panel)
+        help_row.pack(fill=tk.X, pady=(2, 2))
+        ttk.Label(help_row, text="Help Search:").pack(side=tk.LEFT)
+        self.help_query_var = tk.StringVar(value="")
+        help_entry = ttk.Entry(help_row, textvariable=self.help_query_var, width=18)
+        help_entry.pack(side=tk.LEFT, padx=4, fill=tk.X, expand=True)
+        help_entry.bind("<KeyRelease>", lambda _e: self.refresh_help_list())
+
+        list_and_desc = ttk.Frame(panel)
+        list_and_desc.pack(fill=tk.BOTH, expand=True, pady=(2, 2))
+
+        self.help_list = tk.Listbox(list_and_desc, height=8)
+        self.help_list.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        self.help_list.bind("<<ListboxSelect>>", lambda _e: self.show_selected_help())
+
+        scroll_help = ttk.Scrollbar(list_and_desc, orient=tk.VERTICAL, command=self.help_list.yview)
+        scroll_help.pack(side=tk.LEFT, fill=tk.Y)
+        self.help_list.configure(yscrollcommand=scroll_help.set)
+
+        self.help_text = tk.Text(panel, height=6, wrap=tk.WORD)
+        self.help_text.pack(fill=tk.X)
+        self.help_text.configure(state=tk.DISABLED)
+
+        ttk.Label(panel, text="Output Log:").pack(anchor="w", pady=(6, 0))
+        self.output_text = tk.Text(panel, height=10, wrap=tk.WORD)
+        self.output_text.pack(fill=tk.BOTH, expand=True)
+        self.output_text.configure(state=tk.DISABLED)
+
+        self.refresh_help_list()
+        self._log("Command center ready. Type a command and press Enter.")
+
     def _add_slider(self, panel: ttk.Frame, label: str, var: tk.DoubleVar, mn: float, mx: float) -> None:
         ttk.Label(panel, text=label).pack(anchor="w")
         scale = ttk.Scale(panel, from_=mn, to=mx, variable=var)
@@ -306,11 +610,36 @@ class AtomSimulatorApp:
     # -----------------------------
     def clear_all(self) -> None:
         self.world.particles.clear()
+        self.world.bonds.clear()
         self.selected_index = None
 
+    def apply_scale_profile(self, profile_name: str) -> None:
+        if profile_name not in SCALE_PROFILES:
+            self._log(f"error: unknown scale profile {profile_name}")
+            return
+        cfg = SCALE_PROFILES[profile_name]
+        self.render_radius_scale = cfg["render_radius"]
+        self._log(
+            f"scale={profile_name} render_radius={cfg['render_radius']} distance={cfg['distance']} velocity={cfg['velocity']}"
+        )
+
+    def apply_sim_mode(self, mode: str) -> None:
+        m = mode.upper()
+        if m not in {"A", "B"}:
+            self._log("error: mode must be A or B")
+            return
+        self.sim_mode_var.set(m)
+        if m == "A":
+            self._log("mode=A (approximate + ray-traced proxy rendering)")
+        else:
+            self._log("mode=B (full equations and full render)")
+
     def load_preset(self, name: str) -> None:
-        self.world.load_preset(name)
+        cfg = SCALE_PROFILES.get(self.scale_profile_var.get(), SCALE_PROFILES["micro"])
+        self.world.load_preset(name, distance_scale=cfg["distance"], velocity_scale=cfg["velocity"])
         self.selected_index = 0 if self.world.particles else None
+        if self.world.last_note:
+            self._log(self.world.last_note)
 
     def reload_preset(self) -> None:
         self.load_preset(self.preset_var.get())
@@ -323,11 +652,12 @@ class AtomSimulatorApp:
                 Particle(
                     random.uniform(50, self.world_w - 50),
                     random.uniform(50, self.world_h - 50),
-                    random.uniform(-100, 100),
-                    random.uniform(-100, 100),
+                    random.uniform(-100, 100) * SCALE_PROFILES[self.scale_profile_var.get()]["velocity"],
+                    random.uniform(-100, 100) * SCALE_PROFILES[self.scale_profile_var.get()]["velocity"],
                     mat,
                 )
             )
+        self._log(f"spawned {count} {mat.name}")
 
     # -----------------------------
     # Interaction
@@ -383,6 +713,7 @@ class AtomSimulatorApp:
         p = self.world.particles[self.selected_index]
         p.vx = float(self.vx_var.get())
         p.vy = float(self.vy_var.get())
+        self._log(f"setv idx={self.selected_index} vx={p.vx:.3f} vy={p.vy:.3f}")
 
     # -----------------------------
     # Physics
@@ -394,18 +725,25 @@ class AtomSimulatorApp:
     def toggle_running(self) -> None:
         self.running = not self.running
         self.run_btn.configure(text="Pause" if self.running else "Run")
+        self._log("running" if self.running else "paused")
 
     def _update_physics(self) -> None:
         self.world.k_coulomb = float(self.k_var.get())
         self.world.repulsion_k = float(self.rep_var.get())
         self.world.drag = float(self.drag_var.get())
         self.world.dt = float(self.dt_var.get())
-        self.world.step()
+        self.world.step(self.sim_mode_var.get())
 
     # -----------------------------
     # Rendering
     # -----------------------------
     def _draw(self) -> None:
+        if self.sim_mode_var.get().upper() == "A":
+            self._draw_mode_a()
+        else:
+            self._draw_mode_b()
+
+    def _draw_mode_b(self) -> None:
         self.canvas.delete("all")
 
         # background grid
@@ -415,8 +753,16 @@ class AtomSimulatorApp:
         for y in range(0, self.world_h, grid_step):
             self.canvas.create_line(0, y, self.world_w, y, fill="#101827")
 
+        # bonds
+        for b in self.world.bonds:
+            if b.i < 0 or b.j < 0 or b.i >= len(self.world.particles) or b.j >= len(self.world.particles):
+                continue
+            p1 = self.world.particles[b.i]
+            p2 = self.world.particles[b.j]
+            self.canvas.create_line(p1.x, p1.y, p2.x, p2.y, fill="#4f5f7a")
+
         for i, p in enumerate(self.world.particles):
-            r = p.radius
+            r = max(1.0, p.radius * self.render_radius_scale)
             self.canvas.create_oval(p.x - r, p.y - r, p.x + r, p.y + r, fill=p.material.color, outline="")
 
             if i == self.selected_index:
@@ -430,15 +776,334 @@ class AtomSimulatorApp:
             self.canvas.create_line(sx, sy, cx, cy, fill="#ffffff", width=2, arrow=tk.LAST)
 
         self.info_var.set(
-            f"Particles: {len(self.world.particles)} | Running: {self.running} | "
+            f"Mode: B | Particles: {len(self.world.particles)} Bonds: {len(self.world.bonds)} | Running: {self.running} | "
+            f"Selected: {self.selected_index if self.selected_index is not None else 'None'}"
+        )
+
+    def _draw_mode_a(self) -> None:
+        self.canvas.delete("all")
+
+        # Background + coarse ray-marched density proxy.
+        self.canvas.create_rectangle(0, 0, self.world_w, self.world_h, fill="#090c12", outline="")
+
+        cell = 14
+        gw = (self.world_w // cell) + 1
+        gh = (self.world_h // cell) + 1
+        bins = [0.0] * (gw * gh)
+
+        for p in self.world.particles:
+            ix = int(p.x // cell)
+            iy = int(p.y // cell)
+            if 0 <= ix < gw and 0 <= iy < gh:
+                idx = iy * gw + ix
+                speed = math.hypot(p.vx, p.vy)
+                bins[idx] += 1.0 + min(3.0, speed / 130.0)
+
+        max_bin = max(bins) if bins else 0.0
+        if max_bin > 0.0:
+            for iy in range(gh):
+                y0 = iy * cell
+                y1 = y0 + cell
+                for ix in range(gw):
+                    v = bins[iy * gw + ix]
+                    if v <= 0.0:
+                        continue
+                    t = min(1.0, v / max_bin)
+                    r = int(20 + 220 * t)
+                    g = int(40 + 150 * (t ** 0.6))
+                    b = int(90 + 120 * (1.0 - t * 0.5))
+                    color = f"#{r:02x}{g:02x}{b:02x}"
+                    x0 = ix * cell
+                    x1 = x0 + cell
+                    self.canvas.create_rectangle(x0, y0, x1, y1, fill=color, outline="")
+
+        # Bonds sampled for speed.
+        bond_stride = max(1, len(self.world.bonds) // 3000)
+        for bi in range(0, len(self.world.bonds), bond_stride):
+            b = self.world.bonds[bi]
+            if b.i < 0 or b.j < 0 or b.i >= len(self.world.particles) or b.j >= len(self.world.particles):
+                continue
+            p1 = self.world.particles[b.i]
+            p2 = self.world.particles[b.j]
+            self.canvas.create_line(p1.x, p1.y, p2.x, p2.y, fill="#5f7aa0")
+
+        # Particle sample with glow and ray-like velocity streak.
+        n = len(self.world.particles)
+        stride = max(1, n // 3500)
+        for i in range(0, n, stride):
+            p = self.world.particles[i]
+            r = max(1.0, p.radius * self.render_radius_scale * 0.85)
+            speed = math.hypot(p.vx, p.vy)
+            trail = min(16.0, speed * 0.06)
+            if speed > 1e-4:
+                tx = p.x - (p.vx / speed) * trail
+                ty = p.y - (p.vy / speed) * trail
+                self.canvas.create_line(p.x, p.y, tx, ty, fill="#dfe8ff")
+
+            self.canvas.create_oval(p.x - (r + 2), p.y - (r + 2), p.x + (r + 2), p.y + (r + 2), outline="#7aa6ff")
+            self.canvas.create_oval(p.x - r, p.y - r, p.x + r, p.y + r, fill=p.material.color, outline="")
+
+            if i == self.selected_index:
+                rr = r + 5
+                self.canvas.create_oval(p.x - rr, p.y - rr, p.x + rr, p.y + rr, outline="#ffffff")
+
+        if self.drag_start and self.drag_current:
+            sx, sy = self.drag_start
+            cx, cy = self.drag_current
+            self.canvas.create_line(sx, sy, cx, cy, fill="#ffffff", width=2, arrow=tk.LAST)
+
+        self.info_var.set(
+            f"Mode: A | Particles: {len(self.world.particles)} Bonds: {len(self.world.bonds)} | Running: {self.running} | "
             f"Selected: {self.selected_index if self.selected_index is not None else 'None'}"
         )
 
     def _tick(self) -> None:
-        if self.running:
+        if self.running and self._check_emergency_state():
             self._update_physics()
+        elif self.emergency_grace_ticks > 0:
+            self.emergency_grace_ticks -= 1
         self._draw()
         self.root.after(16, self._tick)
+
+    def _check_emergency_state(self) -> bool:
+        if not self.emergency_pause_enabled or self.emergency_suppress:
+            return True
+        if self.emergency_grace_ticks > 0:
+            self.emergency_grace_ticks -= 1
+            return True
+
+        n = len(self.world.particles)
+        est_pairs = n * (n - 1) // 2
+        if est_pairs < self.emergency_pair_threshold:
+            return True
+
+        self.running = False
+        self.run_btn.configure(text="Run")
+        self._log(
+            f"EMERGENCY: estimated pair interactions={est_pairs:,} (threshold={self.emergency_pair_threshold:,}). Paused."
+        )
+
+        if messagebox is None:
+            return False
+
+        choice = messagebox.askyesnocancel(
+            "Emergency performance warning",
+            "Simulation load is extremely high and a crash/freeze is likely.\n\n"
+            "Yes = Continue now (temporary)\n"
+            "No = Continue and suppress future warnings\n"
+            "Cancel = Stay paused",
+            icon="warning",
+        )
+        if choice is True:
+            self.running = True
+            self.run_btn.configure(text="Pause")
+            self.emergency_grace_ticks = 180
+            self._log("Emergency override: continue temporarily.")
+            return True
+        if choice is False:
+            self.running = True
+            self.run_btn.configure(text="Pause")
+            self.emergency_suppress = True
+            self._log("Emergency warnings suppressed. Continuing at your risk.")
+            return True
+
+        self._log("Emergency pause maintained.")
+        return False
+
+    def _on_close(self) -> None:
+        try:
+            self.command_window.destroy()
+        except Exception:
+            pass
+        try:
+            self.root.destroy()
+        except Exception:
+            pass
+
+    def _log(self, msg: str) -> None:
+        if not hasattr(self, "output_text"):
+            return
+        self.output_text.configure(state=tk.NORMAL)
+        self.output_text.insert(tk.END, msg + "\n")
+        self.output_text.see(tk.END)
+        self.output_text.configure(state=tk.DISABLED)
+
+    def refresh_help_list(self) -> None:
+        q = self.help_query_var.get().strip().lower()
+        names = sorted(self.command_specs.keys())
+        if q:
+            names = [n for n in names if q in n.lower() or q in self.command_specs[n]["usage"].lower() or q in self.command_specs[n]["desc"].lower()]
+        self.help_list.delete(0, tk.END)
+        for n in names:
+            self.help_list.insert(tk.END, n)
+        if names:
+            self.help_list.selection_clear(0, tk.END)
+            self.help_list.selection_set(0)
+            self.show_selected_help()
+        else:
+            self._set_help_text("No commands match your query.")
+
+    def _set_help_text(self, text: str) -> None:
+        self.help_text.configure(state=tk.NORMAL)
+        self.help_text.delete("1.0", tk.END)
+        self.help_text.insert("1.0", text)
+        self.help_text.configure(state=tk.DISABLED)
+
+    def show_selected_help(self) -> None:
+        sel = self.help_list.curselection()
+        if not sel:
+            return
+        cmd = self.help_list.get(sel[0])
+        spec = self.command_specs[cmd]
+        self._set_help_text(f"Command: {cmd}\nUsage: {spec['usage']}\n\n{spec['desc']}")
+
+    def execute_command(self) -> None:
+        raw = self.command_var.get().strip()
+        if not raw:
+            return
+
+        self._log(f"> {raw}")
+        parts = raw.split()
+        op = parts[0].lower()
+
+        try:
+            if op == "help":
+                q = " ".join(parts[1:]).strip().lower() if len(parts) > 1 else ""
+                if not q:
+                    cmds = ", ".join(sorted(self.command_specs.keys()))
+                    self._log(f"commands: {cmds}")
+                else:
+                    matches = [c for c, s in self.command_specs.items() if q in c.lower() or q in s['usage'].lower() or q in s['desc'].lower()]
+                    if matches:
+                        for c in sorted(matches):
+                            s = self.command_specs[c]
+                            self._log(f"{c}: {s['usage']}")
+                    else:
+                        self._log("no matching command")
+
+            elif op == "spawn":
+                if len(parts) != 3:
+                    raise ValueError("usage: spawn <material> <count>")
+                material = parts[1]
+                count = int(parts[2])
+                if material not in MATERIALS:
+                    raise ValueError(f"unknown material: {material}")
+                self.material_var.set(material)
+                self.spawn_count_var.set(count)
+                self.spawn_random()
+
+            elif op == "preset":
+                if len(parts) < 2:
+                    raise ValueError("usage: preset <Hydrogen|Helium|Carbon|Plasma Box|Aluminum Cube (50nm, scaled)>")
+                name = " ".join(parts[1:])
+                self.load_preset(name)
+                self.preset_var.set(name)
+                self._log(f"loaded preset: {name}")
+
+            elif op == "scale":
+                if len(parts) != 2:
+                    raise ValueError("usage: scale <macro|micro|nano|atomic>")
+                profile = parts[1].lower()
+                if profile not in SCALE_PROFILES:
+                    raise ValueError("scale profile must be one of: macro, micro, nano, atomic")
+                self.scale_profile_var.set(profile)
+                self.apply_scale_profile(profile)
+
+            elif op == "mode":
+                if len(parts) != 2:
+                    raise ValueError("usage: mode <A|B|status>")
+                m = parts[1].upper()
+                if m == "STATUS":
+                    self._log(f"mode={self.sim_mode_var.get().upper()}")
+                elif m in {"A", "B"}:
+                    self.apply_sim_mode(m)
+                else:
+                    raise ValueError("usage: mode <A|B|status>")
+
+            elif op == "step":
+                n = int(parts[1]) if len(parts) > 1 else 1
+                for _ in range(max(1, n)):
+                    self._update_physics()
+                self._draw()
+                self._log(f"stepped {max(1, n)}")
+
+            elif op == "pause":
+                self.running = False
+                self.run_btn.configure(text="Run")
+                self._log("paused")
+
+            elif op == "run":
+                self.running = True
+                self.run_btn.configure(text="Pause")
+                self._log("running")
+
+            elif op == "clear":
+                self.clear_all()
+                self._log("cleared all particles")
+
+            elif op == "list":
+                count = int(parts[1]) if len(parts) > 1 else 12
+                take = self.world.particles[:max(1, count)]
+                self._log(f"particles total={len(self.world.particles)}")
+                for i, p in enumerate(take):
+                    self._log(f"[{i}] {p.material.name} pos=({p.x:.2f},{p.y:.2f}) vel=({p.vx:.2f},{p.vy:.2f})")
+
+            elif op == "setv":
+                if len(parts) != 4:
+                    raise ValueError("usage: setv <idx> <vx> <vy>")
+                idx = int(parts[1])
+                vx = float(parts[2])
+                vy = float(parts[3])
+                if idx < 0 or idx >= len(self.world.particles):
+                    raise ValueError("index out of range")
+                self.world.particles[idx].vx = vx
+                self.world.particles[idx].vy = vy
+                self.selected_index = idx
+                self.vx_var.set(vx)
+                self.vy_var.set(vy)
+                self._log(f"setv idx={idx} vx={vx:.3f} vy={vy:.3f}")
+
+            elif op == "physics":
+                if len(parts) != 3:
+                    raise ValueError("usage: physics <k|rep|drag|dt> <value>")
+                key = parts[1].lower()
+                val = float(parts[2])
+                if key == "k":
+                    self.k_var.set(val)
+                elif key == "rep":
+                    self.rep_var.set(val)
+                elif key == "drag":
+                    self.drag_var.set(val)
+                elif key == "dt":
+                    self.dt_var.set(val)
+                else:
+                    raise ValueError("physics key must be one of: k, rep, drag, dt")
+                self._log(f"physics {key}={val}")
+
+            elif op == "emergency":
+                if len(parts) != 2:
+                    raise ValueError("usage: emergency <on|off|status>")
+                mode = parts[1].lower()
+                if mode == "on":
+                    self.emergency_pause_enabled = True
+                    self.emergency_suppress = False
+                    self._log("emergency warning: enabled")
+                elif mode == "off":
+                    self.emergency_pause_enabled = False
+                    self._log("emergency warning: disabled (unsafe)")
+                elif mode == "status":
+                    self._log(
+                        f"emergency enabled={self.emergency_pause_enabled} suppressed={self.emergency_suppress} "
+                        f"threshold={self.emergency_pair_threshold:,}"
+                    )
+                else:
+                    raise ValueError("usage: emergency <on|off|status>")
+
+            else:
+                self._log("unknown command. use: help")
+
+        except Exception as exc:
+            self._log(f"error: {exc}")
 
     def run(self) -> None:
         self.root.mainloop()
@@ -448,6 +1113,7 @@ class ConsoleSimulatorApp:
     def __init__(self) -> None:
         self.world = PhysicsWorld(1000, 860)
         self.world.load_preset("Hydrogen")
+        self.mode = "A"
 
     def print_state(self) -> None:
         print(f"Particles: {len(self.world.particles)}")
@@ -459,7 +1125,7 @@ class ConsoleSimulatorApp:
 
     def run(self) -> None:
         print("Tk is unavailable. Running console mode.")
-        print("Commands: help, preset <name>, spawn <material> <count>, step <n>, setv <idx> <vx> <vy>, clear, list, quit")
+        print("Commands: help, preset <name>, spawn <material> <count>, step <n>, setv <idx> <vx> <vy>, mode <A|B|status>, clear, list, quit")
         while True:
             try:
                 cmd = input("sim> ").strip()
@@ -472,8 +1138,10 @@ class ConsoleSimulatorApp:
             op = parts[0].lower()
             try:
                 if op == "help":
-                    print("preset names: Hydrogen, Helium, Carbon, Plasma Box")
+                    print("preset names: Hydrogen, Helium, Carbon, Plasma Box, Aluminum Cube (50nm, scaled)")
                     print("materials: " + ", ".join(MATERIALS.keys()))
+                    print("scale profiles: " + ", ".join(SCALE_PROFILES.keys()))
+                    print("modes: A (approximate), B (full equations)")
                 elif op == "preset" and len(parts) >= 2:
                     name = " ".join(parts[1:])
                     self.world.load_preset(name)
@@ -484,8 +1152,17 @@ class ConsoleSimulatorApp:
                 elif op == "step":
                     steps = int(parts[1]) if len(parts) > 1 else 1
                     for _ in range(max(1, steps)):
-                        self.world.step()
+                        self.world.step(self.mode)
                     self.print_state()
+                elif op == "mode" and len(parts) == 2:
+                    m = parts[1].upper()
+                    if m == "STATUS":
+                        print(f"mode={self.mode}")
+                    elif m in {"A", "B"}:
+                        self.mode = m
+                        print(f"mode={self.mode}")
+                    else:
+                        print("usage: mode <A|B|status>")
                 elif op == "setv" and len(parts) == 4:
                     i = int(parts[1])
                     self.world.particles[i].vx = float(parts[2])
