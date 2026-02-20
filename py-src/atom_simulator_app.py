@@ -5,12 +5,7 @@ import math
 import random
 from dataclasses import dataclass
 
-try:
-    import cupy as cp  # type: ignore
-    CUPY_AVAILABLE = True
-except Exception:
-    cp = None  # type: ignore[assignment]
-    CUPY_AVAILABLE = False
+import cupy as cp  # type: ignore
 
 try:
     import tkinter as tk
@@ -98,7 +93,7 @@ class PhysicsWorld:
         self.max_speed = 450.0
         self.bonds: list[Bond] = []
         self.last_note: str = ""
-        self.compute_backend = "gpu" if CUPY_AVAILABLE else "cpu"
+        self.compute_backend = "gpu"
 
         # Exact-mode transport controls (no hard limits; user can scale arbitrarily).
         self.mode_b_transport_exact = True
