@@ -6,6 +6,13 @@ import random
 from dataclasses import dataclass
 
 try:
+    import cupy as cp  # type: ignore
+    CUPY_AVAILABLE = True
+except Exception:
+    cp = None  # type: ignore[assignment]
+    CUPY_AVAILABLE = False
+
+try:
     import tkinter as tk
     from tkinter import ttk
     from tkinter import messagebox
@@ -91,6 +98,15 @@ class PhysicsWorld:
         self.max_speed = 450.0
         self.bonds: list[Bond] = []
         self.last_note: str = ""
+        self.compute_backend = "gpu" if CUPY_AVAILABLE else "cpu"
+
+        # Exact-mode transport controls (no hard limits; user can scale arbitrarily).
+        self.mode_b_transport_exact = True
+        self.photons_per_particle_per_step = 128
+        self.photon_max_bounces = 2
+        self.light_speed = 299792458.0
+        self.photon_packet_energy = 1e-21
+        self.radiation_coupling = 1.0
 
         # Mode-A approximation controls
         self.mode_a_pair_samples = 48
@@ -223,7 +239,115 @@ class PhysicsWorld:
         if mode.upper() == "A":
             self._step_approximate()
         else:
-            self._step_exact()
+            if self.mode_b_transport_exact:
+                self._step_exact_transport()
+            else:
+                self._step_exact()
+
+    def _ray_circle_intersection(
+        self,
+        ox: float,
+        oy: float,
+        dx: float,
+        dy: float,
+        cx: float,
+        cy: float,
+        radius: float,
+    ) -> float | None:
+        lx = cx - ox
+        ly = cy - oy
+        tca = lx * dx + ly * dy
+        if tca <= 0:
+            return None
+        d2 = lx * lx + ly * ly - tca * tca
+        r2 = radius * radius
+        if d2 > r2:
+            return None
+        thc = math.sqrt(max(0.0, r2 - d2))
+        t0 = tca - thc
+        t1 = tca + thc
+        if t0 > 1e-9:
+            return t0
+        if t1 > 1e-9:
+            return t1
+        return None
+
+    def _step_exact_transport(self) -> None:
+        # Exact classical pairwise + bond forces first.
+        self._step_exact()
+
+        n = len(self.particles)
+        if n <= 1:
+            return
+
+        impulses_x = [0.0] * n
+        impulses_y = [0.0] * n
+
+        photons_pp = max(1, int(self.photons_per_particle_per_step))
+        max_bounces = max(0, int(self.photon_max_bounces))
+
+        for i, src in enumerate(self.particles):
+            for k in range(photons_pp):
+                frac = ((k + 0.5) / photons_pp + (i * 0.6180339887498949)) % 1.0
+                angle = 2.0 * math.pi * frac
+                dx = math.cos(angle)
+                dy = math.sin(angle)
+
+                ox, oy = src.x, src.y
+                bounce = 0
+                alive = True
+
+                while alive:
+                    hit_j = -1
+                    hit_t = float("inf")
+
+                    for j, tgt in enumerate(self.particles):
+                        if j == i:
+                            continue
+                        t = self._ray_circle_intersection(ox, oy, dx, dy, tgt.x, tgt.y, tgt.radius)
+                        if t is not None and t < hit_t:
+                            hit_t = t
+                            hit_j = j
+
+                    if hit_j < 0:
+                        break
+
+                    hit = self.particles[hit_j]
+                    hx = ox + dx * hit_t
+                    hy = oy + dy * hit_t
+
+                    px = self.photon_packet_energy / self.light_speed * dx
+                    py = self.photon_packet_energy / self.light_speed * dy
+
+                    impulses_x[i] -= px
+                    impulses_y[i] -= py
+                    impulses_x[hit_j] += px
+                    impulses_y[hit_j] += py
+
+                    if bounce >= max_bounces:
+                        break
+
+                    nx = hx - hit.x
+                    ny = hy - hit.y
+                    nlen = math.hypot(nx, ny)
+                    if nlen < 1e-12:
+                        break
+                    nx /= nlen
+                    ny /= nlen
+
+                    dot = dx * nx + dy * ny
+                    dx = dx - 2.0 * dot * nx
+                    dy = dy - 2.0 * dot * ny
+
+                    ox = hx + dx * 1e-6
+                    oy = hy + dy * 1e-6
+                    bounce += 1
+                    alive = True
+
+        for i, p in enumerate(self.particles):
+            mass = max(1e-12, p.mass)
+            p.vx += self.radiation_coupling * impulses_x[i] / mass
+            p.vy += self.radiation_coupling * impulses_y[i] / mass
 
     def _step_exact(self) -> None:
         if len(self.particles) <= 1:
@@ -412,6 +536,10 @@ class AtomSimulatorApp:
             "mode": {
                 "usage": "mode <A|B|status>",
                 "desc": "Switch simulation mode. A=Blender-like fast viewport, B=full pairwise equations.",
+            },
+            "exact": {
+                "usage": "exact <status|transport <on|off>|photons <n>|bounces <n>|energy <v>|coupling <v>>",
+                "desc": "Configure exact Mode-B photon transport and atom-photon momentum coupling.",
             },
             "view": {
                 "usage": "view <home|zoom <factor>|pan <dx> <dy>>",
@@ -681,9 +809,9 @@ class AtomSimulatorApp:
             return
         self.sim_mode_var.set(m)
         if m == "A":
-            self._log("mode=A (approximate + ray-traced proxy rendering)")
+            self._log("mode=A (Blender-like viewport, approximated simulation + proxy ray transport)")
         else:
-            self._log("mode=B (full equations and full render)")
+            self._log(f"mode=B (full equations + exact transport, backend={self.world.compute_backend})")
 
     def load_preset(self, name: str) -> None:
         cfg = SCALE_PROFILES.get(self.scale_profile_var.get(), SCALE_PROFILES["micro"])
@@ -992,13 +1120,17 @@ class AtomSimulatorApp:
 
         n = len(self.world.particles)
         est_pairs = n * (n - 1) // 2
-        if est_pairs < self.emergency_pair_threshold:
+        est_ops = est_pairs
+        if self.sim_mode_var.get().upper() == "B" and self.world.mode_b_transport_exact:
+            est_ops += n * max(1, self.world.photons_per_particle_per_step) * max(1, self.world.photon_max_bounces + 1) * max(1, n - 1)
+
+        if est_ops < self.emergency_pair_threshold:
             return True
 
         self.running = False
         self.run_btn.configure(text="Run")
         self._log(
-            f"EMERGENCY: estimated pair interactions={est_pairs:,} (threshold={self.emergency_pair_threshold:,}). Paused."
+            f"EMERGENCY: estimated operations={est_ops:,} (threshold={self.emergency_pair_threshold:,}). Paused."
         )
 
         if messagebox is None:
@@ -1138,6 +1270,37 @@ class AtomSimulatorApp:
                 else:
                     raise ValueError("usage: mode <A|B|status>")
 
+            elif op == "exact":
+                if len(parts) < 2:
+                    raise ValueError("usage: exact <status|transport <on|off>|photons <n>|bounces <n>|energy <v>|coupling <v>>")
+                sub = parts[1].lower()
+                if sub == "status":
+                    self._log(
+                        f"exact transport={self.world.mode_b_transport_exact} photons={self.world.photons_per_particle_per_step} "
+                        f"bounces={self.world.photon_max_bounces} energy={self.world.photon_packet_energy:.3e} "
+                        f"coupling={self.world.radiation_coupling:.3e} backend={self.world.compute_backend}"
+                    )
+                elif sub == "transport" and len(parts) == 3:
+                    v = parts[2].lower()
+                    if v not in {"on", "off"}:
+                        raise ValueError("usage: exact transport <on|off>")
+                    self.world.mode_b_transport_exact = (v == "on")
+                    self._log(f"exact transport={self.world.mode_b_transport_exact}")
+                elif sub == "photons" and len(parts) == 3:
+                    self.world.photons_per_particle_per_step = max(1, int(parts[2]))
+                    self._log(f"exact photons_per_particle_per_step={self.world.photons_per_particle_per_step}")
+                elif sub == "bounces" and len(parts) == 3:
+                    self.world.photon_max_bounces = max(0, int(parts[2]))
+                    self._log(f"exact photon_max_bounces={self.world.photon_max_bounces}")
+                elif sub == "energy" and len(parts) == 3:
+                    self.world.photon_packet_energy = float(parts[2])
+                    self._log(f"exact photon_packet_energy={self.world.photon_packet_energy:.3e}")
+                elif sub == "coupling" and len(parts) == 3:
+                    self.world.radiation_coupling = float(parts[2])
+                    self._log(f"exact radiation_coupling={self.world.radiation_coupling:.3e}")
+                else:
+                    raise ValueError("usage: exact <status|transport <on|off>|photons <n>|bounces <n>|energy <v>|coupling <v>>")
+
             elif op == "view":
                 if len(parts) < 2:
                     raise ValueError("usage: view <home|zoom <factor>|pan <dx> <dy>>")
@@ -1263,7 +1426,7 @@ class ConsoleSimulatorApp:
 
     def run(self) -> None:
         print("Tk is unavailable. Running console mode.")
-        print("Commands: help, preset <name>, spawn <material> <count>, step <n>, setv <idx> <vx> <vy>, mode <A|B|status>, clear, list, quit")
+        print("Commands: help, preset <name>, spawn <material> <count>, step <n>, setv <idx> <vx> <vy>, mode <A|B|status>, exact <...>, clear, list, quit")
         while True:
             try:
                 cmd = input("sim> ").strip()
@@ -1280,6 +1443,7 @@ class ConsoleSimulatorApp:
                     print("materials: " + ", ".join(MATERIALS.keys()))
                     print("scale profiles: " + ", ".join(SCALE_PROFILES.keys()))
                     print("modes: A (approximate), B (full equations)")
+                    print("exact: status | transport <on|off> | photons <n> | bounces <n> | energy <v> | coupling <v>")
                 elif op == "preset" and len(parts) >= 2:
                     name = " ".join(parts[1:])
                     self.world.load_preset(name)
@@ -1301,6 +1465,31 @@ class ConsoleSimulatorApp:
                         print(f"mode={self.mode}")
                     else:
                         print("usage: mode <A|B|status>")
+                elif op == "exact" and len(parts) >= 2:
+                    sub = parts[1].lower()
+                    if sub == "status":
+                        print(
+                            f"exact transport={self.world.mode_b_transport_exact} photons={self.world.photons_per_particle_per_step} "
+                            f"bounces={self.world.photon_max_bounces} energy={self.world.photon_packet_energy:.3e} "
+                            f"coupling={self.world.radiation_coupling:.3e} backend={self.world.compute_backend}"
+                        )
+                    elif sub == "transport" and len(parts) == 3:
+                        self.world.mode_b_transport_exact = parts[2].lower() == "on"
+                        print(f"exact transport={self.world.mode_b_transport_exact}")
+                    elif sub == "photons" and len(parts) == 3:
+                        self.world.photons_per_particle_per_step = max(1, int(parts[2]))
+                        print(f"exact photons={self.world.photons_per_particle_per_step}")
+                    elif sub == "bounces" and len(parts) == 3:
+                        self.world.photon_max_bounces = max(0, int(parts[2]))
+                        print(f"exact bounces={self.world.photon_max_bounces}")
+                    elif sub == "energy" and len(parts) == 3:
+                        self.world.photon_packet_energy = float(parts[2])
+                        print(f"exact energy={self.world.photon_packet_energy:.3e}")
+                    elif sub == "coupling" and len(parts) == 3:
+                        self.world.radiation_coupling = float(parts[2])
+                        print(f"exact coupling={self.world.radiation_coupling:.3e}")
+                    else:
+                        print("usage: exact <status|transport <on|off>|photons <n>|bounces <n>|energy <v>|coupling <v>>")
                 elif op == "setv" and len(parts) == 4:
                     i = int(parts[1])
                     self.world.particles[i].vx = float(parts[2])
