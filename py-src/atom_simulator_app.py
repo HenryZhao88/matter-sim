@@ -387,6 +387,10 @@ class AtomSimulatorApp:
         self.selected_index: int | None = None
         self.drag_start: tuple[float, float] | None = None
         self.drag_current: tuple[float, float] | None = None
+        self.viewport_drag_last: tuple[float, float] | None = None
+        self.view_zoom = 1.0
+        self.view_pan_x = 0.0
+        self.view_pan_y = 0.0
 
         self.command_specs: dict[str, dict[str, str]] = {
             "help": {
@@ -407,7 +411,11 @@ class AtomSimulatorApp:
             },
             "mode": {
                 "usage": "mode <A|B|status>",
-                "desc": "Switch simulation mode. A=approximate ray-traced proxy, B=full equations.",
+                "desc": "Switch simulation mode. A=Blender-like fast viewport, B=full pairwise equations.",
+            },
+            "view": {
+                "usage": "view <home|zoom <factor>|pan <dx> <dy>>",
+                "desc": "Viewport controls similar to DCC tools (frame/home, zoom, pan).",
             },
             "step": {
                 "usage": "step [n]",
@@ -591,6 +599,11 @@ class AtomSimulatorApp:
         self.output_text.pack(fill=tk.BOTH, expand=True)
         self.output_text.configure(state=tk.DISABLED)
 
+        ttk.Label(panel, text="Outliner (first 300):").pack(anchor="w", pady=(6, 0))
+        self.outliner_list = tk.Listbox(panel, height=8)
+        self.outliner_list.pack(fill=tk.BOTH, expand=False)
+        self.outliner_list.bind("<<ListboxSelect>>", lambda _e: self._on_outliner_select())
+
         self.refresh_help_list()
         self._log("Command center ready. Type a command and press Enter.")
 
@@ -604,6 +617,14 @@ class AtomSimulatorApp:
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_left_up)
         self.canvas.bind("<Button-3>", self.on_right_click_spawn)
+        self.canvas.bind("<Button-2>", self.on_middle_down)
+        self.canvas.bind("<B2-Motion>", self.on_middle_drag)
+        self.canvas.bind("<ButtonRelease-2>", self.on_middle_up)
+        self.canvas.bind("<MouseWheel>", self.on_mouse_wheel)
+        self.canvas.bind("<Button-4>", lambda e: self._zoom_at(e.x, e.y, 1.1))
+        self.canvas.bind("<Button-5>", lambda e: self._zoom_at(e.x, e.y, 1.0 / 1.1))
+        self.root.bind("<space>", lambda _e: self.toggle_running())
+        self.root.bind("<Delete>", lambda _e: self.delete_selected())
 
     # -----------------------------
     # Presets
@@ -622,6 +643,36 @@ class AtomSimulatorApp:
         self._log(
             f"scale={profile_name} render_radius={cfg['render_radius']} distance={cfg['distance']} velocity={cfg['velocity']}"
         )
+
+    def world_to_screen(self, x: float, y: float) -> tuple[float, float]:
+        sx = (x + self.view_pan_x) * self.view_zoom
+        sy = (y + self.view_pan_y) * self.view_zoom
+        return sx, sy
+
+    def screen_to_world(self, sx: float, sy: float) -> tuple[float, float]:
+        x = sx / self.view_zoom - self.view_pan_x
+        y = sy / self.view_zoom - self.view_pan_y
+        return x, y
+
+    def _zoom_at(self, sx: float, sy: float, scale: float) -> None:
+        wx, wy = self.screen_to_world(float(sx), float(sy))
+        self.view_zoom = max(0.1, min(8.0, self.view_zoom * scale))
+        nsx, nsy = self.world_to_screen(wx, wy)
+        self.view_pan_x += (float(sx) - nsx) / self.view_zoom
+        self.view_pan_y += (float(sy) - nsy) / self.view_zoom
+
+    def reset_view(self) -> None:
+        self.view_zoom = 1.0
+        self.view_pan_x = 0.0
+        self.view_pan_y = 0.0
+
+    def delete_selected(self) -> None:
+        if self.selected_index is None:
+            return
+        if 0 <= self.selected_index < len(self.world.particles):
+            del self.world.particles[self.selected_index]
+        self.selected_index = None
+        self._log("deleted selected object")
 
     def apply_sim_mode(self, mode: str) -> None:
         m = mode.upper()
@@ -666,32 +717,35 @@ class AtomSimulatorApp:
         best_i = None
         best_d = 1e9
         for i, p in enumerate(self.world.particles):
-            d = math.hypot(p.x - x, p.y - y)
-            if d <= p.radius + 6 and d < best_d:
+            sx, sy = self.world_to_screen(p.x, p.y)
+            d = math.hypot(sx - x, sy - y)
+            hit_r = max(4.0, p.radius * self.render_radius_scale * self.view_zoom + 6)
+            if d <= hit_r and d < best_d:
                 best_d = d
                 best_i = i
         return best_i
 
     def on_left_down(self, event) -> None:
-        x, y = float(event.x), float(event.y)
-        idx = self.find_particle(x, y)
+        sx, sy = float(event.x), float(event.y)
+        idx = self.find_particle(sx, sy)
         self.selected_index = idx
         if idx is not None:
-            self.drag_start = (x, y)
-            self.drag_current = (x, y)
+            wx, wy = self.screen_to_world(sx, sy)
+            self.drag_start = (wx, wy)
+            self.drag_current = (wx, wy)
         else:
             self.drag_start = None
             self.drag_current = None
 
     def on_drag(self, event) -> None:
         if self.drag_start is not None:
-            self.drag_current = (float(event.x), float(event.y))
+            self.drag_current = self.screen_to_world(float(event.x), float(event.y))
 
     def on_left_up(self, event) -> None:
         if self.drag_start is None or self.selected_index is None:
             return
         sx, sy = self.drag_start
-        ex, ey = float(event.x), float(event.y)
+        ex, ey = self.screen_to_world(float(event.x), float(event.y))
         scale = 3.0
         vx = (sx - ex) * scale
         vy = (sy - ey) * scale
@@ -705,7 +759,31 @@ class AtomSimulatorApp:
 
     def on_right_click_spawn(self, event) -> None:
         mat = MATERIALS[self.material_var.get()]
-        self.world.particles.append(Particle(float(event.x), float(event.y), 0.0, 0.0, mat))
+        wx, wy = self.screen_to_world(float(event.x), float(event.y))
+        self.world.particles.append(Particle(wx, wy, 0.0, 0.0, mat))
+
+    def on_middle_down(self, event) -> None:
+        self.viewport_drag_last = (float(event.x), float(event.y))
+
+    def on_middle_drag(self, event) -> None:
+        if self.viewport_drag_last is None:
+            return
+        lx, ly = self.viewport_drag_last
+        nx, ny = float(event.x), float(event.y)
+        dx, dy = nx - lx, ny - ly
+        self.view_pan_x += dx / self.view_zoom
+        self.view_pan_y += dy / self.view_zoom
+        self.viewport_drag_last = (nx, ny)
+
+    def on_middle_up(self, event) -> None:
+        self.viewport_drag_last = None
+
+    def on_mouse_wheel(self, event) -> None:
+        delta = event.delta if hasattr(event, "delta") else 0
+        if delta > 0:
+            self._zoom_at(event.x, event.y, 1.1)
+        elif delta < 0:
+            self._zoom_at(event.x, event.y, 1.0 / 1.1)
 
     def apply_velocity_to_selected(self) -> None:
         if self.selected_index is None:
@@ -749,9 +827,13 @@ class AtomSimulatorApp:
         # background grid
         grid_step = 40
         for x in range(0, self.world_w, grid_step):
-            self.canvas.create_line(x, 0, x, self.world_h, fill="#101827")
+            sx0, sy0 = self.world_to_screen(x, 0)
+            sx1, sy1 = self.world_to_screen(x, self.world_h)
+            self.canvas.create_line(sx0, sy0, sx1, sy1, fill="#101827")
         for y in range(0, self.world_h, grid_step):
-            self.canvas.create_line(0, y, self.world_w, y, fill="#101827")
+            sx0, sy0 = self.world_to_screen(0, y)
+            sx1, sy1 = self.world_to_screen(self.world_w, y)
+            self.canvas.create_line(sx0, sy0, sx1, sy1, fill="#101827")
 
         # bonds
         for b in self.world.bonds:
@@ -759,26 +841,32 @@ class AtomSimulatorApp:
                 continue
             p1 = self.world.particles[b.i]
             p2 = self.world.particles[b.j]
-            self.canvas.create_line(p1.x, p1.y, p2.x, p2.y, fill="#4f5f7a")
+            x1, y1 = self.world_to_screen(p1.x, p1.y)
+            x2, y2 = self.world_to_screen(p2.x, p2.y)
+            self.canvas.create_line(x1, y1, x2, y2, fill="#4f5f7a")
 
         for i, p in enumerate(self.world.particles):
-            r = max(1.0, p.radius * self.render_radius_scale)
-            self.canvas.create_oval(p.x - r, p.y - r, p.x + r, p.y + r, fill=p.material.color, outline="")
+            sx, sy = self.world_to_screen(p.x, p.y)
+            r = max(1.0, p.radius * self.render_radius_scale * self.view_zoom)
+            self.canvas.create_oval(sx - r, sy - r, sx + r, sy + r, fill=p.material.color, outline="")
 
             if i == self.selected_index:
                 rr = r + 4
-                self.canvas.create_oval(p.x - rr, p.y - rr, p.x + rr, p.y + rr, outline="#ffffff")
+                self.canvas.create_oval(sx - rr, sy - rr, sx + rr, sy + rr, outline="#ffffff")
 
         # velocity drag arrow
         if self.drag_start and self.drag_current:
             sx, sy = self.drag_start
             cx, cy = self.drag_current
-            self.canvas.create_line(sx, sy, cx, cy, fill="#ffffff", width=2, arrow=tk.LAST)
+            dsx, dsy = self.world_to_screen(sx, sy)
+            dcx, dcy = self.world_to_screen(cx, cy)
+            self.canvas.create_line(dsx, dsy, dcx, dcy, fill="#ffffff", width=2, arrow=tk.LAST)
 
         self.info_var.set(
             f"Mode: B | Particles: {len(self.world.particles)} Bonds: {len(self.world.bonds)} | Running: {self.running} | "
             f"Selected: {self.selected_index if self.selected_index is not None else 'None'}"
         )
+        self._refresh_outliner()
 
     def _draw_mode_a(self) -> None:
         self.canvas.delete("all")
@@ -792,8 +880,9 @@ class AtomSimulatorApp:
         bins = [0.0] * (gw * gh)
 
         for p in self.world.particles:
-            ix = int(p.x // cell)
-            iy = int(p.y // cell)
+            sx, sy = self.world_to_screen(p.x, p.y)
+            ix = int(sx // cell)
+            iy = int(sy // cell)
             if 0 <= ix < gw and 0 <= iy < gh:
                 idx = iy * gw + ix
                 speed = math.hypot(p.vx, p.vy)
@@ -825,37 +914,66 @@ class AtomSimulatorApp:
                 continue
             p1 = self.world.particles[b.i]
             p2 = self.world.particles[b.j]
-            self.canvas.create_line(p1.x, p1.y, p2.x, p2.y, fill="#5f7aa0")
+            x1, y1 = self.world_to_screen(p1.x, p1.y)
+            x2, y2 = self.world_to_screen(p2.x, p2.y)
+            self.canvas.create_line(x1, y1, x2, y2, fill="#5f7aa0")
 
         # Particle sample with glow and ray-like velocity streak.
         n = len(self.world.particles)
         stride = max(1, n // 3500)
         for i in range(0, n, stride):
             p = self.world.particles[i]
-            r = max(1.0, p.radius * self.render_radius_scale * 0.85)
+            sx, sy = self.world_to_screen(p.x, p.y)
+            r = max(1.0, p.radius * self.render_radius_scale * 0.85 * self.view_zoom)
             speed = math.hypot(p.vx, p.vy)
             trail = min(16.0, speed * 0.06)
             if speed > 1e-4:
                 tx = p.x - (p.vx / speed) * trail
                 ty = p.y - (p.vy / speed) * trail
-                self.canvas.create_line(p.x, p.y, tx, ty, fill="#dfe8ff")
+                tsx, tsy = self.world_to_screen(tx, ty)
+                self.canvas.create_line(sx, sy, tsx, tsy, fill="#dfe8ff")
 
-            self.canvas.create_oval(p.x - (r + 2), p.y - (r + 2), p.x + (r + 2), p.y + (r + 2), outline="#7aa6ff")
-            self.canvas.create_oval(p.x - r, p.y - r, p.x + r, p.y + r, fill=p.material.color, outline="")
+            self.canvas.create_oval(sx - (r + 2), sy - (r + 2), sx + (r + 2), sy + (r + 2), outline="#7aa6ff")
+            self.canvas.create_oval(sx - r, sy - r, sx + r, sy + r, fill=p.material.color, outline="")
 
             if i == self.selected_index:
                 rr = r + 5
-                self.canvas.create_oval(p.x - rr, p.y - rr, p.x + rr, p.y + rr, outline="#ffffff")
+                self.canvas.create_oval(sx - rr, sy - rr, sx + rr, sy + rr, outline="#ffffff")
 
         if self.drag_start and self.drag_current:
             sx, sy = self.drag_start
             cx, cy = self.drag_current
-            self.canvas.create_line(sx, sy, cx, cy, fill="#ffffff", width=2, arrow=tk.LAST)
+            dsx, dsy = self.world_to_screen(sx, sy)
+            dcx, dcy = self.world_to_screen(cx, cy)
+            self.canvas.create_line(dsx, dsy, dcx, dcy, fill="#ffffff", width=2, arrow=tk.LAST)
 
         self.info_var.set(
             f"Mode: A | Particles: {len(self.world.particles)} Bonds: {len(self.world.bonds)} | Running: {self.running} | "
             f"Selected: {self.selected_index if self.selected_index is not None else 'None'}"
         )
+        self._refresh_outliner()
+
+    def _refresh_outliner(self) -> None:
+        if not hasattr(self, "outliner_list"):
+            return
+        prev_sel = self.selected_index
+        self.outliner_list.delete(0, tk.END)
+        limit = min(300, len(self.world.particles))
+        for i in range(limit):
+            p = self.world.particles[i]
+            self.outliner_list.insert(tk.END, f"{i:04d} | {p.material.name} | ({p.x:.1f}, {p.y:.1f})")
+        if prev_sel is not None and 0 <= prev_sel < limit:
+            self.outliner_list.selection_set(prev_sel)
+
+    def _on_outliner_select(self) -> None:
+        if not hasattr(self, "outliner_list"):
+            return
+        sel = self.outliner_list.curselection()
+        if not sel:
+            return
+        idx = int(sel[0])
+        if 0 <= idx < len(self.world.particles):
+            self.selected_index = idx
 
     def _tick(self) -> None:
         if self.running and self._check_emergency_state():
@@ -1019,6 +1137,26 @@ class AtomSimulatorApp:
                     self.apply_sim_mode(m)
                 else:
                     raise ValueError("usage: mode <A|B|status>")
+
+            elif op == "view":
+                if len(parts) < 2:
+                    raise ValueError("usage: view <home|zoom <factor>|pan <dx> <dy>>")
+                sub = parts[1].lower()
+                if sub == "home":
+                    self.reset_view()
+                    self._log("view reset")
+                elif sub == "zoom" and len(parts) == 3:
+                    factor = float(parts[2])
+                    self.view_zoom = max(0.1, min(8.0, self.view_zoom * factor))
+                    self._log(f"view zoom={self.view_zoom:.3f}")
+                elif sub == "pan" and len(parts) == 4:
+                    dx = float(parts[2])
+                    dy = float(parts[3])
+                    self.view_pan_x += dx
+                    self.view_pan_y += dy
+                    self._log(f"view pan=({self.view_pan_x:.2f}, {self.view_pan_y:.2f})")
+                else:
+                    raise ValueError("usage: view <home|zoom <factor>|pan <dx> <dy>>")
 
             elif op == "step":
                 n = int(parts[1]) if len(parts) > 1 else 1
