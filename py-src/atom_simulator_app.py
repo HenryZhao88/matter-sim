@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import math
+import os
 import random
 from dataclasses import dataclass
 
@@ -77,6 +78,32 @@ class Bond:
     j: int
     rest_length: float
     k: float
+
+
+@dataclass
+class ObjectKeyframe:
+    frame: int
+    x: float
+    y: float
+    rot_deg: float
+
+
+@dataclass
+class SceneCube:
+    name: str
+    x: float
+    y: float
+    size: float
+    rot_deg: float = 0.0
+    color: str = "#9aa4c9"
+    texture_path: str = ""
+    texture_image: object | None = None
+    texture_tk_id: int | None = None
+    keyframes: list[ObjectKeyframe] = None  # type: ignore[assignment]
+
+    def __post_init__(self) -> None:
+        if self.keyframes is None:
+            self.keyframes = []
 
 
 class PhysicsWorld:
@@ -496,10 +523,12 @@ class AtomSimulatorApp:
 
         self.root = tk.Tk()
         self.root.title("Matter Sim - Physics World")
-        self.root.geometry("1020x920")
+        self.root.geometry("460x300")
+        self.root.resizable(False, False)
 
-        self.world_w = 1000
-        self.world_h = 860
+        # 240p viewport (16:9)
+        self.world_w = 426
+        self.world_h = 240
         self.world = PhysicsWorld(self.world_w, self.world_h)
         self.running = True
 
@@ -540,6 +569,22 @@ class AtomSimulatorApp:
                 "usage": "view <home|zoom <factor>|pan <dx> <dy>>",
                 "desc": "Viewport controls similar to DCC tools (frame/home, zoom, pan).",
             },
+            "obj": {
+                "usage": "obj <addcube <name> <x> <y> <size>|del <name>|list>",
+                "desc": "Manage Mode-A scene objects (Blender-style primitives).",
+            },
+            "key": {
+                "usage": "key set <name> <frame> <x> <y> <rot_deg>",
+                "desc": "Set keyframe on an object for timeline animation.",
+            },
+            "timeline": {
+                "usage": "timeline <play|pause|frame <n>|fps <n>|len <n>|status>",
+                "desc": "Control Mode-A timeline playback.",
+            },
+            "tex": {
+                "usage": "tex load <name> <image_path>",
+                "desc": "Load and assign texture image to an object.",
+            },
             "step": {
                 "usage": "step [n]",
                 "desc": "Advance simulation by n steps (default 1).",
@@ -577,6 +622,12 @@ class AtomSimulatorApp:
         self.sim_mode_var = tk.StringVar(value="A")
         self.scale_profile_var = tk.StringVar(value="micro")
         self.render_radius_scale = SCALE_PROFILES["micro"]["render_radius"]
+        self.scene_objects: dict[str, SceneCube] = {}
+        self.timeline_frame = 0
+        self.timeline_length = 240
+        self.timeline_fps = 60.0
+        self.timeline_playing = False
+        self.timeline_accum = 0.0
         self.emergency_pause_enabled = True
         self.emergency_suppress = False
         self.emergency_grace_ticks = 0
@@ -601,7 +652,7 @@ class AtomSimulatorApp:
 
         ttk.Label(main, text="Physics World", font=("TkDefaultFont", 12, "bold")).pack(anchor="w", pady=(0, 4))
         self.canvas = tk.Canvas(main, width=self.world_w, height=self.world_h, bg="#0b0f14", highlightthickness=0)
-        self.canvas.pack(fill=tk.BOTH, expand=True)
+        self.canvas.pack(anchor="nw")
 
     def _build_command_center(self) -> None:
         self.command_window = tk.Toplevel(self.root)
@@ -917,6 +968,78 @@ class AtomSimulatorApp:
         self._log(f"setv idx={self.selected_index} vx={p.vx:.3f} vy={p.vy:.3f}")
 
     # -----------------------------
+    # Mode-A scene objects + timeline
+    # -----------------------------
+    def add_cube_object(self, name: str, x: float, y: float, size: float) -> None:
+        if name in self.scene_objects:
+            raise ValueError(f"object already exists: {name}")
+        self.scene_objects[name] = SceneCube(name=name, x=x, y=y, size=size)
+        self._log(f"object added: {name} cube at ({x:.1f}, {y:.1f}) size={size:.1f}")
+
+    def delete_object(self, name: str) -> None:
+        if name not in self.scene_objects:
+            raise ValueError(f"object not found: {name}")
+        obj = self.scene_objects.pop(name)
+        obj.texture_image = None
+        self._log(f"object deleted: {name}")
+
+    def set_object_keyframe(self, name: str, frame: int, x: float, y: float, rot_deg: float) -> None:
+        if name not in self.scene_objects:
+            raise ValueError(f"object not found: {name}")
+        obj = self.scene_objects[name]
+        obj.keyframes = [k for k in obj.keyframes if k.frame != frame]
+        obj.keyframes.append(ObjectKeyframe(frame=frame, x=x, y=y, rot_deg=rot_deg))
+        obj.keyframes.sort(key=lambda k: k.frame)
+        self._log(f"keyframe set: {name} frame={frame} pos=({x:.1f},{y:.1f}) rot={rot_deg:.1f}")
+
+    def assign_texture_to_object(self, name: str, path: str) -> None:
+        if name not in self.scene_objects:
+            raise ValueError(f"object not found: {name}")
+        if not os.path.exists(path):
+            raise ValueError(f"texture file not found: {path}")
+        img = tk.PhotoImage(file=path)
+        obj = self.scene_objects[name]
+        obj.texture_path = path
+        obj.texture_image = img
+        self._log(f"texture assigned: {name} <- {path}")
+
+    def _eval_object_transform(self, obj: SceneCube, frame: int) -> tuple[float, float, float]:
+        if not obj.keyframes:
+            return obj.x, obj.y, obj.rot_deg
+
+        keys = obj.keyframes
+        if frame <= keys[0].frame:
+            return keys[0].x, keys[0].y, keys[0].rot_deg
+        if frame >= keys[-1].frame:
+            return keys[-1].x, keys[-1].y, keys[-1].rot_deg
+
+        left = keys[0]
+        right = keys[-1]
+        for i in range(len(keys) - 1):
+            if keys[i].frame <= frame <= keys[i + 1].frame:
+                left = keys[i]
+                right = keys[i + 1]
+                break
+
+        span = max(1, right.frame - left.frame)
+        t = (frame - left.frame) / span
+        x = left.x + (right.x - left.x) * t
+        y = left.y + (right.y - left.y) * t
+        r = left.rot_deg + (right.rot_deg - left.rot_deg) * t
+        return x, y, r
+
+    def _advance_timeline(self) -> None:
+        if not self.timeline_playing:
+            return
+        self.timeline_accum += 1.0 / 60.0
+        step = 1.0 / max(1.0, self.timeline_fps)
+        while self.timeline_accum >= step:
+            self.timeline_accum -= step
+            self.timeline_frame += 1
+            if self.timeline_frame > self.timeline_length:
+                self.timeline_frame = 0
+
+    # -----------------------------
     # Physics
     # -----------------------------
     def step_once(self) -> None:
@@ -987,6 +1110,7 @@ class AtomSimulatorApp:
 
         self.info_var.set(
             f"Mode: B | Particles: {len(self.world.particles)} Bonds: {len(self.world.bonds)} | Running: {self.running} | "
+            f"Timeline: {self.timeline_frame}/{self.timeline_length} @ {self.timeline_fps:.1f}fps play={self.timeline_playing} | "
             f"Selected: {self.selected_index if self.selected_index is not None else 'None'}"
         )
         self._refresh_outliner()
@@ -1028,6 +1152,33 @@ class AtomSimulatorApp:
                     x0 = ix * cell
                     x1 = x0 + cell
                     self.canvas.create_rectangle(x0, y0, x1, y1, fill=color, outline="")
+
+        # Mode-A scene objects (cubes with optional textures and keyframes)
+        for name, obj in self.scene_objects.items():
+            ox, oy, rot = self._eval_object_transform(obj, self.timeline_frame)
+            sx, sy = self.world_to_screen(ox, oy)
+            half = max(2.0, obj.size * 0.5 * self.view_zoom)
+            rad = math.radians(rot)
+            c = math.cos(rad)
+            s = math.sin(rad)
+
+            corners = [(-half, -half), (half, -half), (half, half), (-half, half)]
+            pts: list[float] = []
+            for px, py in corners:
+                rx = px * c - py * s
+                ry = px * s + py * c
+                pts.extend([sx + rx, sy + ry])
+
+            self.canvas.create_polygon(*pts, fill=obj.color, outline="#e8edff")
+            self.canvas.create_text(sx, sy - half - 8, text=name, fill="#d3dcff", font=("TkDefaultFont", 8))
+
+            if obj.texture_image is not None:
+                if obj.texture_tk_id is not None:
+                    try:
+                        self.canvas.delete(obj.texture_tk_id)
+                    except Exception:
+                        pass
+                obj.texture_tk_id = self.canvas.create_image(sx, sy, image=obj.texture_image)
 
         # Bonds sampled for speed.
         bond_stride = max(1, len(self.world.bonds) // 3000)
@@ -1072,6 +1223,7 @@ class AtomSimulatorApp:
 
         self.info_var.set(
             f"Mode: A | Particles: {len(self.world.particles)} Bonds: {len(self.world.bonds)} | Running: {self.running} | "
+            f"Timeline: {self.timeline_frame}/{self.timeline_length} @ {self.timeline_fps:.1f}fps play={self.timeline_playing} | "
             f"Selected: {self.selected_index if self.selected_index is not None else 'None'}"
         )
         self._refresh_outliner()
@@ -1081,12 +1233,17 @@ class AtomSimulatorApp:
             return
         prev_sel = self.selected_index
         self.outliner_list.delete(0, tk.END)
-        limit = min(300, len(self.world.particles))
+        for name in sorted(self.scene_objects.keys())[:150]:
+            obj = self.scene_objects[name]
+            ox, oy, rot = self._eval_object_transform(obj, self.timeline_frame)
+            self.outliner_list.insert(tk.END, f"OBJ  | {name} | ({ox:.1f}, {oy:.1f}) r={rot:.1f}")
+
+        limit = min(150, len(self.world.particles))
         for i in range(limit):
             p = self.world.particles[i]
-            self.outliner_list.insert(tk.END, f"{i:04d} | {p.material.name} | ({p.x:.1f}, {p.y:.1f})")
+            self.outliner_list.insert(tk.END, f"PART | {i:04d} | {p.material.name} | ({p.x:.1f}, {p.y:.1f})")
         if prev_sel is not None and 0 <= prev_sel < limit:
-            self.outliner_list.selection_set(prev_sel)
+            self.outliner_list.selection_set(len(self.scene_objects) + prev_sel)
 
     def _on_outliner_select(self) -> None:
         if not hasattr(self, "outliner_list"):
@@ -1095,10 +1252,15 @@ class AtomSimulatorApp:
         if not sel:
             return
         idx = int(sel[0])
-        if 0 <= idx < len(self.world.particles):
-            self.selected_index = idx
+        obj_count = min(150, len(self.scene_objects))
+        if idx < obj_count:
+            return
+        pidx = idx - obj_count
+        if 0 <= pidx < len(self.world.particles):
+            self.selected_index = pidx
 
     def _tick(self) -> None:
+        self._advance_timeline()
         if self.running and self._check_emergency_state():
             self._update_physics()
         elif self.emergency_grace_ticks > 0:
@@ -1316,6 +1478,69 @@ class AtomSimulatorApp:
                 else:
                     raise ValueError("usage: view <home|zoom <factor>|pan <dx> <dy>>")
 
+            elif op == "obj":
+                if len(parts) < 2:
+                    raise ValueError("usage: obj <addcube <name> <x> <y> <size>|del <name>|list>")
+                sub = parts[1].lower()
+                if sub == "addcube" and len(parts) == 6:
+                    self.add_cube_object(parts[2], float(parts[3]), float(parts[4]), float(parts[5]))
+                elif sub == "del" and len(parts) == 3:
+                    self.delete_object(parts[2])
+                elif sub == "list":
+                    self._log(f"objects total={len(self.scene_objects)}")
+                    for name in sorted(self.scene_objects.keys())[:100]:
+                        obj = self.scene_objects[name]
+                        x, y, r = self._eval_object_transform(obj, self.timeline_frame)
+                        self._log(f"obj {name} pos=({x:.1f},{y:.1f}) size={obj.size:.1f} rot={r:.1f}")
+                else:
+                    raise ValueError("usage: obj <addcube <name> <x> <y> <size>|del <name>|list>")
+
+            elif op == "key":
+                if len(parts) != 7 or parts[1].lower() != "set":
+                    raise ValueError("usage: key set <name> <frame> <x> <y> <rot_deg>")
+                name = parts[2]
+                frame = int(parts[3])
+                x = float(parts[4])
+                y = float(parts[5])
+                rot = float(parts[6])
+                self.set_object_keyframe(name, frame, x, y, rot)
+
+            elif op == "timeline":
+                if len(parts) < 2:
+                    raise ValueError("usage: timeline <play|pause|frame <n>|fps <n>|len <n>|status>")
+                sub = parts[1].lower()
+                if sub == "play":
+                    self.timeline_playing = True
+                    self._log("timeline playing")
+                elif sub == "pause":
+                    self.timeline_playing = False
+                    self._log("timeline paused")
+                elif sub == "frame" and len(parts) == 3:
+                    self.timeline_frame = max(0, int(parts[2]))
+                    self._log(f"timeline frame={self.timeline_frame}")
+                elif sub == "fps" and len(parts) == 3:
+                    self.timeline_fps = max(1.0, float(parts[2]))
+                    self._log(f"timeline fps={self.timeline_fps:.2f}")
+                elif sub == "len" and len(parts) == 3:
+                    self.timeline_length = max(1, int(parts[2]))
+                    self._log(f"timeline length={self.timeline_length}")
+                elif sub == "status":
+                    self._log(
+                        f"timeline frame={self.timeline_frame}/{self.timeline_length} fps={self.timeline_fps:.2f} playing={self.timeline_playing}"
+                    )
+                else:
+                    raise ValueError("usage: timeline <play|pause|frame <n>|fps <n>|len <n>|status>")
+
+            elif op == "tex":
+                if len(parts) < 2:
+                    raise ValueError("usage: tex load <name> <image_path>")
+                if parts[1].lower() == "load" and len(parts) >= 4:
+                    name = parts[2]
+                    path = " ".join(parts[3:])
+                    self.assign_texture_to_object(name, path)
+                else:
+                    raise ValueError("usage: tex load <name> <image_path>")
+
             elif op == "step":
                 n = int(parts[1]) if len(parts) > 1 else 1
                 for _ in range(max(1, n)):
@@ -1340,6 +1565,7 @@ class AtomSimulatorApp:
             elif op == "list":
                 count = int(parts[1]) if len(parts) > 1 else 12
                 take = self.world.particles[:max(1, count)]
+                self._log(f"objects total={len(self.scene_objects)}")
                 self._log(f"particles total={len(self.world.particles)}")
                 for i, p in enumerate(take):
                     self._log(f"[{i}] {p.material.name} pos=({p.x:.2f},{p.y:.2f}) vel=({p.vx:.2f},{p.vy:.2f})")
