@@ -1,0 +1,7 @@
+{
+  "name": "deep_space",
+  "type": "deep_space",
+  "base_color": [4, 6, 12],
+  "star_color": [220, 240, 255],
+  "stars": 900
+}

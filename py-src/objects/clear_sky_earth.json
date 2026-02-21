@@ -1,0 +1,6 @@
+{
+  "name": "clear_sky_earth",
+  "type": "sky_gradient",
+  "top_color": [109, 174, 255],
+  "bottom_color": [173, 212, 255]
+}

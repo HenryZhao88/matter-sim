@@ -1,0 +1,20 @@
+{
+  "name": "sun_earth_view",
+  "type": "sun_disk",
+  "x_ratio": 0.82,
+  "y_ratio": 0.18,
+  "radius_ratio": 0.03,
+  "core_inner": [255, 251, 236],
+  "core_outer": [255, 232, 166],
+  "glow_inner": [255, 255, 255],
+  "glow_outer": [255, 247, 210],
+  "glow_extent": 7.0,
+  "glow_steps_canvas": 14,
+  "glow_steps_export": 22,
+  "disk_steps_canvas": 8,
+  "disk_steps_export": 16,
+  "halo_ratio": 1.25,
+  "halo_color": [255, 243, 180],
+  "streak_scale": 2.4,
+  "streak_color": [255, 249, 208]
+}

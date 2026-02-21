@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import argparse
+import json
 import math
 import os
 import random
 from dataclasses import dataclass
 
 import cupy as cp  # type: ignore
+import imageio
+import imageio.v3 as iio
+import numpy as np
+from PIL import Image, ImageDraw
 
 try:
     import tkinter as tk
@@ -98,6 +103,7 @@ class SceneCube:
     color: str = "#9aa4c9"
     texture_path: str = ""
     texture_image: object | None = None
+    texture_pil: object | None = None
     texture_tk_id: int | None = None
     keyframes: list[ObjectKeyframe] = None  # type: ignore[assignment]
 
@@ -523,12 +529,12 @@ class AtomSimulatorApp:
 
         self.root = tk.Tk()
         self.root.title("Matter Sim - Physics World")
-        self.root.geometry("460x300")
+        self.root.geometry("3900x2260")
         self.root.resizable(False, False)
 
-        # 240p viewport (16:9)
-        self.world_w = 426
-        self.world_h = 240
+        # 4K UHD viewport (16:9)
+        self.world_w = 3840
+        self.world_h = 2160
         self.world = PhysicsWorld(self.world_w, self.world_h)
         self.running = True
 
@@ -585,6 +591,14 @@ class AtomSimulatorApp:
                 "usage": "tex load <name> <image_path>",
                 "desc": "Load and assign texture image to an object.",
             },
+            "bg": {
+                "usage": "bg <none|clear_sky_earth|deep_space|status>",
+                "desc": "Set Mode-A sky object. Sun is a separate environment object.",
+            },
+            "export": {
+                "usage": "export mp4 <path> [start end fps] | export test4k <png_path>",
+                "desc": "Export Mode-A animation to MP4 or single-frame 4K test image.",
+            },
             "step": {
                 "usage": "step [n]",
                 "desc": "Advance simulation by n steps (default 1).",
@@ -628,6 +642,11 @@ class AtomSimulatorApp:
         self.timeline_fps = 60.0
         self.timeline_playing = False
         self.timeline_accum = 0.0
+        self.background_preset_var = tk.StringVar(value="clear_sky_earth")
+        self.sun_object_name = "sun_earth_view"
+        self.sun_object_enabled = True
+        self.object_assets_dir = os.path.join(os.path.dirname(__file__), "objects")
+        self.object_defs: dict[str, dict] = {}
         self.emergency_pause_enabled = True
         self.emergency_suppress = False
         self.emergency_grace_ticks = 0
@@ -690,6 +709,21 @@ class AtomSimulatorApp:
         self.scale_combo = ttk.Combobox(panel, textvariable=self.scale_profile_var, values=list(SCALE_PROFILES.keys()), state="readonly")
         self.scale_combo.pack(fill=tk.X, pady=2)
         self.scale_combo.bind("<<ComboboxSelected>>", lambda _e: self.apply_scale_profile(self.scale_profile_var.get()))
+
+        ttk.Label(panel, text="Background Preset").pack(anchor="w", pady=(6, 0))
+        self.bg_combo = ttk.Combobox(
+            panel,
+            textvariable=self.background_preset_var,
+            values=["none", "clear_sky_earth", "deep_space"],
+            state="readonly",
+        )
+        self.bg_combo.pack(fill=tk.X, pady=2)
+        self.bg_combo.bind("<<ComboboxSelected>>", lambda _e: self._log(f"background={self.background_preset_var.get()}"))
+        ttk.Button(
+            panel,
+            text="Export MP4 (timeline)",
+            command=lambda: self.execute_external_command(f"export mp4 output_4k.mp4 0 {self.timeline_length} {int(self.timeline_fps)}"),
+        ).pack(fill=tk.X, pady=2)
 
         ttk.Separator(panel).pack(fill=tk.X, pady=8)
 
@@ -998,9 +1032,11 @@ class AtomSimulatorApp:
         if not os.path.exists(path):
             raise ValueError(f"texture file not found: {path}")
         img = tk.PhotoImage(file=path)
+        pil_img = Image.open(path).convert("RGBA")
         obj = self.scene_objects[name]
         obj.texture_path = path
         obj.texture_image = img
+        obj.texture_pil = pil_img
         self._log(f"texture assigned: {name} <- {path}")
 
     def _eval_object_transform(self, obj: SceneCube, frame: int) -> tuple[float, float, float]:
@@ -1117,9 +1153,7 @@ class AtomSimulatorApp:
 
     def _draw_mode_a(self) -> None:
         self.canvas.delete("all")
-
-        # Background + coarse ray-marched density proxy.
-        self.canvas.create_rectangle(0, 0, self.world_w, self.world_h, fill="#090c12", outline="")
+        self._draw_mode_a_background_canvas()
 
         cell = 14
         gw = (self.world_w // cell) + 1
@@ -1227,6 +1261,22 @@ class AtomSimulatorApp:
             f"Selected: {self.selected_index if self.selected_index is not None else 'None'}"
         )
         self._refresh_outliner()
+
+    def _draw_mode_a_background_canvas(self) -> None:
+        bg = self.background_preset_var.get().lower()
+        if bg == "none":
+            self.canvas.create_rectangle(0, 0, self.world_w, self.world_h, fill="#0b0f14", outline="")
+        else:
+            sky = self._load_object_def(bg)
+            if sky is not None:
+                self._draw_canvas_sky_object(sky)
+            else:
+                self.canvas.create_rectangle(0, 0, self.world_w, self.world_h, fill="#0b0f14", outline="")
+
+        if self.sun_object_enabled:
+            sun = self._load_object_def(self.sun_object_name)
+            if sun is not None:
+                self._draw_canvas_sun_object(sun)
 
     def _refresh_outliner(self) -> None:
         if not hasattr(self, "outliner_list"):
@@ -1356,6 +1406,250 @@ class AtomSimulatorApp:
         self.help_text.insert("1.0", text)
         self.help_text.configure(state=tk.DISABLED)
 
+    def execute_external_command(self, command: str) -> None:
+        self.command_var.set(command)
+        self.execute_command()
+
+    def _load_object_def(self, name: str) -> dict | None:
+        if not name:
+            return None
+        key = name.strip().lower()
+        if key in self.object_defs:
+            return self.object_defs[key]
+        path = os.path.join(self.object_assets_dir, f"{key}.json")
+        if not os.path.exists(path):
+            return None
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            self.object_defs[key] = data
+            return data
+        return None
+
+    def _draw_canvas_sky_object(self, sky: dict) -> None:
+        kind = str(sky.get("type", "")).lower()
+        if kind == "sky_gradient":
+            top = tuple(sky.get("top_color", [109, 174, 255]))
+            bot = tuple(sky.get("bottom_color", [173, 212, 255]))
+            for y in range(self.world_h):
+                t = y / max(1, self.world_h - 1)
+                c = self._lerp_rgb(top, bot, t)
+                self.canvas.create_line(0, y, self.world_w, y, fill=self._rgb_to_hex(c))
+            return
+
+        if kind == "deep_space":
+            base = tuple(sky.get("base_color", [4, 6, 12]))
+            self.canvas.create_rectangle(0, 0, self.world_w, self.world_h, fill=self._rgb_to_hex(base), outline="")
+            stars = int(sky.get("stars", 900))
+            star_color = self._rgb_to_hex(tuple(sky.get("star_color", [219, 231, 255])))
+            for i in range(stars):
+                x = (i * 73) % self.world_w
+                y = (i * 131) % self.world_h
+                self.canvas.create_rectangle(x, y, x + 1, y + 1, fill=star_color, outline="")
+            return
+
+        self.canvas.create_rectangle(0, 0, self.world_w, self.world_h, fill="#0b0f14", outline="")
+
+    def _draw_canvas_sun_object(self, sun: dict) -> None:
+        if str(sun.get("type", "")).lower() != "sun_disk":
+            return
+        sx = int(self.world_w * float(sun.get("x_ratio", 0.82)))
+        sy = int(self.world_h * float(sun.get("y_ratio", 0.18)))
+        sun_r = max(8, int(min(self.world_w, self.world_h) * float(sun.get("radius_ratio", 0.03))))
+
+        glow_steps = max(1, int(sun.get("glow_steps_canvas", 14)))
+        glow_extent = float(sun.get("glow_extent", 7.0))
+        glow_inner = tuple(sun.get("glow_inner", [255, 255, 255]))
+        glow_outer = tuple(sun.get("glow_outer", [255, 247, 210]))
+        for i in range(glow_steps, 0, -1):
+            t = i / glow_steps
+            rr = int(sun_r + (sun_r * glow_extent * t))
+            c = self._lerp_rgb(glow_outer, glow_inner, 1.0 - t)
+            self.canvas.create_oval(sx - rr, sy - rr, sx + rr, sy + rr, fill=self._rgb_to_hex(c), outline="")
+
+        disk_steps = max(1, int(sun.get("disk_steps_canvas", 8)))
+        core_inner = tuple(sun.get("core_inner", [255, 251, 236]))
+        core_outer = tuple(sun.get("core_outer", [255, 232, 166]))
+        for i in range(disk_steps, 0, -1):
+            t = i / disk_steps
+            rr = int(max(1, sun_r * t))
+            c = self._lerp_rgb(core_inner, core_outer, 1.0 - t)
+            self.canvas.create_oval(sx - rr, sy - rr, sx + rr, sy + rr, fill=self._rgb_to_hex(c), outline="")
+
+        halo_r = int(sun_r * float(sun.get("halo_ratio", 1.25)))
+        halo_color = self._rgb_to_hex(tuple(sun.get("halo_color", [255, 243, 180])))
+        self.canvas.create_oval(sx - halo_r, sy - halo_r, sx + halo_r, sy + halo_r, outline=halo_color, width=1)
+        streak_color = self._rgb_to_hex(tuple(sun.get("streak_color", [255, 249, 208])))
+        streak_scale = float(sun.get("streak_scale", 2.4))
+        self.canvas.create_line(sx - int(sun_r * streak_scale), sy, sx + int(sun_r * streak_scale), sy, fill=streak_color)
+
+    @staticmethod
+    def _hex_to_rgb(hex_color: str) -> tuple[int, int, int]:
+        c = hex_color.lstrip("#")
+        if len(c) != 6:
+            return (255, 255, 255)
+        r = int(c[0:2], 16)
+        g = int(c[2:4], 16)
+        b = int(c[4:6], 16)
+        return (r, g, b)
+
+    @staticmethod
+    def _rgb_to_hex(rgb: tuple[int, int, int]) -> str:
+        r = max(0, min(255, int(rgb[0])))
+        g = max(0, min(255, int(rgb[1])))
+        b = max(0, min(255, int(rgb[2])))
+        return f"#{r:02x}{g:02x}{b:02x}"
+
+    @staticmethod
+    def _lerp_rgb(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[int, int, int]:
+        tt = max(0.0, min(1.0, t))
+        return (
+            int(a[0] + (b[0] - a[0]) * tt),
+            int(a[1] + (b[1] - a[1]) * tt),
+            int(a[2] + (b[2] - a[2]) * tt),
+        )
+
+    def _render_mode_a_frame_np(self, frame: int) -> np.ndarray:
+        img_pil = Image.new("RGB", (self.world_w, self.world_h), color=(11, 15, 20))
+        draw = ImageDraw.Draw(img_pil, "RGBA")
+        bg = self.background_preset_var.get().lower()
+
+        if bg == "none":
+            draw.rectangle((0, 0, self.world_w, self.world_h), fill=(11, 15, 20, 255))
+        else:
+            sky = self._load_object_def(bg)
+            if sky is not None:
+                self._draw_export_sky_object(draw, sky)
+            else:
+                draw.rectangle((0, 0, self.world_w, self.world_h), fill=(11, 15, 20, 255))
+
+        if self.sun_object_enabled:
+            sun = self._load_object_def(self.sun_object_name)
+            if sun is not None:
+                self._draw_export_sun_object(draw, sun)
+
+        # Draw bonds
+        for b in self.world.bonds:
+            if b.i < 0 or b.j < 0 or b.i >= len(self.world.particles) or b.j >= len(self.world.particles):
+                continue
+            p1 = self.world.particles[b.i]
+            p2 = self.world.particles[b.j]
+            x1, y1 = int(round(p1.x)), int(round(p1.y))
+            x2, y2 = int(round(p2.x)), int(round(p2.y))
+            draw.line((x1, y1, x2, y2), fill=(79, 95, 122, 255), width=1)
+
+        # Draw particles
+        for p in self.world.particles:
+            x = int(round(p.x))
+            y = int(round(p.y))
+            r = max(1, int(round(p.radius * self.render_radius_scale)))
+            col = self._hex_to_rgb(p.material.color)
+            draw.ellipse((x - r, y - r, x + r, y + r), fill=(col[0], col[1], col[2], 255))
+
+        # Draw objects
+        for obj in self.scene_objects.values():
+            ox, oy, rot = self._eval_object_transform(obj, frame)
+            half = max(2.0, obj.size * 0.5)
+            rr = math.radians(rot)
+            c = math.cos(rr)
+            s = math.sin(rr)
+            corners = [(-half, -half), (half, -half), (half, half), (-half, half)]
+            pts = []
+            for px, py in corners:
+                rx = px * c - py * s
+                ry = px * s + py * c
+                pts.append((int(round(ox + rx)), int(round(oy + ry))))
+            draw.polygon(pts, fill=(*self._hex_to_rgb(obj.color), 255), outline=(232, 237, 255, 255))
+            draw.text((int(ox - half), int(oy - half - 12)), obj.name, fill=(210, 220, 230, 255))
+
+            if obj.texture_pil is not None:
+                tex_size = max(8, int(round(obj.size)))
+                tex = obj.texture_pil.resize((tex_size, tex_size), Image.Resampling.BICUBIC)
+                tex = tex.rotate(-rot, expand=True, resample=Image.Resampling.BICUBIC)
+                px = int(round(ox - tex.width * 0.5))
+                py = int(round(oy - tex.height * 0.5))
+                img_pil.paste(tex, (px, py), tex)
+
+        return np.asarray(img_pil, dtype=np.uint8)
+
+    def export_mp4_mode_a(self, out_path: str, start_frame: int, end_frame: int, fps: int) -> None:
+        if end_frame < start_frame:
+            raise ValueError("end_frame must be >= start_frame")
+        fps = max(1, int(fps))
+
+        saved_frame = self.timeline_frame
+        total = end_frame - start_frame + 1
+        with imageio.get_writer(out_path, fps=fps, codec="libx264", quality=8) as writer:
+            for idx, fr in enumerate(range(start_frame, end_frame + 1), start=1):
+                self.timeline_frame = fr
+                frame = self._render_mode_a_frame_np(fr)
+                writer.append_data(frame)
+                if idx % 30 == 0 or idx == total:
+                    self._log(f"export progress: {idx}/{total}")
+        self.timeline_frame = saved_frame
+
+    def _draw_export_sky_object(self, draw: ImageDraw.ImageDraw, sky: dict) -> None:
+        kind = str(sky.get("type", "")).lower()
+        if kind == "sky_gradient":
+            top = tuple(sky.get("top_color", [109, 174, 255]))
+            bot = tuple(sky.get("bottom_color", [173, 212, 255]))
+            for y in range(self.world_h):
+                t = y / max(1, self.world_h - 1)
+                c = self._lerp_rgb(top, bot, t)
+                draw.line((0, y, self.world_w, y), fill=(c[0], c[1], c[2], 255), width=1)
+            return
+
+        if kind == "deep_space":
+            base = tuple(sky.get("base_color", [4, 6, 12]))
+            draw.rectangle((0, 0, self.world_w, self.world_h), fill=(base[0], base[1], base[2], 255))
+            stars = int(sky.get("stars", 12000))
+            sc = tuple(sky.get("star_color", [220, 240, 255]))
+            for i in range(stars):
+                x = (i * 73) % self.world_w
+                y = (i * 131) % self.world_h
+                draw.point((x, y), fill=(sc[0], sc[1], sc[2], 255))
+            return
+
+        draw.rectangle((0, 0, self.world_w, self.world_h), fill=(11, 15, 20, 255))
+
+    def _draw_export_sun_object(self, draw: ImageDraw.ImageDraw, sun: dict) -> None:
+        if str(sun.get("type", "")).lower() != "sun_disk":
+            return
+        sx = int(self.world_w * float(sun.get("x_ratio", 0.82)))
+        sy = int(self.world_h * float(sun.get("y_ratio", 0.18)))
+        sun_r = max(8, int(min(self.world_w, self.world_h) * float(sun.get("radius_ratio", 0.03))))
+
+        glow_steps = max(1, int(sun.get("glow_steps_export", 22)))
+        glow_extent = float(sun.get("glow_extent", 7.0))
+        glow_inner = tuple(sun.get("glow_inner", [255, 255, 255]))
+        glow_outer = tuple(sun.get("glow_outer", [255, 247, 210]))
+        for i in range(glow_steps, 0, -1):
+            t = i / glow_steps
+            rr = int(sun_r + (sun_r * glow_extent * t))
+            alpha = int(8 + (1.0 - t) * 72)
+            c = self._lerp_rgb(glow_outer, glow_inner, 1.0 - t)
+            draw.ellipse((sx - rr, sy - rr, sx + rr, sy + rr), fill=(c[0], c[1], c[2], alpha))
+
+        disk_steps = max(1, int(sun.get("disk_steps_export", 16)))
+        core_inner = tuple(sun.get("core_inner", [255, 251, 236]))
+        core_outer = tuple(sun.get("core_outer", [255, 232, 166]))
+        for i in range(disk_steps, 0, -1):
+            t = i / disk_steps
+            rr = int(max(1, sun_r * t))
+            c = self._lerp_rgb(core_inner, core_outer, 1.0 - t)
+            draw.ellipse((sx - rr, sy - rr, sx + rr, sy + rr), fill=(c[0], c[1], c[2], 255))
+
+        halo_r = int(sun_r * float(sun.get("halo_ratio", 1.25)))
+        hc = tuple(sun.get("halo_color", [255, 243, 180]))
+        draw.ellipse((sx - halo_r, sy - halo_r, sx + halo_r, sy + halo_r), outline=(hc[0], hc[1], hc[2], 210), width=1)
+        streak_scale = float(sun.get("streak_scale", 2.4))
+        sc = tuple(sun.get("streak_color", [255, 249, 208]))
+        draw.line((sx - int(sun_r * streak_scale), sy, sx + int(sun_r * streak_scale), sy), fill=(sc[0], sc[1], sc[2], 170), width=1)
+
+    def export_test4k_png(self, out_path: str) -> None:
+        frame = self._render_mode_a_frame_np(self.timeline_frame)
+        iio.imwrite(out_path, frame)
+
     def show_selected_help(self) -> None:
         sel = self.help_list.curselection()
         if not sel:
@@ -1478,6 +1772,18 @@ class AtomSimulatorApp:
                 else:
                     raise ValueError("usage: view <home|zoom <factor>|pan <dx> <dy>>")
 
+            elif op == "bg":
+                if len(parts) != 2:
+                    raise ValueError("usage: bg <none|clear_sky_earth|deep_space|status>")
+                sub = parts[1].lower()
+                if sub == "status":
+                    self._log(f"background={self.background_preset_var.get()}")
+                elif sub in {"none", "clear_sky_earth", "deep_space"}:
+                    self.background_preset_var.set(sub)
+                    self._log(f"background={sub}")
+                else:
+                    raise ValueError("usage: bg <none|clear_sky_earth|deep_space|status>")
+
             elif op == "obj":
                 if len(parts) < 2:
                     raise ValueError("usage: obj <addcube <name> <x> <y> <size>|del <name>|list>")
@@ -1540,6 +1846,30 @@ class AtomSimulatorApp:
                     self.assign_texture_to_object(name, path)
                 else:
                     raise ValueError("usage: tex load <name> <image_path>")
+
+            elif op == "export":
+                if len(parts) < 2:
+                    raise ValueError("usage: export mp4 <path> [start end fps] | export test4k <png_path>")
+                sub = parts[1].lower()
+                if sub == "mp4" and len(parts) >= 3:
+                    path = parts[2]
+                    if len(parts) >= 6:
+                        start_f = int(parts[3])
+                        end_f = int(parts[4])
+                        fps = int(parts[5])
+                    else:
+                        start_f = 0
+                        end_f = self.timeline_length
+                        fps = int(self.timeline_fps)
+                    self._log(f"exporting mp4: {path} frames={start_f}-{end_f} fps={fps} res={self.world_w}x{self.world_h}")
+                    self.export_mp4_mode_a(path, start_f, end_f, fps)
+                    self._log(f"export done: {path}")
+                elif sub == "test4k" and len(parts) >= 3:
+                    path = parts[2]
+                    self.export_test4k_png(path)
+                    self._log(f"4k test frame written: {path}")
+                else:
+                    raise ValueError("usage: export mp4 <path> [start end fps] | export test4k <png_path>")
 
             elif op == "step":
                 n = int(parts[1]) if len(parts) > 1 else 1
