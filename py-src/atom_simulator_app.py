@@ -656,6 +656,7 @@ class AtomSimulatorApp:
         self._build_command_center()
         self._bind_events()
         self.world.load_preset("Hydrogen")
+        self._load_default_scene_objects()
         self.selected_index = 0 if self.world.particles else None
 
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -1004,6 +1005,66 @@ class AtomSimulatorApp:
     # -----------------------------
     # Mode-A scene objects + timeline
     # -----------------------------
+    def _load_default_scene_objects(self) -> None:
+        path = os.path.join(self.object_assets_dir, "scene_defaults.json")
+        if not os.path.exists(path):
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception as exc:
+            self._log(f"warning: failed to load scene defaults: {exc}")
+            return
+
+        if not isinstance(data, dict):
+            return
+        names = data.get("objects", [])
+        if not isinstance(names, list):
+            return
+        for item in names:
+            if not isinstance(item, str):
+                continue
+            obj = self._load_object_def(item)
+            if obj is None:
+                self._log(f"warning: scene object not found: {item}")
+                continue
+            self._spawn_scene_object_from_def(obj)
+
+    def _spawn_scene_object_from_def(self, data: dict) -> None:
+        if str(data.get("type", "")).lower() != "scene_cube":
+            return
+        name = str(data.get("name", "")).strip()
+        if not name:
+            return
+
+        x = self.world_w * float(data.get("x_ratio", 0.5))
+        y = self.world_h * float(data.get("y_ratio", 0.5))
+        size = min(self.world_w, self.world_h) * float(data.get("size_ratio", 0.1))
+        rot = float(data.get("rot_deg", 0.0))
+        color = str(data.get("color", "#9aa4c9"))
+
+        if name in self.scene_objects:
+            obj = self.scene_objects[name]
+            obj.x = x
+            obj.y = y
+            obj.size = size
+            obj.rot_deg = rot
+            obj.color = color
+            obj.texture_path = ""
+            obj.texture_image = None
+            obj.texture_pil = None
+            obj.keyframes = []
+            return
+
+        obj = SceneCube(name=name, x=x, y=y, size=size)
+        obj.rot_deg = rot
+        obj.color = color
+        obj.texture_path = ""
+        obj.texture_image = None
+        obj.texture_pil = None
+        obj.keyframes = []
+        self.scene_objects[name] = obj
+
     def add_cube_object(self, name: str, x: float, y: float, size: float) -> None:
         if name in self.scene_objects:
             raise ValueError(f"object already exists: {name}")

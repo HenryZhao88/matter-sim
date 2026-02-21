@@ -1,0 +1,7 @@
+{
+  "name": "scene_defaults",
+  "objects": [
+    "baseplate_default",
+    "cube_default"
+  ]
+}

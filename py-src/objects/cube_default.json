@@ -1,0 +1,9 @@
+{
+  "name": "cube",
+  "type": "scene_cube",
+  "x_ratio": 0.5,
+  "y_ratio": 0.56,
+  "size_ratio": 0.12,
+  "rot_deg": 15.0,
+  "color": "#8a93b6"
+}

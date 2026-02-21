@@ -1,0 +1,9 @@
+{
+  "name": "baseplate",
+  "type": "scene_cube",
+  "x_ratio": 0.5,
+  "y_ratio": 0.86,
+  "size_ratio": 0.62,
+  "rot_deg": 0.0,
+  "color": "#3c4255"
+}
