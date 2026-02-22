@@ -610,6 +610,10 @@ class AtomSimulatorApp:
                 "usage": "snap <on|off|grid <size>|status>",
                 "desc": "Toggle Blender-like transform snapping and set grid size.",
             },
+            "rotvel": {
+                "usage": "rotvel <deg_per_sec|status>",
+                "desc": "Set or query arrow-key angular velocity used while in rotate mode.",
+            },
             "bg": {
                 "usage": "bg <none|clear_sky_earth|deep_space|status>",
                 "desc": "Set Mode-A sky object. Sun is a separate environment object.",
@@ -673,6 +677,12 @@ class AtomSimulatorApp:
         self.transform_axis: str | None = None
         self.transform_anchor_world: tuple[float, float] | None = None
         self.transform_initial: tuple[float, float, float, float] | None = None
+        self.rotate_key_left = False
+        self.rotate_key_right = False
+        self.rotate_key_up = False
+        self.rotate_key_down = False
+        self.rotate_key_undo_armed = False
+        self.rotate_key_angular_velocity_dps = 90.0
         self.undo_stack: list[dict[str, dict]] = []
         self.redo_stack: list[dict[str, dict]] = []
         self.emergency_pause_enabled = True
@@ -873,6 +883,15 @@ class AtomSimulatorApp:
         self.root.bind("<Control-z>", lambda _e: self.undo_scene_edit())
         self.root.bind("<Control-y>", lambda _e: self.redo_scene_edit())
         self.root.bind("<Shift-Tab>", lambda _e: self.toggle_snap())
+        self.root.bind("<KeyPress-Left>", lambda _e: self._on_rotate_arrow_press("left"))
+        self.root.bind("<KeyPress-Right>", lambda _e: self._on_rotate_arrow_press("right"))
+        self.root.bind("<KeyPress-Up>", lambda _e: self._on_rotate_arrow_press("up"))
+        self.root.bind("<KeyPress-Down>", lambda _e: self._on_rotate_arrow_press("down"))
+        self.root.bind("<KeyRelease-Left>", lambda _e: self._on_rotate_arrow_release("left"))
+        self.root.bind("<KeyRelease-Right>", lambda _e: self._on_rotate_arrow_release("right"))
+        self.root.bind("<KeyRelease-Up>", lambda _e: self._on_rotate_arrow_release("up"))
+        self.root.bind("<KeyRelease-Down>", lambda _e: self._on_rotate_arrow_release("down"))
+        self.root.bind("<FocusOut>", lambda _e: self._clear_rotate_key_state())
 
     # -----------------------------
     # Presets
@@ -1170,6 +1189,63 @@ class AtomSimulatorApp:
         self.snap_enabled = not self.snap_enabled
         self._log(f"snap enabled={self.snap_enabled} grid={self.snap_grid:.2f}")
 
+    def _clear_rotate_key_state(self) -> None:
+        self.rotate_key_left = False
+        self.rotate_key_right = False
+        self.rotate_key_up = False
+        self.rotate_key_down = False
+
+    def _on_rotate_arrow_press(self, direction: str) -> None:
+        if direction == "left":
+            self.rotate_key_left = True
+        elif direction == "right":
+            self.rotate_key_right = True
+        elif direction == "up":
+            self.rotate_key_up = True
+        elif direction == "down":
+            self.rotate_key_down = True
+
+        if self.sim_mode_var.get().upper() != "A":
+            return
+        if self.transform_mode != "rotate":
+            return
+        if self.selected_object_name is None or self.selected_object_name not in self.scene_objects:
+            return
+        if not self.rotate_key_undo_armed:
+            self._push_undo()
+            self.rotate_key_undo_armed = True
+
+    def _on_rotate_arrow_release(self, direction: str) -> None:
+        if direction == "left":
+            self.rotate_key_left = False
+        elif direction == "right":
+            self.rotate_key_right = False
+        elif direction == "up":
+            self.rotate_key_up = False
+        elif direction == "down":
+            self.rotate_key_down = False
+
+    def _apply_rotate_key_hold(self, dt_seconds: float) -> None:
+        if self.sim_mode_var.get().upper() != "A":
+            return
+        if self.transform_mode != "rotate":
+            return
+        if self.selected_object_name is None:
+            return
+        obj = self.scene_objects.get(self.selected_object_name)
+        if obj is None:
+            return
+
+        direction = 0
+        if self.rotate_key_left or self.rotate_key_down:
+            direction -= 1
+        if self.rotate_key_right or self.rotate_key_up:
+            direction += 1
+        if direction == 0:
+            return
+
+        obj.rot_deg += direction * self.rotate_key_angular_velocity_dps * max(0.0, dt_seconds)
+
     def start_transform_mode(self, mode: str) -> None:
         if self.selected_object_name is None or self.selected_object_name not in self.scene_objects:
             return
@@ -1177,6 +1253,8 @@ class AtomSimulatorApp:
         self.transform_mode = mode
         self.transform_axis = None
         self.transform_initial = (obj.x, obj.y, obj.rot_deg, obj.size)
+        self.rotate_key_undo_armed = False
+        self._clear_rotate_key_state()
         self._log(f"transform {mode}: {obj.name} (axis: free)")
 
     def set_transform_axis(self, axis: str) -> None:
@@ -1197,6 +1275,8 @@ class AtomSimulatorApp:
         self.transform_axis = None
         self.transform_anchor_world = None
         self.transform_initial = None
+        self.rotate_key_undo_armed = False
+        self._clear_rotate_key_state()
         self._log("transform canceled")
 
     def confirm_transform(self) -> None:
@@ -1206,6 +1286,8 @@ class AtomSimulatorApp:
         self.transform_axis = None
         self.transform_anchor_world = None
         self.transform_initial = None
+        self.rotate_key_undo_armed = False
+        self._clear_rotate_key_state()
         self._log("transform confirmed")
 
     def duplicate_selected_object(self) -> None:
@@ -1754,6 +1836,7 @@ class AtomSimulatorApp:
             self._update_physics()
         elif self.emergency_grace_ticks > 0:
             self.emergency_grace_ticks -= 1
+        self._apply_rotate_key_hold(0.016)
         self._draw()
         self.root.after(16, self._tick)
 
@@ -2259,6 +2342,15 @@ class AtomSimulatorApp:
                     self._log(f"snap enabled={self.snap_enabled} grid={self.snap_grid:.2f}")
                 else:
                     raise ValueError("usage: snap <on|off|grid <size>|status>")
+
+            elif op == "rotvel":
+                if len(parts) != 2:
+                    raise ValueError("usage: rotvel <deg_per_sec|status>")
+                if parts[1].lower() == "status":
+                    self._log(f"rotvel={self.rotate_key_angular_velocity_dps:.2f} deg/s")
+                else:
+                    self.rotate_key_angular_velocity_dps = max(1.0, float(parts[1]))
+                    self._log(f"rotvel={self.rotate_key_angular_velocity_dps:.2f} deg/s")
 
             elif op == "key":
                 if len(parts) != 7 or parts[1].lower() != "set":
