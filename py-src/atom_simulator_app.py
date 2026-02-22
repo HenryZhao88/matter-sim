@@ -64,6 +64,8 @@ class Particle:
     vx: float
     vy: float
     material: Material
+    z: float = 0.0
+    vz: float = 0.0
 
     @property
     def mass(self) -> float:
@@ -124,6 +126,7 @@ class PhysicsWorld:
     def __init__(self, world_w: int, world_h: int) -> None:
         self.world_w = world_w
         self.world_h = world_h
+        self.world_d = 2400.0
         self.particles: list[Particle] = []
 
         self.dt = 0.008
@@ -151,6 +154,13 @@ class PhysicsWorld:
     def clear_all(self) -> None:
         self.particles.clear()
         self.bonds.clear()
+
+    def _seed_particle_depth(self, span: float = 480.0, vz_span: float = 40.0) -> None:
+        half = max(1.0, span * 0.5)
+        hv = max(0.0, vz_span * 0.5)
+        for p in self.particles:
+            p.z = random.uniform(-half, half)
+            p.vz = random.uniform(-hv, hv)
 
     def load_preset(self, name: str, distance_scale: float = 1.0, velocity_scale: float = 1.0) -> None:
         self.clear_all()
@@ -213,6 +223,9 @@ class PhysicsWorld:
         elif name == "Aluminum Cube (50nm, scaled)":
             self._load_aluminum_cube_50nm_scaled()
 
+        if self.particles:
+            self._seed_particle_depth()
+
     def _load_aluminum_cube_50nm_scaled(self) -> None:
         self.clear_all()
 
@@ -268,6 +281,8 @@ class PhysicsWorld:
                     random.uniform(-100, 100),
                     random.uniform(-100, 100),
                     mat,
+                    random.uniform(-280.0, 280.0),
+                    random.uniform(-40.0, 40.0),
                 )
             )
 
@@ -505,15 +520,18 @@ class PhysicsWorld:
 
             p.vx = (p.vx + ax * self.dt) * self.drag
             p.vy = (p.vy + ay * self.dt) * self.drag
+            p.vz = p.vz * self.drag
 
-            speed = math.hypot(p.vx, p.vy)
+            speed = math.sqrt(p.vx * p.vx + p.vy * p.vy + p.vz * p.vz)
             if speed > self.max_speed:
                 s = self.max_speed / speed
                 p.vx *= s
                 p.vy *= s
+                p.vz *= s
 
             p.x += p.vx * self.dt
             p.y += p.vy * self.dt
+            p.z += p.vz * self.dt
 
             if p.x < p.radius:
                 p.x = p.radius
@@ -528,6 +546,14 @@ class PhysicsWorld:
             elif p.y > self.world_h - p.radius:
                 p.y = self.world_h - p.radius
                 p.vy *= -0.9
+
+            z_lim = self.world_d * 0.5
+            if p.z < -z_lim:
+                p.z = -z_lim
+                p.vz *= -0.9
+            elif p.z > z_lim:
+                p.z = z_lim
+                p.vz *= -0.9
 
 
 class AtomSimulatorApp:
@@ -1092,6 +1118,8 @@ class AtomSimulatorApp:
                     random.uniform(-100, 100) * SCALE_PROFILES[self.scale_profile_var.get()]["velocity"],
                     random.uniform(-100, 100) * SCALE_PROFILES[self.scale_profile_var.get()]["velocity"],
                     mat,
+                    random.uniform(-280.0, 280.0),
+                    random.uniform(-40.0, 40.0),
                 )
             )
         self._log(f"spawned {count} {mat.name}")
@@ -1842,7 +1870,10 @@ class AtomSimulatorApp:
         bins = [0.0] * (gw * gh)
 
         for p in self.world.particles:
-            sx, sy = self.world_to_screen(p.x, p.y)
+            proj = self.world3_to_screen(p.x, p.y, p.z)
+            if proj is None:
+                continue
+            sx, sy, _sp, _dp = proj
             ix = int(sx // cell)
             iy = int(sy // cell)
             if 0 <= ix < gw and 0 <= iy < gh:
@@ -1905,24 +1936,37 @@ class AtomSimulatorApp:
                 continue
             p1 = self.world.particles[b.i]
             p2 = self.world.particles[b.j]
-            x1, y1 = self.world_to_screen(p1.x, p1.y)
-            x2, y2 = self.world_to_screen(p2.x, p2.y)
+            pp1 = self.world3_to_screen(p1.x, p1.y, p1.z)
+            pp2 = self.world3_to_screen(p2.x, p2.y, p2.z)
+            if pp1 is None or pp2 is None:
+                continue
+            x1, y1, _s1, _d1 = pp1
+            x2, y2, _s2, _d2 = pp2
             self.canvas.create_line(x1, y1, x2, y2, fill="#5f7aa0")
 
-        # Particle sample with glow and ray-like velocity streak.
+        # Particle sample with glow and ray-like velocity streak in 3D projection.
         n = len(self.world.particles)
         stride = max(1, n // 3500)
+        particle_items: list[tuple[float, int, Particle, float, float, float]] = []
         for i in range(0, n, stride):
             p = self.world.particles[i]
-            sx, sy = self.world_to_screen(p.x, p.y)
-            r = max(1.0, p.radius * self.render_radius_scale * 0.85 * self.view_zoom)
+            proj = self.world3_to_screen(p.x, p.y, p.z)
+            if proj is None:
+                continue
+            sx, sy, perspective, depth = proj
+            r = max(1.0, p.radius * self.render_radius_scale * 0.85 * perspective)
+            particle_items.append((depth, i, p, sx, sy, r))
+
+        for _depth, i, p, sx, sy, r in sorted(particle_items, key=lambda it: it[0], reverse=True):
             speed = math.hypot(p.vx, p.vy)
             trail = min(16.0, speed * 0.06)
             if speed > 1e-4:
                 tx = p.x - (p.vx / speed) * trail
                 ty = p.y - (p.vy / speed) * trail
-                tsx, tsy = self.world_to_screen(tx, ty)
-                self.canvas.create_line(sx, sy, tsx, tsy, fill="#dfe8ff")
+                tproj = self.world3_to_screen(tx, ty, p.z)
+                if tproj is not None:
+                    tsx, tsy, _tp, _td = tproj
+                    self.canvas.create_line(sx, sy, tsx, tsy, fill="#dfe8ff")
 
             self.canvas.create_oval(sx - (r + 2), sy - (r + 2), sx + (r + 2), sy + (r + 2), outline="#7aa6ff")
             self.canvas.create_oval(sx - r, sy - r, sx + r, sy + r, fill=p.material.color, outline="")
@@ -2375,15 +2419,27 @@ class AtomSimulatorApp:
                 continue
             p1 = self.world.particles[b.i]
             p2 = self.world.particles[b.j]
-            x1, y1 = int(round(p1.x)), int(round(p1.y))
-            x2, y2 = int(round(p2.x)), int(round(p2.y))
+            pp1 = self.world3_to_screen(p1.x, p1.y, p1.z)
+            pp2 = self.world3_to_screen(p2.x, p2.y, p2.z)
+            if pp1 is None or pp2 is None:
+                continue
+            x1, y1, _s1, _d1 = pp1
+            x2, y2, _s2, _d2 = pp2
             draw.line((x1, y1, x2, y2), fill=(79, 95, 122, 255), width=1)
 
         # Draw particles
+        p_items: list[tuple[float, Particle, float, float, float]] = []
         for p in self.world.particles:
-            x = int(round(p.x))
-            y = int(round(p.y))
-            r = max(1, int(round(p.radius * self.render_radius_scale)))
+            proj = self.world3_to_screen(p.x, p.y, p.z)
+            if proj is None:
+                continue
+            sx, sy, perspective, depth = proj
+            p_items.append((depth, p, sx, sy, perspective))
+
+        for _depth, p, sx, sy, perspective in sorted(p_items, key=lambda it: it[0], reverse=True):
+            x = int(round(sx))
+            y = int(round(sy))
+            r = max(1, int(round(p.radius * self.render_radius_scale * perspective)))
             col = self._hex_to_rgb(p.material.color)
             draw.ellipse((x - r, y - r, x + r, y + r), fill=(col[0], col[1], col[2], 255))
 
@@ -2840,7 +2896,7 @@ class AtomSimulatorApp:
                 self._log(f"objects total={len(self.scene_objects)}")
                 self._log(f"particles total={len(self.world.particles)}")
                 for i, p in enumerate(take):
-                    self._log(f"[{i}] {p.material.name} pos=({p.x:.2f},{p.y:.2f}) vel=({p.vx:.2f},{p.vy:.2f})")
+                    self._log(f"[{i}] {p.material.name} pos=({p.x:.2f},{p.y:.2f},{p.z:.2f}) vel=({p.vx:.2f},{p.vy:.2f},{p.vz:.2f})")
 
             elif op == "setv":
                 if len(parts) != 4:
@@ -2913,7 +2969,7 @@ class ConsoleSimulatorApp:
         print(f"Particles: {len(self.world.particles)}")
         preview = self.world.particles[:8]
         for i, p in enumerate(preview):
-            print(f"[{i}] {p.material.name:8s} pos=({p.x:7.2f},{p.y:7.2f}) vel=({p.vx:7.2f},{p.vy:7.2f})")
+            print(f"[{i}] {p.material.name:8s} pos=({p.x:7.2f},{p.y:7.2f},{p.z:7.2f}) vel=({p.vx:7.2f},{p.vy:7.2f},{p.vz:7.2f})")
         if len(self.world.particles) > len(preview):
             print(f"... ({len(self.world.particles) - len(preview)} more)")
 
