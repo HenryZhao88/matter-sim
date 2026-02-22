@@ -4,6 +4,7 @@
   "kind": "light",
   "x_ratio": 0.32,
   "y_ratio": 0.22,
+  "z": -180.0,
   "size_ratio": 0.06,
   "rot_deg": 0.0,
   "color": "#ffe0a3",

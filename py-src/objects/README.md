@@ -21,3 +21,7 @@ Mode-A editor hotkeys:
 - `Shift+D` duplicate selected object
 - `Ctrl+Z` undo, `Ctrl+Y` redo
 - `Shift+Tab` toggle snapping
+
+3D notes:
+- Object cache entries are normalized as 3D with `dimensionality: "3d"` and `z` depth.
+- Right mouse drag rotates the camera (mouse-look).

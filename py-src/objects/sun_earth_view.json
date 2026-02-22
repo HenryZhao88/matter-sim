@@ -3,6 +3,7 @@
   "type": "sun_disk",
   "x_ratio": 0.82,
   "y_ratio": 0.18,
+  "z": 4500.0,
   "radius_ratio": 0.03,
   "core_inner": [255, 251, 236],
   "core_outer": [255, 232, 166],

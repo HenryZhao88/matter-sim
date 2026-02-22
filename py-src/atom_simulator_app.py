@@ -99,6 +99,7 @@ class SceneCube:
     name: str
     x: float
     y: float
+    z: float
     size: float
     kind: str = "cube"
     rot_deg: float = 0.0
@@ -579,11 +580,11 @@ class AtomSimulatorApp:
                 "desc": "Configure exact Mode-B photon transport and atom-photon momentum coupling.",
             },
             "view": {
-                "usage": "view <home|zoom <factor>|pan <dx> <dy>>",
-                "desc": "Viewport controls similar to DCC tools (frame/home, zoom, pan).",
+                "usage": "view <home|zoom <factor>|pan <dx> <dy>|depth <value>|status>",
+                "desc": "Viewport controls similar to DCC tools (frame/home, zoom, pan, 3D depth).",
             },
             "obj": {
-                "usage": "obj <addcube|addplane|addsphere|addlight|addcamera> <name> <x> <y> <size> | obj del <name> | obj list",
+                "usage": "obj <addcube|addplane|addsphere|addlight|addcamera> <name> <x> <y> [z] <size> | obj z <name> <z> | obj del <name> | obj list",
                 "desc": "Manage Mode-A scene objects (primitives, light, camera).",
             },
             "key": {
@@ -613,6 +614,10 @@ class AtomSimulatorApp:
             "rotvel": {
                 "usage": "rotvel <deg_per_sec|status>",
                 "desc": "Set or query arrow-key angular velocity used while in rotate mode.",
+            },
+            "camera": {
+                "usage": "camera <status|pos <x> <y> <z>|rot <yaw> <pitch> <roll>|fov <deg>|speed <move|turn> <v>|reset>",
+                "desc": "Configure full 3D camera transform, optics, and speed.",
             },
             "bg": {
                 "usage": "bg <none|clear_sky_earth|deep_space|status>",
@@ -683,6 +688,31 @@ class AtomSimulatorApp:
         self.rotate_key_down = False
         self.rotate_key_undo_armed = False
         self.rotate_key_angular_velocity_dps = 90.0
+        self.view_depth = 1200.0
+        self.camera_x = self.world_w * 0.5
+        self.camera_y = self.world_h * 0.5
+        self.camera_z = -1200.0
+        self.camera_yaw_deg = 0.0
+        self.camera_pitch_deg = 0.0
+        self.camera_roll_deg = 0.0
+        self.camera_fov_deg = 60.0
+        self.camera_near = 1.0
+        self.camera_move_speed = 500.0
+        self.camera_turn_speed = 75.0
+        self.camera_look_sensitivity = 0.22
+        self.camera_look_drag_last: tuple[float, float] | None = None
+        self.cam_key_forward = False
+        self.cam_key_back = False
+        self.cam_key_left = False
+        self.cam_key_right = False
+        self.cam_key_up = False
+        self.cam_key_down = False
+        self.cam_key_yaw_left = False
+        self.cam_key_yaw_right = False
+        self.cam_key_pitch_up = False
+        self.cam_key_pitch_down = False
+        self.cam_key_roll_left = False
+        self.cam_key_roll_right = False
         self.undo_stack: list[dict[str, dict]] = []
         self.redo_stack: list[dict[str, dict]] = []
         self.emergency_pause_enabled = True
@@ -863,7 +893,9 @@ class AtomSimulatorApp:
         self.canvas.bind("<Button-1>", self.on_left_down)
         self.canvas.bind("<B1-Motion>", self.on_drag)
         self.canvas.bind("<ButtonRelease-1>", self.on_left_up)
-        self.canvas.bind("<Button-3>", self.on_right_click_spawn)
+        self.canvas.bind("<Button-3>", self.on_right_down_camera_look)
+        self.canvas.bind("<B3-Motion>", self.on_right_drag_camera_look)
+        self.canvas.bind("<ButtonRelease-3>", self.on_right_up_camera_look)
         self.canvas.bind("<Button-2>", self.on_middle_down)
         self.canvas.bind("<B2-Motion>", self.on_middle_drag)
         self.canvas.bind("<ButtonRelease-2>", self.on_middle_up)
@@ -891,7 +923,31 @@ class AtomSimulatorApp:
         self.root.bind("<KeyRelease-Right>", lambda _e: self._on_rotate_arrow_release("right"))
         self.root.bind("<KeyRelease-Up>", lambda _e: self._on_rotate_arrow_release("up"))
         self.root.bind("<KeyRelease-Down>", lambda _e: self._on_rotate_arrow_release("down"))
-        self.root.bind("<FocusOut>", lambda _e: self._clear_rotate_key_state())
+        self.root.bind("<FocusOut>", lambda _e: (self._clear_rotate_key_state(), self._clear_camera_key_state(), self._clear_camera_look_state()))
+        self.root.bind("<KeyPress-w>", lambda _e: self._on_camera_key_press("forward"))
+        self.root.bind("<KeyPress-s>", lambda _e: self._on_camera_key_press("back"))
+        self.root.bind("<KeyPress-a>", lambda _e: self._on_camera_key_press("left"))
+        self.root.bind("<KeyPress-d>", lambda _e: self._on_camera_key_press("right"))
+        self.root.bind("<KeyPress-q>", lambda _e: self._on_camera_key_press("up"))
+        self.root.bind("<KeyPress-e>", lambda _e: self._on_camera_key_press("down"))
+        self.root.bind("<KeyPress-j>", lambda _e: self._on_camera_key_press("yaw_left"))
+        self.root.bind("<KeyPress-l>", lambda _e: self._on_camera_key_press("yaw_right"))
+        self.root.bind("<KeyPress-i>", lambda _e: self._on_camera_key_press("pitch_up"))
+        self.root.bind("<KeyPress-k>", lambda _e: self._on_camera_key_press("pitch_down"))
+        self.root.bind("<KeyPress-u>", lambda _e: self._on_camera_key_press("roll_left"))
+        self.root.bind("<KeyPress-o>", lambda _e: self._on_camera_key_press("roll_right"))
+        self.root.bind("<KeyRelease-w>", lambda _e: self._on_camera_key_release("forward"))
+        self.root.bind("<KeyRelease-s>", lambda _e: self._on_camera_key_release("back"))
+        self.root.bind("<KeyRelease-a>", lambda _e: self._on_camera_key_release("left"))
+        self.root.bind("<KeyRelease-d>", lambda _e: self._on_camera_key_release("right"))
+        self.root.bind("<KeyRelease-q>", lambda _e: self._on_camera_key_release("up"))
+        self.root.bind("<KeyRelease-e>", lambda _e: self._on_camera_key_release("down"))
+        self.root.bind("<KeyRelease-j>", lambda _e: self._on_camera_key_release("yaw_left"))
+        self.root.bind("<KeyRelease-l>", lambda _e: self._on_camera_key_release("yaw_right"))
+        self.root.bind("<KeyRelease-i>", lambda _e: self._on_camera_key_release("pitch_up"))
+        self.root.bind("<KeyRelease-k>", lambda _e: self._on_camera_key_release("pitch_down"))
+        self.root.bind("<KeyRelease-u>", lambda _e: self._on_camera_key_release("roll_left"))
+        self.root.bind("<KeyRelease-o>", lambda _e: self._on_camera_key_release("roll_right"))
 
     # -----------------------------
     # Presets
@@ -917,6 +973,48 @@ class AtomSimulatorApp:
         sy = (y + self.view_pan_y) * self.view_zoom
         return sx, sy
 
+    @staticmethod
+    def _rot_x(x: float, y: float, z: float, deg: float) -> tuple[float, float, float]:
+        a = math.radians(deg)
+        c = math.cos(a)
+        s = math.sin(a)
+        return x, (y * c - z * s), (y * s + z * c)
+
+    @staticmethod
+    def _rot_y(x: float, y: float, z: float, deg: float) -> tuple[float, float, float]:
+        a = math.radians(deg)
+        c = math.cos(a)
+        s = math.sin(a)
+        return (x * c + z * s), y, (-x * s + z * c)
+
+    @staticmethod
+    def _rot_z(x: float, y: float, z: float, deg: float) -> tuple[float, float, float]:
+        a = math.radians(deg)
+        c = math.cos(a)
+        s = math.sin(a)
+        return (x * c - y * s), (x * s + y * c), z
+
+    def world3_to_screen(self, x: float, y: float, z: float) -> tuple[float, float, float, float] | None:
+        # World uses y-down. Convert to camera math y-up.
+        wx = x - self.camera_x
+        wy = -(y - self.camera_y)
+        wz = z - self.camera_z
+
+        # Inverse camera orientation: world -> camera space.
+        cx, cy, cz = self._rot_z(wx, wy, wz, -self.camera_roll_deg)
+        cx, cy, cz = self._rot_x(cx, cy, cz, -self.camera_pitch_deg)
+        cx, cy, cz = self._rot_y(cx, cy, cz, -self.camera_yaw_deg)
+
+        if cz <= max(0.1, self.camera_near):
+            return None
+
+        fov = max(10.0, min(160.0, self.camera_fov_deg))
+        focal = (self.world_h * 0.5) / math.tan(math.radians(fov * 0.5)) * self.view_zoom
+        sx = (self.world_w * 0.5) + (cx / cz) * focal + self.view_pan_x
+        sy = (self.world_h * 0.5) - (cy / cz) * focal + self.view_pan_y
+        scale = focal / cz
+        return sx, sy, scale, cz
+
     def screen_to_world(self, sx: float, sy: float) -> tuple[float, float]:
         x = sx / self.view_zoom - self.view_pan_x
         y = sy / self.view_zoom - self.view_pan_y
@@ -933,6 +1031,22 @@ class AtomSimulatorApp:
         self.view_zoom = 1.0
         self.view_pan_x = 0.0
         self.view_pan_y = 0.0
+
+    def reset_camera(self) -> None:
+        self.camera_x = self.world_w * 0.5
+        self.camera_y = self.world_h * 0.5
+        self.camera_z = -1200.0
+        self.camera_yaw_deg = 0.0
+        self.camera_pitch_deg = 0.0
+        self.camera_roll_deg = 0.0
+        self.camera_fov_deg = 60.0
+
+    def camera_status_text(self) -> str:
+        return (
+            f"camera pos=({self.camera_x:.2f}, {self.camera_y:.2f}, {self.camera_z:.2f}) "
+            f"rot(yaw,pitch,roll)=({self.camera_yaw_deg:.2f}, {self.camera_pitch_deg:.2f}, {self.camera_roll_deg:.2f}) "
+            f"fov={self.camera_fov_deg:.2f} move_speed={self.camera_move_speed:.2f} turn_speed={self.camera_turn_speed:.2f}"
+        )
 
     def delete_selected(self) -> None:
         if self.selected_object_name is not None and self.selected_object_name in self.scene_objects:
@@ -1081,10 +1195,28 @@ class AtomSimulatorApp:
         self.drag_start = None
         self.drag_current = None
 
-    def on_right_click_spawn(self, event) -> None:
-        mat = MATERIALS[self.material_var.get()]
-        wx, wy = self.screen_to_world(float(event.x), float(event.y))
-        self.world.particles.append(Particle(wx, wy, 0.0, 0.0, mat))
+    def on_right_down_camera_look(self, event) -> None:
+        if self.sim_mode_var.get().upper() != "A":
+            return
+        self.camera_look_drag_last = (float(event.x), float(event.y))
+
+    def on_right_drag_camera_look(self, event) -> None:
+        if self.sim_mode_var.get().upper() != "A":
+            return
+        if self.camera_look_drag_last is None:
+            self.camera_look_drag_last = (float(event.x), float(event.y))
+            return
+        lx, ly = self.camera_look_drag_last
+        nx, ny = float(event.x), float(event.y)
+        dx = nx - lx
+        dy = ny - ly
+        self.camera_yaw_deg += dx * self.camera_look_sensitivity
+        self.camera_pitch_deg = max(-89.0, min(89.0, self.camera_pitch_deg - dy * self.camera_look_sensitivity))
+        self.camera_look_drag_last = (nx, ny)
+
+    def on_right_up_camera_look(self, event) -> None:
+        _ = event
+        self.camera_look_drag_last = None
 
     def on_middle_down(self, event) -> None:
         self.viewport_drag_last = (float(event.x), float(event.y))
@@ -1124,6 +1256,7 @@ class AtomSimulatorApp:
                 "name": o.name,
                 "x": o.x,
                 "y": o.y,
+                "z": o.z,
                 "size": o.size,
                 "kind": o.kind,
                 "rot_deg": o.rot_deg,
@@ -1145,6 +1278,7 @@ class AtomSimulatorApp:
                 name=str(d.get("name", n)),
                 x=float(d.get("x", 0.0)),
                 y=float(d.get("y", 0.0)),
+                z=float(d.get("z", 0.0)),
                 size=float(d.get("size", 80.0)),
                 kind=str(d.get("kind", "cube")),
                 rot_deg=float(d.get("rot_deg", 0.0)),
@@ -1246,6 +1380,127 @@ class AtomSimulatorApp:
 
         obj.rot_deg += direction * self.rotate_key_angular_velocity_dps * max(0.0, dt_seconds)
 
+    def _on_camera_key_press(self, key: str) -> None:
+        if key == "forward":
+            self.cam_key_forward = True
+        elif key == "back":
+            self.cam_key_back = True
+        elif key == "left":
+            self.cam_key_left = True
+        elif key == "right":
+            self.cam_key_right = True
+        elif key == "up":
+            self.cam_key_up = True
+        elif key == "down":
+            self.cam_key_down = True
+        elif key == "yaw_left":
+            self.cam_key_yaw_left = True
+        elif key == "yaw_right":
+            self.cam_key_yaw_right = True
+        elif key == "pitch_up":
+            self.cam_key_pitch_up = True
+        elif key == "pitch_down":
+            self.cam_key_pitch_down = True
+        elif key == "roll_left":
+            self.cam_key_roll_left = True
+        elif key == "roll_right":
+            self.cam_key_roll_right = True
+
+    def _on_camera_key_release(self, key: str) -> None:
+        if key == "forward":
+            self.cam_key_forward = False
+        elif key == "back":
+            self.cam_key_back = False
+        elif key == "left":
+            self.cam_key_left = False
+        elif key == "right":
+            self.cam_key_right = False
+        elif key == "up":
+            self.cam_key_up = False
+        elif key == "down":
+            self.cam_key_down = False
+        elif key == "yaw_left":
+            self.cam_key_yaw_left = False
+        elif key == "yaw_right":
+            self.cam_key_yaw_right = False
+        elif key == "pitch_up":
+            self.cam_key_pitch_up = False
+        elif key == "pitch_down":
+            self.cam_key_pitch_down = False
+        elif key == "roll_left":
+            self.cam_key_roll_left = False
+        elif key == "roll_right":
+            self.cam_key_roll_right = False
+
+    def _clear_camera_key_state(self) -> None:
+        self.cam_key_forward = False
+        self.cam_key_back = False
+        self.cam_key_left = False
+        self.cam_key_right = False
+        self.cam_key_up = False
+        self.cam_key_down = False
+        self.cam_key_yaw_left = False
+        self.cam_key_yaw_right = False
+        self.cam_key_pitch_up = False
+        self.cam_key_pitch_down = False
+        self.cam_key_roll_left = False
+        self.cam_key_roll_right = False
+
+    def _clear_camera_look_state(self) -> None:
+        self.camera_look_drag_last = None
+
+    def _apply_camera_key_hold(self, dt_seconds: float) -> None:
+        if self.sim_mode_var.get().upper() != "A":
+            return
+        if self.transform_mode is not None:
+            return
+
+        s = max(0.0, dt_seconds)
+        move = self.camera_move_speed * s
+        turn = self.camera_turn_speed * s
+
+        # Orientation controls
+        if self.cam_key_yaw_left:
+            self.camera_yaw_deg -= turn
+        if self.cam_key_yaw_right:
+            self.camera_yaw_deg += turn
+        if self.cam_key_pitch_up:
+            self.camera_pitch_deg += turn
+        if self.cam_key_pitch_down:
+            self.camera_pitch_deg -= turn
+        if self.cam_key_roll_left:
+            self.camera_roll_deg -= turn
+        if self.cam_key_roll_right:
+            self.camera_roll_deg += turn
+
+        self.camera_pitch_deg = max(-89.0, min(89.0, self.camera_pitch_deg))
+
+        # Movement in camera-relative basis (y-up math space), then convert to world y-down.
+        yaw = math.radians(self.camera_yaw_deg)
+        pitch = math.radians(self.camera_pitch_deg)
+        fx = math.sin(yaw) * math.cos(pitch)
+        fy = math.sin(pitch)
+        fz = math.cos(yaw) * math.cos(pitch)
+        rx, ry, rz = fz, 0.0, -fx
+        rlen = max(1e-6, math.sqrt(rx * rx + ry * ry + rz * rz))
+        rx, ry, rz = rx / rlen, ry / rlen, rz / rlen
+        ux = (ry * fz - rz * fy)
+        uy = (rz * fx - rx * fz)
+        uz = (rx * fy - ry * fx)
+
+        fw = (1.0 if self.cam_key_forward else 0.0) - (1.0 if self.cam_key_back else 0.0)
+        st = (1.0 if self.cam_key_right else 0.0) - (1.0 if self.cam_key_left else 0.0)
+        vv = (1.0 if self.cam_key_up else 0.0) - (1.0 if self.cam_key_down else 0.0)
+        if fw == 0.0 and st == 0.0 and vv == 0.0:
+            return
+
+        dx = (fx * fw + rx * st + ux * vv) * move
+        dy_up = (fy * fw + ry * st + uy * vv) * move
+        dz = (fz * fw + rz * st + uz * vv) * move
+        self.camera_x += dx
+        self.camera_y -= dy_up
+        self.camera_z += dz
+
     def start_transform_mode(self, mode: str) -> None:
         if self.selected_object_name is None or self.selected_object_name not in self.scene_objects:
             return
@@ -1316,8 +1571,11 @@ class AtomSimulatorApp:
             if not obj.visible:
                 continue
             ox, oy, _rot = self._eval_object_transform(obj, self.timeline_frame)
-            sox, soy = self.world_to_screen(ox, oy)
-            half = max(4.0, obj.size * 0.5 * self.view_zoom)
+            p3 = self.world3_to_screen(ox, oy, obj.z)
+            if p3 is None:
+                continue
+            sox, soy, perspective, _cam_depth = p3
+            half = max(4.0, obj.size * 0.5 * perspective)
             if math.hypot(sx - sox, sy - soy) <= half * 1.2:
                 return name
         return None
@@ -1359,6 +1617,7 @@ class AtomSimulatorApp:
 
         x = self.world_w * float(data.get("x_ratio", 0.5))
         y = self.world_h * float(data.get("y_ratio", 0.5))
+        z = float(data.get("z", 0.0))
         size = min(self.world_w, self.world_h) * float(data.get("size_ratio", 0.1))
         rot = float(data.get("rot_deg", 0.0))
         color = str(data.get("color", "#9aa4c9"))
@@ -1372,6 +1631,7 @@ class AtomSimulatorApp:
             obj = self.scene_objects[name]
             obj.x = x
             obj.y = y
+            obj.z = z
             obj.size = size
             obj.kind = kind
             obj.rot_deg = rot
@@ -1386,7 +1646,7 @@ class AtomSimulatorApp:
             obj.keyframes = []
             return
 
-        obj = SceneCube(name=name, x=x, y=y, size=size, kind=kind)
+        obj = SceneCube(name=name, x=x, y=y, z=z, size=size, kind=kind)
         obj.rot_deg = rot
         obj.color = color
         obj.roughness = roughness
@@ -1399,31 +1659,31 @@ class AtomSimulatorApp:
         obj.keyframes = []
         self.scene_objects[name] = obj
 
-    def _add_scene_object(self, kind: str, name: str, x: float, y: float, size: float) -> None:
+    def _add_scene_object(self, kind: str, name: str, x: float, y: float, z: float, size: float) -> None:
         if name in self.scene_objects:
             raise ValueError(f"object already exists: {name}")
         self._push_undo()
-        self.scene_objects[name] = SceneCube(name=name, x=x, y=y, size=size, kind=kind)
+        self.scene_objects[name] = SceneCube(name=name, x=x, y=y, z=z, size=size, kind=kind)
         self.selected_object_name = name
         self.selected_index = None
-        self._log(f"object added: {name} kind={kind} at ({x:.1f}, {y:.1f}) size={size:.1f}")
+        self._log(f"object added: {name} kind={kind} at ({x:.1f}, {y:.1f}, {z:.1f}) size={size:.1f}")
 
-    def add_cube_object(self, name: str, x: float, y: float, size: float) -> None:
-        self._add_scene_object("cube", name, x, y, size)
+    def add_cube_object(self, name: str, x: float, y: float, z: float, size: float) -> None:
+        self._add_scene_object("cube", name, x, y, z, size)
 
-    def add_plane_object(self, name: str, x: float, y: float, size: float) -> None:
-        self._add_scene_object("plane", name, x, y, size)
+    def add_plane_object(self, name: str, x: float, y: float, z: float, size: float) -> None:
+        self._add_scene_object("plane", name, x, y, z, size)
 
-    def add_sphere_object(self, name: str, x: float, y: float, size: float) -> None:
-        self._add_scene_object("sphere", name, x, y, size)
+    def add_sphere_object(self, name: str, x: float, y: float, z: float, size: float) -> None:
+        self._add_scene_object("sphere", name, x, y, z, size)
 
-    def add_light_object(self, name: str, x: float, y: float, size: float) -> None:
-        self._add_scene_object("light", name, x, y, size)
+    def add_light_object(self, name: str, x: float, y: float, z: float, size: float) -> None:
+        self._add_scene_object("light", name, x, y, z, size)
         self.scene_objects[name].emission = 1.0
         self.scene_objects[name].color = "#ffe1a3"
 
-    def add_camera_object(self, name: str, x: float, y: float, size: float) -> None:
-        self._add_scene_object("camera", name, x, y, size)
+    def add_camera_object(self, name: str, x: float, y: float, z: float, size: float) -> None:
+        self._add_scene_object("camera", name, x, y, z, size)
         self.scene_objects[name].color = "#9ad0ff"
 
     def delete_object(self, name: str) -> None:
@@ -1608,19 +1868,22 @@ class AtomSimulatorApp:
                     x1 = x0 + cell
                     self.canvas.create_rectangle(x0, y0, x1, y1, fill=color, outline="")
 
-        # Mode-A scene objects
+        # Mode-A scene objects (3D depth-sorted, perspective projected)
+        draw_items: list[tuple[float, str, SceneCube, float, float, float, float, float, float]] = []
         for name, obj in self.scene_objects.items():
             if not obj.visible:
                 continue
             ox, oy, rot = self._eval_object_transform(obj, self.timeline_frame)
-            sx, sy = self.world_to_screen(ox, oy)
-            half = max(2.0, obj.size * 0.5 * self.view_zoom)
-            rad = math.radians(rot)
-            c = math.cos(rad)
-            s = math.sin(rad)
+            p3 = self.world3_to_screen(ox, oy, obj.z)
+            if p3 is None:
+                continue
+            sx, sy, perspective, cam_depth = p3
+            half = max(2.0, obj.size * 0.5 * perspective)
+            draw_items.append((cam_depth, name, obj, sx, sy, half, rot, ox, oy))
 
-            self._draw_mode_a_object_canvas(obj, sx, sy, half, c, s)
-            self.canvas.create_text(sx, sy - half - 8, text=f"{name} ({obj.kind})", fill="#d3dcff", font=("TkDefaultFont", 8))
+        for _depth, name, obj, sx, sy, half, rot, ox, oy in sorted(draw_items, key=lambda it: it[0], reverse=True):
+            self._draw_mode_a_object_canvas(obj, ox, oy, rot, sx, sy, half)
+            self.canvas.create_text(sx, sy - half - 8, text=f"{name} ({obj.kind}) z={obj.z:.1f}", fill="#d3dcff", font=("TkDefaultFont", 8))
 
             if self.selected_object_name == name:
                 rr = half + 6
@@ -1676,11 +1939,16 @@ class AtomSimulatorApp:
             self.canvas.create_line(dsx, dsy, dcx, dcy, fill="#ffffff", width=2, arrow=tk.LAST)
 
         edit_state = f"T:{self.transform_mode or '-'} A:{self.transform_axis or '-'} snap={self.snap_enabled} g={self.snap_grid:.1f}"
+        cam_state = (
+            f"cam pos=({self.camera_x:.0f},{self.camera_y:.0f},{self.camera_z:.0f}) "
+            f"rot=({self.camera_yaw_deg:.1f},{self.camera_pitch_deg:.1f},{self.camera_roll_deg:.1f}) "
+            f"fov={self.camera_fov_deg:.1f}"
+        )
         self.info_var.set(
             f"Mode: A | Particles: {len(self.world.particles)} Bonds: {len(self.world.bonds)} | Running: {self.running} | "
             f"Timeline: {self.timeline_frame}/{self.timeline_length} @ {self.timeline_fps:.1f}fps play={self.timeline_playing} | "
             f"Selected Particle: {self.selected_index if self.selected_index is not None else 'None'} | "
-            f"Selected Object: {self.selected_object_name or 'None'} | {edit_state}"
+            f"Selected Object: {self.selected_object_name or 'None'} | {edit_state} | {cam_state}"
         )
         self._refresh_outliner()
 
@@ -1700,95 +1968,124 @@ class AtomSimulatorApp:
             if sun is not None:
                 self._draw_canvas_sun_object(sun)
 
-    def _draw_mode_a_object_canvas(self, obj: SceneCube, sx: float, sy: float, half: float, c: float, s: float) -> None:
+    @staticmethod
+    def _shade_rgb(col: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
+        return (
+            max(0, min(255, int(col[0] * factor))),
+            max(0, min(255, int(col[1] * factor))),
+            max(0, min(255, int(col[2] * factor))),
+        )
+
+    def _box_dims_for_object(self, obj: SceneCube) -> tuple[float, float, float]:
         kind = obj.kind.lower()
-        if kind in {"cube", "plane"}:
-            if kind == "plane":
-                half_y = max(2.0, half * 0.35)
-            else:
-                half_y = half
-            corners = [(-half, -half_y), (half, -half_y), (half, half_y), (-half, half_y)]
-            pts: list[float] = []
-            for px, py in corners:
-                rx = px * c - py * s
-                ry = px * s + py * c
-                pts.extend([sx + rx, sy + ry])
-            self.canvas.create_polygon(*pts, fill=obj.color, outline="#e8edff")
-            return
-
-        if kind == "sphere":
-            self.canvas.create_oval(sx - half, sy - half, sx + half, sy + half, fill=obj.color, outline="#e8edff")
-            hi = max(2.0, half * 0.28)
-            self.canvas.create_oval(sx - hi * 1.7, sy - hi * 1.7, sx - hi * 0.2, sy - hi * 0.2, fill="#ffffff", outline="")
-            return
-
+        hx = max(4.0, obj.size * 0.5)
+        if kind == "plane":
+            return hx, max(2.0, hx * 0.55), max(1.0, hx * 0.08)
         if kind == "light":
-            self.canvas.create_oval(sx - half, sy - half, sx + half, sy + half, fill=obj.color, outline="#fff0c5")
-            r2 = half * 1.6
-            self.canvas.create_line(sx - r2, sy, sx + r2, sy, fill="#ffe7ad")
-            self.canvas.create_line(sx, sy - r2, sx, sy + r2, fill="#ffe7ad")
-            return
-
+            return max(3.0, hx * 0.35), max(3.0, hx * 0.35), max(3.0, hx * 0.35)
         if kind == "camera":
-            w = half * 1.1
-            h = half * 0.75
-            self.canvas.create_rectangle(sx - w, sy - h, sx + w, sy + h, fill=obj.color, outline="#d8ebff")
-            self.canvas.create_polygon(sx + w, sy - h * 0.55, sx + w + h, sy, sx + w, sy + h * 0.55, fill=obj.color, outline="#d8ebff")
-            return
+            return max(3.0, hx * 0.8), max(3.0, hx * 0.5), max(3.0, hx * 0.4)
+        if kind == "sphere":
+            return hx, hx, hx
+        return hx, hx, max(2.0, hx * 0.75)
 
-        self.canvas.create_rectangle(sx - half, sy - half, sx + half, sy + half, fill=obj.color, outline="#e8edff")
+    def _project_object_box(
+        self,
+        obj: SceneCube,
+        ox: float,
+        oy: float,
+        rot_deg: float,
+    ) -> tuple[list[tuple[float, float, float]], list[tuple[tuple[int, ...], float]]] | None:
+        hx, hy, hz = self._box_dims_for_object(obj)
+        corners_local = [
+            (-hx, -hy, -hz),
+            (hx, -hy, -hz),
+            (hx, hy, -hz),
+            (-hx, hy, -hz),
+            (-hx, -hy, hz),
+            (hx, -hy, hz),
+            (hx, hy, hz),
+            (-hx, hy, hz),
+        ]
 
-    def _draw_export_object(self, draw: ImageDraw.ImageDraw, obj: SceneCube, ox: float, oy: float, rot: float, img_pil: Image.Image) -> None:
-        kind = obj.kind.lower()
-        half = max(2.0, obj.size * 0.5)
-        rr = math.radians(rot)
+        rr = math.radians(rot_deg)
         c = math.cos(rr)
         s = math.sin(rr)
+        projected: list[tuple[float, float, float]] = []
+        for lx, ly, lz in corners_local:
+            wx = ox + (lx * c - ly * s)
+            wy = oy + (lx * s + ly * c)
+            wz = obj.z + lz
+            p = self.world3_to_screen(wx, wy, wz)
+            if p is None:
+                return None
+            sx, sy, _scale, cam_depth = p
+            projected.append((sx, sy, cam_depth))
+
+        # Faces + shade factors; draw far -> near.
+        faces: list[tuple[tuple[int, ...], float]] = [
+            ((4, 5, 6, 7), 1.00),  # top
+            ((0, 1, 2, 3), 0.55),  # bottom
+            ((0, 3, 7, 4), 0.78),  # left
+            ((1, 2, 6, 5), 0.88),  # right
+            ((3, 2, 6, 7), 0.95),  # front
+            ((0, 1, 5, 4), 0.68),  # back
+        ]
+        faces.sort(key=lambda it: sum(projected[i][2] for i in it[0]) / len(it[0]), reverse=True)
+        return projected, faces
+
+    def _draw_mode_a_object_canvas(self, obj: SceneCube, ox: float, oy: float, rot_deg: float, sx: float, sy: float, half: float) -> None:
+        kind = obj.kind.lower()
         col = self._hex_to_rgb(obj.color)
 
-        if kind in {"cube", "plane"}:
-            half_y = max(2.0, half * 0.35) if kind == "plane" else half
-            corners = [(-half, -half_y), (half, -half_y), (half, half_y), (-half, half_y)]
-            pts = []
-            for px, py in corners:
-                rx = px * c - py * s
-                ry = px * s + py * c
-                pts.append((int(round(ox + rx)), int(round(oy + ry))))
-            draw.polygon(pts, fill=(col[0], col[1], col[2], 255), outline=(232, 237, 255, 255))
-            if obj.texture_pil is not None and kind == "cube":
-                tex_size = max(8, int(round(obj.size)))
+        mesh = self._project_object_box(obj, ox, oy, rot_deg)
+        if mesh is None:
+            return
+        projected, faces = mesh
+        for idxs, shade in faces:
+            pts: list[float] = []
+            for i in idxs:
+                pts.extend([projected[i][0], projected[i][1]])
+            shaded = self._shade_rgb(col, shade)
+            self.canvas.create_polygon(*pts, fill=self._rgb_to_hex(shaded), outline="#d7e2ff")
+
+        # Additional type cues.
+        if kind == "light":
+            r2 = half * 1.2
+            self.canvas.create_line(sx - r2, sy, sx + r2, sy, fill="#ffe7ad")
+            self.canvas.create_line(sx, sy - r2, sx, sy + r2, fill="#ffe7ad")
+        elif kind == "camera":
+            self.canvas.create_line(sx, sy, sx + half * 1.4, sy, fill="#d8ebff")
+
+    def _draw_export_object(
+        self,
+        draw: ImageDraw.ImageDraw,
+        obj: SceneCube,
+        ox: float,
+        oy: float,
+        rot: float,
+        img_pil: Image.Image,
+    ) -> None:
+        col = self._hex_to_rgb(obj.color)
+        mesh = self._project_object_box(obj, ox, oy, rot)
+        if mesh is None:
+            return
+        projected, faces = mesh
+        for idxs, shade in faces:
+            pts = [(int(round(projected[i][0])), int(round(projected[i][1]))) for i in idxs]
+            shaded = self._shade_rgb(col, shade)
+            draw.polygon(pts, fill=(shaded[0], shaded[1], shaded[2], 255), outline=(215, 226, 255, 255))
+
+        if obj.texture_pil is not None and obj.kind.lower() == "cube":
+            center = self.world3_to_screen(ox, oy, obj.z)
+            if center is not None:
+                csx, csy, scale, _depth = center
+                tex_size = max(8, int(round(obj.size * max(0.05, scale))))
                 tex = obj.texture_pil.resize((tex_size, tex_size), Image.Resampling.BICUBIC)
                 tex = tex.rotate(-rot, expand=True, resample=Image.Resampling.BICUBIC)
-                px = int(round(ox - tex.width * 0.5))
-                py = int(round(oy - tex.height * 0.5))
+                px = int(round(csx - tex.width * 0.5))
+                py = int(round(csy - tex.height * 0.5))
                 img_pil.paste(tex, (px, py), tex)
-            return
-
-        if kind == "sphere":
-            draw.ellipse((int(ox - half), int(oy - half), int(ox + half), int(oy + half)), fill=(col[0], col[1], col[2], 255), outline=(232, 237, 255, 255))
-            hi = max(2.0, half * 0.28)
-            draw.ellipse((int(ox - hi * 1.7), int(oy - hi * 1.7), int(ox - hi * 0.2), int(oy - hi * 0.2)), fill=(255, 255, 255, 200))
-            return
-
-        if kind == "light":
-            draw.ellipse((int(ox - half), int(oy - half), int(ox + half), int(oy + half)), fill=(col[0], col[1], col[2], 255), outline=(255, 240, 197, 255))
-            r2 = half * 1.6
-            draw.line((int(ox - r2), int(oy), int(ox + r2), int(oy)), fill=(255, 231, 173, 220), width=1)
-            draw.line((int(ox), int(oy - r2), int(ox), int(oy + r2)), fill=(255, 231, 173, 220), width=1)
-            return
-
-        if kind == "camera":
-            w = half * 1.1
-            h = half * 0.75
-            draw.rectangle((int(ox - w), int(oy - h), int(ox + w), int(oy + h)), fill=(col[0], col[1], col[2], 255), outline=(216, 235, 255, 255))
-            draw.polygon(
-                [(int(ox + w), int(oy - h * 0.55)), (int(ox + w + h), int(oy)), (int(ox + w), int(oy + h * 0.55))],
-                fill=(col[0], col[1], col[2], 255),
-                outline=(216, 235, 255, 255),
-            )
-            return
-
-        draw.rectangle((int(ox - half), int(oy - half), int(ox + half), int(oy + half)), fill=(col[0], col[1], col[2], 255), outline=(232, 237, 255, 255))
 
     def _refresh_outliner(self) -> None:
         if not hasattr(self, "outliner_list"):
@@ -1799,7 +2096,7 @@ class AtomSimulatorApp:
         for name in sorted_names:
             obj = self.scene_objects[name]
             ox, oy, rot = self._eval_object_transform(obj, self.timeline_frame)
-            self.outliner_list.insert(tk.END, f"OBJ  | {name} [{obj.kind}] [{obj.collection}] | ({ox:.1f}, {oy:.1f}) r={rot:.1f}")
+            self.outliner_list.insert(tk.END, f"OBJ  | {name} [{obj.kind}] [{obj.collection}] | ({ox:.1f}, {oy:.1f}, {obj.z:.1f}) r={rot:.1f}")
 
         limit = min(150, len(self.world.particles))
         for i in range(limit):
@@ -1837,6 +2134,7 @@ class AtomSimulatorApp:
         elif self.emergency_grace_ticks > 0:
             self.emergency_grace_ticks -= 1
         self._apply_rotate_key_hold(0.016)
+        self._apply_camera_key_hold(0.016)
         self._draw()
         self.root.after(16, self._tick)
 
@@ -1932,6 +2230,26 @@ class AtomSimulatorApp:
         self.command_var.set(command)
         self.execute_command()
 
+    def _normalize_object_def_3d(self, data: dict) -> dict:
+        norm = dict(data)
+        typ = str(norm.get("type", "")).lower()
+        norm["dimensionality"] = "3d"
+
+        if typ == "scene_cube":
+            norm["z"] = float(norm.get("z", 0.0))
+            norm["x_ratio"] = float(norm.get("x_ratio", 0.5))
+            norm["y_ratio"] = float(norm.get("y_ratio", 0.5))
+            norm["size_ratio"] = float(norm.get("size_ratio", 0.1))
+            norm["kind"] = str(norm.get("kind", "cube")).lower()
+        elif typ == "sun_disk":
+            norm["z"] = float(norm.get("z", 4500.0))
+            norm["x_ratio"] = float(norm.get("x_ratio", 0.82))
+            norm["y_ratio"] = float(norm.get("y_ratio", 0.18))
+        elif typ in {"sky_gradient", "deep_space"}:
+            norm["z"] = float(norm.get("z", 12000.0))
+
+        return norm
+
     def _load_object_def(self, name: str) -> dict | None:
         if not name:
             return None
@@ -1944,8 +2262,9 @@ class AtomSimulatorApp:
         with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict):
-            self.object_defs[key] = data
-            return data
+            norm = self._normalize_object_def_3d(data)
+            self.object_defs[key] = norm
+            return norm
         return None
 
     def _draw_canvas_sky_object(self, sky: dict) -> None:
@@ -2068,14 +2387,26 @@ class AtomSimulatorApp:
             col = self._hex_to_rgb(p.material.color)
             draw.ellipse((x - r, y - r, x + r, y + r), fill=(col[0], col[1], col[2], 255))
 
-        # Draw objects
+        # Draw objects (depth-sorted in camera space)
+        render_items: list[tuple[float, SceneCube, float, float, float]] = []
         for obj in self.scene_objects.values():
             if not obj.visible:
                 continue
             ox, oy, rot = self._eval_object_transform(obj, frame)
+            p3 = self.world3_to_screen(ox, oy, obj.z)
+            if p3 is None:
+                continue
+            sx, sy, perspective, cam_depth = p3
+            render_items.append((cam_depth, obj, ox, oy, rot))
+
+        for _depth, obj, ox, oy, rot in sorted(render_items, key=lambda it: it[0], reverse=True):
             self._draw_export_object(draw, obj, ox, oy, rot, img_pil)
-            half = max(2.0, obj.size * 0.5)
-            draw.text((int(ox - half), int(oy - half - 12)), f"{obj.name} ({obj.kind})", fill=(210, 220, 230, 255))
+            center = self.world3_to_screen(ox, oy, obj.z)
+            if center is None:
+                continue
+            sx, sy, perspective, _ = center
+            half = max(2.0, obj.size * 0.5 * perspective)
+            draw.text((int(sx - half), int(sy - half - 12)), f"{obj.name} ({obj.kind}) z={obj.z:.1f}", fill=(210, 220, 230, 255))
 
         return np.asarray(img_pil, dtype=np.uint8)
 
@@ -2261,7 +2592,7 @@ class AtomSimulatorApp:
 
             elif op == "view":
                 if len(parts) < 2:
-                    raise ValueError("usage: view <home|zoom <factor>|pan <dx> <dy>>")
+                    raise ValueError("usage: view <home|zoom <factor>|pan <dx> <dy>|depth <value>|status>")
                 sub = parts[1].lower()
                 if sub == "home":
                     self.reset_view()
@@ -2276,8 +2607,50 @@ class AtomSimulatorApp:
                     self.view_pan_x += dx
                     self.view_pan_y += dy
                     self._log(f"view pan=({self.view_pan_x:.2f}, {self.view_pan_y:.2f})")
+                elif sub == "depth" and len(parts) == 3:
+                    self.view_depth = max(64.0, float(parts[2]))
+                    self._log(f"view depth={self.view_depth:.2f}")
+                elif sub == "status":
+                    self._log(
+                        f"view zoom={self.view_zoom:.3f} pan=({self.view_pan_x:.2f}, {self.view_pan_y:.2f}) depth={self.view_depth:.2f}"
+                    )
                 else:
-                    raise ValueError("usage: view <home|zoom <factor>|pan <dx> <dy>>")
+                    raise ValueError("usage: view <home|zoom <factor>|pan <dx> <dy>|depth <value>|status>")
+
+            elif op == "camera":
+                if len(parts) < 2:
+                    raise ValueError("usage: camera <status|pos <x> <y> <z>|rot <yaw> <pitch> <roll>|fov <deg>|speed <move|turn> <v>|reset>")
+                sub = parts[1].lower()
+                if sub == "status":
+                    self._log(self.camera_status_text())
+                elif sub == "reset":
+                    self.reset_camera()
+                    self._log("camera reset")
+                elif sub == "pos" and len(parts) == 5:
+                    self.camera_x = float(parts[2])
+                    self.camera_y = float(parts[3])
+                    self.camera_z = float(parts[4])
+                    self._log(self.camera_status_text())
+                elif sub == "rot" and len(parts) == 5:
+                    self.camera_yaw_deg = float(parts[2])
+                    self.camera_pitch_deg = max(-89.0, min(89.0, float(parts[3])))
+                    self.camera_roll_deg = float(parts[4])
+                    self._log(self.camera_status_text())
+                elif sub == "fov" and len(parts) == 3:
+                    self.camera_fov_deg = max(10.0, min(160.0, float(parts[2])))
+                    self._log(self.camera_status_text())
+                elif sub == "speed" and len(parts) == 4:
+                    kind = parts[2].lower()
+                    val = max(1.0, float(parts[3]))
+                    if kind == "move":
+                        self.camera_move_speed = val
+                    elif kind == "turn":
+                        self.camera_turn_speed = val
+                    else:
+                        raise ValueError("usage: camera speed <move|turn> <v>")
+                    self._log(self.camera_status_text())
+                else:
+                    raise ValueError("usage: camera <status|pos <x> <y> <z>|rot <yaw> <pitch> <roll>|fov <deg>|speed <move|turn> <v>|reset>")
 
             elif op == "bg":
                 if len(parts) != 2:
@@ -2293,18 +2666,36 @@ class AtomSimulatorApp:
 
             elif op == "obj":
                 if len(parts) < 2:
-                    raise ValueError("usage: obj <addcube|addplane|addsphere|addlight|addcamera> <name> <x> <y> <size> | obj del <name> | obj list")
+                    raise ValueError("usage: obj <addcube|addplane|addsphere|addlight|addcamera> <name> <x> <y> [z] <size> | obj z <name> <z> | obj del <name> | obj list")
                 sub = parts[1].lower()
-                if sub == "addcube" and len(parts) == 6:
-                    self.add_cube_object(parts[2], float(parts[3]), float(parts[4]), float(parts[5]))
-                elif sub == "addplane" and len(parts) == 6:
-                    self.add_plane_object(parts[2], float(parts[3]), float(parts[4]), float(parts[5]))
-                elif sub == "addsphere" and len(parts) == 6:
-                    self.add_sphere_object(parts[2], float(parts[3]), float(parts[4]), float(parts[5]))
-                elif sub == "addlight" and len(parts) == 6:
-                    self.add_light_object(parts[2], float(parts[3]), float(parts[4]), float(parts[5]))
-                elif sub == "addcamera" and len(parts) == 6:
-                    self.add_camera_object(parts[2], float(parts[3]), float(parts[4]), float(parts[5]))
+                if sub in {"addcube", "addplane", "addsphere", "addlight", "addcamera"} and len(parts) in {6, 7}:
+                    name = parts[2]
+                    x = float(parts[3])
+                    y = float(parts[4])
+                    if len(parts) == 6:
+                        z = 0.0
+                        size = float(parts[5])
+                    else:
+                        z = float(parts[5])
+                        size = float(parts[6])
+                    if sub == "addcube":
+                        self.add_cube_object(name, x, y, z, size)
+                    elif sub == "addplane":
+                        self.add_plane_object(name, x, y, z, size)
+                    elif sub == "addsphere":
+                        self.add_sphere_object(name, x, y, z, size)
+                    elif sub == "addlight":
+                        self.add_light_object(name, x, y, z, size)
+                    elif sub == "addcamera":
+                        self.add_camera_object(name, x, y, z, size)
+                elif sub == "z" and len(parts) == 4:
+                    name = parts[2]
+                    z = float(parts[3])
+                    if name not in self.scene_objects:
+                        raise ValueError(f"object not found: {name}")
+                    self._push_undo()
+                    self.scene_objects[name].z = z
+                    self._log(f"obj {name} z={z:.2f}")
                 elif sub == "del" and len(parts) == 3:
                     self.delete_object(parts[2])
                 elif sub == "list":
@@ -2313,11 +2704,11 @@ class AtomSimulatorApp:
                         obj = self.scene_objects[name]
                         x, y, r = self._eval_object_transform(obj, self.timeline_frame)
                         self._log(
-                            f"obj {name} kind={obj.kind} pos=({x:.1f},{y:.1f}) size={obj.size:.1f} rot={r:.1f} "
+                            f"obj {name} kind={obj.kind} pos=({x:.1f},{y:.1f},{obj.z:.1f}) size={obj.size:.1f} rot={r:.1f} "
                             f"mat(r={obj.roughness:.2f} m={obj.metallic:.2f} e={obj.emission:.2f})"
                         )
                 else:
-                    raise ValueError("usage: obj <addcube|addplane|addsphere|addlight|addcamera> <name> <x> <y> <size> | obj del <name> | obj list")
+                    raise ValueError("usage: obj <addcube|addplane|addsphere|addlight|addcamera> <name> <x> <y> [z] <size> | obj z <name> <z> | obj del <name> | obj list")
 
             elif op == "undo":
                 self.undo_scene_edit()

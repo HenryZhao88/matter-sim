@@ -4,6 +4,7 @@
   "kind": "cube",
   "x_ratio": 0.5,
   "y_ratio": 0.56,
+  "z": 120.0,
   "size_ratio": 0.12,
   "rot_deg": 15.0,
   "color": "#8a93b6",

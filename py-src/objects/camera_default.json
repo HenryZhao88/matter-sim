@@ -4,6 +4,7 @@
   "kind": "camera",
   "x_ratio": 0.18,
   "y_ratio": 0.74,
+  "z": -240.0,
   "size_ratio": 0.08,
   "rot_deg": 0.0,
   "color": "#9ad0ff",
