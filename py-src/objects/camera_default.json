@@ -1,0 +1,14 @@
+{
+  "name": "camera_main",
+  "type": "scene_cube",
+  "kind": "camera",
+  "x_ratio": 0.18,
+  "y_ratio": 0.74,
+  "size_ratio": 0.08,
+  "rot_deg": 0.0,
+  "color": "#9ad0ff",
+  "roughness": 0.1,
+  "metallic": 0.0,
+  "emission": 0.0,
+  "collection": "Cameras"
+}

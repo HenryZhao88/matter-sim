@@ -1,0 +1,14 @@
+{
+  "name": "key_light",
+  "type": "scene_cube",
+  "kind": "light",
+  "x_ratio": 0.32,
+  "y_ratio": 0.22,
+  "size_ratio": 0.06,
+  "rot_deg": 0.0,
+  "color": "#ffe0a3",
+  "roughness": 0.0,
+  "metallic": 0.0,
+  "emission": 1.0,
+  "collection": "Lights"
+}

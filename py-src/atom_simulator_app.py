@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
 import math
 import os
@@ -99,8 +100,14 @@ class SceneCube:
     x: float
     y: float
     size: float
+    kind: str = "cube"
     rot_deg: float = 0.0
     color: str = "#9aa4c9"
+    roughness: float = 0.55
+    metallic: float = 0.0
+    emission: float = 0.0
+    visible: bool = True
+    collection: str = "Scene"
     texture_path: str = ""
     texture_image: object | None = None
     texture_pil: object | None = None
@@ -576,8 +583,8 @@ class AtomSimulatorApp:
                 "desc": "Viewport controls similar to DCC tools (frame/home, zoom, pan).",
             },
             "obj": {
-                "usage": "obj <addcube <name> <x> <y> <size>|del <name>|list>",
-                "desc": "Manage Mode-A scene objects (Blender-style primitives).",
+                "usage": "obj <addcube|addplane|addsphere|addlight|addcamera> <name> <x> <y> <size> | obj del <name> | obj list",
+                "desc": "Manage Mode-A scene objects (primitives, light, camera).",
             },
             "key": {
                 "usage": "key set <name> <frame> <x> <y> <rot_deg>",
@@ -590,6 +597,18 @@ class AtomSimulatorApp:
             "tex": {
                 "usage": "tex load <name> <image_path>",
                 "desc": "Load and assign texture image to an object.",
+            },
+            "undo": {
+                "usage": "undo",
+                "desc": "Undo latest scene-object edit in Mode A.",
+            },
+            "redo": {
+                "usage": "redo",
+                "desc": "Redo latest undone scene-object edit in Mode A.",
+            },
+            "snap": {
+                "usage": "snap <on|off|grid <size>|status>",
+                "desc": "Toggle Blender-like transform snapping and set grid size.",
             },
             "bg": {
                 "usage": "bg <none|clear_sky_earth|deep_space|status>",
@@ -637,6 +656,7 @@ class AtomSimulatorApp:
         self.scale_profile_var = tk.StringVar(value="micro")
         self.render_radius_scale = SCALE_PROFILES["micro"]["render_radius"]
         self.scene_objects: dict[str, SceneCube] = {}
+        self.selected_object_name: str | None = None
         self.timeline_frame = 0
         self.timeline_length = 240
         self.timeline_fps = 60.0
@@ -647,6 +667,14 @@ class AtomSimulatorApp:
         self.sun_object_enabled = True
         self.object_assets_dir = os.path.join(os.path.dirname(__file__), "objects")
         self.object_defs: dict[str, dict] = {}
+        self.snap_enabled = True
+        self.snap_grid = 12.0
+        self.transform_mode: str | None = None
+        self.transform_axis: str | None = None
+        self.transform_anchor_world: tuple[float, float] | None = None
+        self.transform_initial: tuple[float, float, float, float] | None = None
+        self.undo_stack: list[dict[str, dict]] = []
+        self.redo_stack: list[dict[str, dict]] = []
         self.emergency_pause_enabled = True
         self.emergency_suppress = False
         self.emergency_grace_ticks = 0
@@ -834,6 +862,17 @@ class AtomSimulatorApp:
         self.canvas.bind("<Button-5>", lambda e: self._zoom_at(e.x, e.y, 1.0 / 1.1))
         self.root.bind("<space>", lambda _e: self.toggle_running())
         self.root.bind("<Delete>", lambda _e: self.delete_selected())
+        self.root.bind("<g>", lambda _e: self.start_transform_mode("move"))
+        self.root.bind("<r>", lambda _e: self.start_transform_mode("rotate"))
+        self.root.bind("<s>", lambda _e: self.start_transform_mode("scale"))
+        self.root.bind("<x>", lambda _e: self.set_transform_axis("x"))
+        self.root.bind("<y>", lambda _e: self.set_transform_axis("y"))
+        self.root.bind("<Escape>", lambda _e: self.cancel_transform())
+        self.root.bind("<Return>", lambda _e: self.confirm_transform())
+        self.root.bind("<Shift-D>", lambda _e: self.duplicate_selected_object())
+        self.root.bind("<Control-z>", lambda _e: self.undo_scene_edit())
+        self.root.bind("<Control-y>", lambda _e: self.redo_scene_edit())
+        self.root.bind("<Shift-Tab>", lambda _e: self.toggle_snap())
 
     # -----------------------------
     # Presets
@@ -842,6 +881,7 @@ class AtomSimulatorApp:
         self.world.particles.clear()
         self.world.bonds.clear()
         self.selected_index = None
+        self.selected_object_name = None
 
     def apply_scale_profile(self, profile_name: str) -> None:
         if profile_name not in SCALE_PROFILES:
@@ -876,6 +916,10 @@ class AtomSimulatorApp:
         self.view_pan_y = 0.0
 
     def delete_selected(self) -> None:
+        if self.selected_object_name is not None and self.selected_object_name in self.scene_objects:
+            self.delete_object(self.selected_object_name)
+            self.selected_object_name = None
+            return
         if self.selected_index is None:
             return
         if 0 <= self.selected_index < len(self.world.particles):
@@ -936,6 +980,14 @@ class AtomSimulatorApp:
 
     def on_left_down(self, event) -> None:
         sx, sy = float(event.x), float(event.y)
+        if self.sim_mode_var.get().upper() == "A":
+            obj_name = self.find_scene_object(sx, sy)
+            if obj_name is not None:
+                self.selected_object_name = obj_name
+                self.selected_index = None
+                self.transform_anchor_world = self.screen_to_world(sx, sy)
+                return
+            self.selected_object_name = None
         idx = self.find_particle(sx, sy)
         self.selected_index = idx
         if idx is not None:
@@ -947,10 +999,54 @@ class AtomSimulatorApp:
             self.drag_current = None
 
     def on_drag(self, event) -> None:
+        if self.sim_mode_var.get().upper() == "A" and self.transform_mode and self.selected_object_name:
+            obj = self.scene_objects.get(self.selected_object_name)
+            if obj is None:
+                return
+            wx, wy = self.screen_to_world(float(event.x), float(event.y))
+            if self.transform_anchor_world is None:
+                self.transform_anchor_world = (wx, wy)
+            if self.transform_initial is None:
+                self.transform_initial = (obj.x, obj.y, obj.rot_deg, obj.size)
+                self._push_undo()
+            x0, y0, r0, s0 = self.transform_initial
+            ax, ay = self.transform_anchor_world
+            dx, dy = wx - ax, wy - ay
+            if self.transform_axis == "x":
+                dy = 0.0
+            elif self.transform_axis == "y":
+                dx = 0.0
+
+            if self.transform_mode == "move":
+                nx = x0 + dx
+                ny = y0 + dy
+                if self.snap_enabled:
+                    g = max(0.01, self.snap_grid)
+                    nx = round(nx / g) * g
+                    ny = round(ny / g) * g
+                obj.x = nx
+                obj.y = ny
+            elif self.transform_mode == "rotate":
+                a0 = math.degrees(math.atan2(ay - y0, ax - x0))
+                a1 = math.degrees(math.atan2(wy - y0, wx - x0))
+                nr = r0 + (a1 - a0)
+                if self.snap_enabled:
+                    nr = round(nr / 5.0) * 5.0
+                obj.rot_deg = nr
+            elif self.transform_mode == "scale":
+                dist = math.hypot(dx, dy)
+                ns = max(4.0, s0 + dist)
+                if self.snap_enabled:
+                    g = max(1.0, self.snap_grid)
+                    ns = round(ns / g) * g
+                obj.size = ns
+            return
         if self.drag_start is not None:
             self.drag_current = self.screen_to_world(float(event.x), float(event.y))
 
     def on_left_up(self, event) -> None:
+        if self.transform_mode is not None:
+            return
         if self.drag_start is None or self.selected_index is None:
             return
         sx, sy = self.drag_start
@@ -1002,6 +1098,148 @@ class AtomSimulatorApp:
         p.vy = float(self.vy_var.get())
         self._log(f"setv idx={self.selected_index} vx={p.vx:.3f} vy={p.vy:.3f}")
 
+    def _scene_snapshot(self) -> dict[str, dict]:
+        snap: dict[str, dict] = {}
+        for n, o in self.scene_objects.items():
+            snap[n] = {
+                "name": o.name,
+                "x": o.x,
+                "y": o.y,
+                "size": o.size,
+                "kind": o.kind,
+                "rot_deg": o.rot_deg,
+                "color": o.color,
+                "roughness": o.roughness,
+                "metallic": o.metallic,
+                "emission": o.emission,
+                "visible": o.visible,
+                "collection": o.collection,
+                "texture_path": o.texture_path,
+                "keyframes": [{"frame": k.frame, "x": k.x, "y": k.y, "rot_deg": k.rot_deg} for k in o.keyframes],
+            }
+        return snap
+
+    def _restore_scene_snapshot(self, snap: dict[str, dict]) -> None:
+        self.scene_objects.clear()
+        for n, d in snap.items():
+            obj = SceneCube(
+                name=str(d.get("name", n)),
+                x=float(d.get("x", 0.0)),
+                y=float(d.get("y", 0.0)),
+                size=float(d.get("size", 80.0)),
+                kind=str(d.get("kind", "cube")),
+                rot_deg=float(d.get("rot_deg", 0.0)),
+                color=str(d.get("color", "#9aa4c9")),
+                roughness=float(d.get("roughness", 0.55)),
+                metallic=float(d.get("metallic", 0.0)),
+                emission=float(d.get("emission", 0.0)),
+                visible=bool(d.get("visible", True)),
+                collection=str(d.get("collection", "Scene")),
+            )
+            obj.keyframes = [
+                ObjectKeyframe(frame=int(k["frame"]), x=float(k["x"]), y=float(k["y"]), rot_deg=float(k["rot_deg"]))
+                for k in d.get("keyframes", [])
+            ]
+            self.scene_objects[n] = obj
+
+    def _push_undo(self) -> None:
+        self.undo_stack.append(self._scene_snapshot())
+        if len(self.undo_stack) > 200:
+            self.undo_stack.pop(0)
+        self.redo_stack.clear()
+
+    def undo_scene_edit(self) -> None:
+        if not self.undo_stack:
+            self._log("undo: nothing to undo")
+            return
+        self.redo_stack.append(self._scene_snapshot())
+        snap = self.undo_stack.pop()
+        self._restore_scene_snapshot(snap)
+        self._log("undo: scene restored")
+
+    def redo_scene_edit(self) -> None:
+        if not self.redo_stack:
+            self._log("redo: nothing to redo")
+            return
+        self.undo_stack.append(self._scene_snapshot())
+        snap = self.redo_stack.pop()
+        self._restore_scene_snapshot(snap)
+        self._log("redo: scene restored")
+
+    def toggle_snap(self) -> None:
+        self.snap_enabled = not self.snap_enabled
+        self._log(f"snap enabled={self.snap_enabled} grid={self.snap_grid:.2f}")
+
+    def start_transform_mode(self, mode: str) -> None:
+        if self.selected_object_name is None or self.selected_object_name not in self.scene_objects:
+            return
+        obj = self.scene_objects[self.selected_object_name]
+        self.transform_mode = mode
+        self.transform_axis = None
+        self.transform_initial = (obj.x, obj.y, obj.rot_deg, obj.size)
+        self._log(f"transform {mode}: {obj.name} (axis: free)")
+
+    def set_transform_axis(self, axis: str) -> None:
+        if self.transform_mode is None:
+            return
+        self.transform_axis = axis.lower()
+        self._log(f"transform axis={self.transform_axis}")
+
+    def cancel_transform(self) -> None:
+        if self.transform_mode is None or self.selected_object_name is None or self.transform_initial is None:
+            return
+        obj = self.scene_objects.get(self.selected_object_name)
+        if obj is None:
+            return
+        x, y, r, s = self.transform_initial
+        obj.x, obj.y, obj.rot_deg, obj.size = x, y, r, s
+        self.transform_mode = None
+        self.transform_axis = None
+        self.transform_anchor_world = None
+        self.transform_initial = None
+        self._log("transform canceled")
+
+    def confirm_transform(self) -> None:
+        if self.transform_mode is None:
+            return
+        self.transform_mode = None
+        self.transform_axis = None
+        self.transform_anchor_world = None
+        self.transform_initial = None
+        self._log("transform confirmed")
+
+    def duplicate_selected_object(self) -> None:
+        if self.selected_object_name is None or self.selected_object_name not in self.scene_objects:
+            return
+        self._push_undo()
+        src = self.scene_objects[self.selected_object_name]
+        base = f"{src.name}_copy"
+        candidate = base
+        k = 1
+        while candidate in self.scene_objects:
+            k += 1
+            candidate = f"{base}{k}"
+        dup = copy.deepcopy(src)
+        dup.name = candidate
+        dup.x += 28.0
+        dup.y += 18.0
+        self.scene_objects[candidate] = dup
+        self.selected_object_name = candidate
+        self._log(f"duplicated object: {src.name} -> {candidate}")
+
+    def find_scene_object(self, sx: float, sy: float) -> str | None:
+        names = list(self.scene_objects.keys())
+        for name in reversed(names):
+            obj = self.scene_objects[name]
+            if not obj.visible:
+                continue
+            ox, oy, _rot = self._eval_object_transform(obj, self.timeline_frame)
+            sox, soy = self.world_to_screen(ox, oy)
+            half = max(4.0, obj.size * 0.5 * self.view_zoom)
+            if math.hypot(sx - sox, sy - soy) <= half * 1.2:
+                return name
+        return None
+
     # -----------------------------
     # Mode-A scene objects + timeline
     # -----------------------------
@@ -1042,45 +1280,84 @@ class AtomSimulatorApp:
         size = min(self.world_w, self.world_h) * float(data.get("size_ratio", 0.1))
         rot = float(data.get("rot_deg", 0.0))
         color = str(data.get("color", "#9aa4c9"))
+        kind = str(data.get("kind", "cube")).lower()
+        roughness = float(data.get("roughness", 0.55))
+        metallic = float(data.get("metallic", 0.0))
+        emission = float(data.get("emission", 0.0))
+        collection = str(data.get("collection", "Scene"))
 
         if name in self.scene_objects:
             obj = self.scene_objects[name]
             obj.x = x
             obj.y = y
             obj.size = size
+            obj.kind = kind
             obj.rot_deg = rot
             obj.color = color
+            obj.roughness = roughness
+            obj.metallic = metallic
+            obj.emission = emission
+            obj.collection = collection
             obj.texture_path = ""
             obj.texture_image = None
             obj.texture_pil = None
             obj.keyframes = []
             return
 
-        obj = SceneCube(name=name, x=x, y=y, size=size)
+        obj = SceneCube(name=name, x=x, y=y, size=size, kind=kind)
         obj.rot_deg = rot
         obj.color = color
+        obj.roughness = roughness
+        obj.metallic = metallic
+        obj.emission = emission
+        obj.collection = collection
         obj.texture_path = ""
         obj.texture_image = None
         obj.texture_pil = None
         obj.keyframes = []
         self.scene_objects[name] = obj
 
-    def add_cube_object(self, name: str, x: float, y: float, size: float) -> None:
+    def _add_scene_object(self, kind: str, name: str, x: float, y: float, size: float) -> None:
         if name in self.scene_objects:
             raise ValueError(f"object already exists: {name}")
-        self.scene_objects[name] = SceneCube(name=name, x=x, y=y, size=size)
-        self._log(f"object added: {name} cube at ({x:.1f}, {y:.1f}) size={size:.1f}")
+        self._push_undo()
+        self.scene_objects[name] = SceneCube(name=name, x=x, y=y, size=size, kind=kind)
+        self.selected_object_name = name
+        self.selected_index = None
+        self._log(f"object added: {name} kind={kind} at ({x:.1f}, {y:.1f}) size={size:.1f}")
+
+    def add_cube_object(self, name: str, x: float, y: float, size: float) -> None:
+        self._add_scene_object("cube", name, x, y, size)
+
+    def add_plane_object(self, name: str, x: float, y: float, size: float) -> None:
+        self._add_scene_object("plane", name, x, y, size)
+
+    def add_sphere_object(self, name: str, x: float, y: float, size: float) -> None:
+        self._add_scene_object("sphere", name, x, y, size)
+
+    def add_light_object(self, name: str, x: float, y: float, size: float) -> None:
+        self._add_scene_object("light", name, x, y, size)
+        self.scene_objects[name].emission = 1.0
+        self.scene_objects[name].color = "#ffe1a3"
+
+    def add_camera_object(self, name: str, x: float, y: float, size: float) -> None:
+        self._add_scene_object("camera", name, x, y, size)
+        self.scene_objects[name].color = "#9ad0ff"
 
     def delete_object(self, name: str) -> None:
         if name not in self.scene_objects:
             raise ValueError(f"object not found: {name}")
+        self._push_undo()
         obj = self.scene_objects.pop(name)
         obj.texture_image = None
+        if self.selected_object_name == name:
+            self.selected_object_name = None
         self._log(f"object deleted: {name}")
 
     def set_object_keyframe(self, name: str, frame: int, x: float, y: float, rot_deg: float) -> None:
         if name not in self.scene_objects:
             raise ValueError(f"object not found: {name}")
+        self._push_undo()
         obj = self.scene_objects[name]
         obj.keyframes = [k for k in obj.keyframes if k.frame != frame]
         obj.keyframes.append(ObjectKeyframe(frame=frame, x=x, y=y, rot_deg=rot_deg))
@@ -1092,6 +1369,7 @@ class AtomSimulatorApp:
             raise ValueError(f"object not found: {name}")
         if not os.path.exists(path):
             raise ValueError(f"texture file not found: {path}")
+        self._push_undo()
         img = tk.PhotoImage(file=path)
         pil_img = Image.open(path).convert("RGBA")
         obj = self.scene_objects[name]
@@ -1248,8 +1526,10 @@ class AtomSimulatorApp:
                     x1 = x0 + cell
                     self.canvas.create_rectangle(x0, y0, x1, y1, fill=color, outline="")
 
-        # Mode-A scene objects (cubes with optional textures and keyframes)
+        # Mode-A scene objects
         for name, obj in self.scene_objects.items():
+            if not obj.visible:
+                continue
             ox, oy, rot = self._eval_object_transform(obj, self.timeline_frame)
             sx, sy = self.world_to_screen(ox, oy)
             half = max(2.0, obj.size * 0.5 * self.view_zoom)
@@ -1257,15 +1537,12 @@ class AtomSimulatorApp:
             c = math.cos(rad)
             s = math.sin(rad)
 
-            corners = [(-half, -half), (half, -half), (half, half), (-half, half)]
-            pts: list[float] = []
-            for px, py in corners:
-                rx = px * c - py * s
-                ry = px * s + py * c
-                pts.extend([sx + rx, sy + ry])
+            self._draw_mode_a_object_canvas(obj, sx, sy, half, c, s)
+            self.canvas.create_text(sx, sy - half - 8, text=f"{name} ({obj.kind})", fill="#d3dcff", font=("TkDefaultFont", 8))
 
-            self.canvas.create_polygon(*pts, fill=obj.color, outline="#e8edff")
-            self.canvas.create_text(sx, sy - half - 8, text=name, fill="#d3dcff", font=("TkDefaultFont", 8))
+            if self.selected_object_name == name:
+                rr = half + 6
+                self.canvas.create_oval(sx - rr, sy - rr, sx + rr, sy + rr, outline="#ffffff")
 
             if obj.texture_image is not None:
                 if obj.texture_tk_id is not None:
@@ -1316,10 +1593,12 @@ class AtomSimulatorApp:
             dcx, dcy = self.world_to_screen(cx, cy)
             self.canvas.create_line(dsx, dsy, dcx, dcy, fill="#ffffff", width=2, arrow=tk.LAST)
 
+        edit_state = f"T:{self.transform_mode or '-'} A:{self.transform_axis or '-'} snap={self.snap_enabled} g={self.snap_grid:.1f}"
         self.info_var.set(
             f"Mode: A | Particles: {len(self.world.particles)} Bonds: {len(self.world.bonds)} | Running: {self.running} | "
             f"Timeline: {self.timeline_frame}/{self.timeline_length} @ {self.timeline_fps:.1f}fps play={self.timeline_playing} | "
-            f"Selected: {self.selected_index if self.selected_index is not None else 'None'}"
+            f"Selected Particle: {self.selected_index if self.selected_index is not None else 'None'} | "
+            f"Selected Object: {self.selected_object_name or 'None'} | {edit_state}"
         )
         self._refresh_outliner()
 
@@ -1339,20 +1618,114 @@ class AtomSimulatorApp:
             if sun is not None:
                 self._draw_canvas_sun_object(sun)
 
+    def _draw_mode_a_object_canvas(self, obj: SceneCube, sx: float, sy: float, half: float, c: float, s: float) -> None:
+        kind = obj.kind.lower()
+        if kind in {"cube", "plane"}:
+            if kind == "plane":
+                half_y = max(2.0, half * 0.35)
+            else:
+                half_y = half
+            corners = [(-half, -half_y), (half, -half_y), (half, half_y), (-half, half_y)]
+            pts: list[float] = []
+            for px, py in corners:
+                rx = px * c - py * s
+                ry = px * s + py * c
+                pts.extend([sx + rx, sy + ry])
+            self.canvas.create_polygon(*pts, fill=obj.color, outline="#e8edff")
+            return
+
+        if kind == "sphere":
+            self.canvas.create_oval(sx - half, sy - half, sx + half, sy + half, fill=obj.color, outline="#e8edff")
+            hi = max(2.0, half * 0.28)
+            self.canvas.create_oval(sx - hi * 1.7, sy - hi * 1.7, sx - hi * 0.2, sy - hi * 0.2, fill="#ffffff", outline="")
+            return
+
+        if kind == "light":
+            self.canvas.create_oval(sx - half, sy - half, sx + half, sy + half, fill=obj.color, outline="#fff0c5")
+            r2 = half * 1.6
+            self.canvas.create_line(sx - r2, sy, sx + r2, sy, fill="#ffe7ad")
+            self.canvas.create_line(sx, sy - r2, sx, sy + r2, fill="#ffe7ad")
+            return
+
+        if kind == "camera":
+            w = half * 1.1
+            h = half * 0.75
+            self.canvas.create_rectangle(sx - w, sy - h, sx + w, sy + h, fill=obj.color, outline="#d8ebff")
+            self.canvas.create_polygon(sx + w, sy - h * 0.55, sx + w + h, sy, sx + w, sy + h * 0.55, fill=obj.color, outline="#d8ebff")
+            return
+
+        self.canvas.create_rectangle(sx - half, sy - half, sx + half, sy + half, fill=obj.color, outline="#e8edff")
+
+    def _draw_export_object(self, draw: ImageDraw.ImageDraw, obj: SceneCube, ox: float, oy: float, rot: float, img_pil: Image.Image) -> None:
+        kind = obj.kind.lower()
+        half = max(2.0, obj.size * 0.5)
+        rr = math.radians(rot)
+        c = math.cos(rr)
+        s = math.sin(rr)
+        col = self._hex_to_rgb(obj.color)
+
+        if kind in {"cube", "plane"}:
+            half_y = max(2.0, half * 0.35) if kind == "plane" else half
+            corners = [(-half, -half_y), (half, -half_y), (half, half_y), (-half, half_y)]
+            pts = []
+            for px, py in corners:
+                rx = px * c - py * s
+                ry = px * s + py * c
+                pts.append((int(round(ox + rx)), int(round(oy + ry))))
+            draw.polygon(pts, fill=(col[0], col[1], col[2], 255), outline=(232, 237, 255, 255))
+            if obj.texture_pil is not None and kind == "cube":
+                tex_size = max(8, int(round(obj.size)))
+                tex = obj.texture_pil.resize((tex_size, tex_size), Image.Resampling.BICUBIC)
+                tex = tex.rotate(-rot, expand=True, resample=Image.Resampling.BICUBIC)
+                px = int(round(ox - tex.width * 0.5))
+                py = int(round(oy - tex.height * 0.5))
+                img_pil.paste(tex, (px, py), tex)
+            return
+
+        if kind == "sphere":
+            draw.ellipse((int(ox - half), int(oy - half), int(ox + half), int(oy + half)), fill=(col[0], col[1], col[2], 255), outline=(232, 237, 255, 255))
+            hi = max(2.0, half * 0.28)
+            draw.ellipse((int(ox - hi * 1.7), int(oy - hi * 1.7), int(ox - hi * 0.2), int(oy - hi * 0.2)), fill=(255, 255, 255, 200))
+            return
+
+        if kind == "light":
+            draw.ellipse((int(ox - half), int(oy - half), int(ox + half), int(oy + half)), fill=(col[0], col[1], col[2], 255), outline=(255, 240, 197, 255))
+            r2 = half * 1.6
+            draw.line((int(ox - r2), int(oy), int(ox + r2), int(oy)), fill=(255, 231, 173, 220), width=1)
+            draw.line((int(ox), int(oy - r2), int(ox), int(oy + r2)), fill=(255, 231, 173, 220), width=1)
+            return
+
+        if kind == "camera":
+            w = half * 1.1
+            h = half * 0.75
+            draw.rectangle((int(ox - w), int(oy - h), int(ox + w), int(oy + h)), fill=(col[0], col[1], col[2], 255), outline=(216, 235, 255, 255))
+            draw.polygon(
+                [(int(ox + w), int(oy - h * 0.55)), (int(ox + w + h), int(oy)), (int(ox + w), int(oy + h * 0.55))],
+                fill=(col[0], col[1], col[2], 255),
+                outline=(216, 235, 255, 255),
+            )
+            return
+
+        draw.rectangle((int(ox - half), int(oy - half), int(ox + half), int(oy + half)), fill=(col[0], col[1], col[2], 255), outline=(232, 237, 255, 255))
+
     def _refresh_outliner(self) -> None:
         if not hasattr(self, "outliner_list"):
             return
         prev_sel = self.selected_index
         self.outliner_list.delete(0, tk.END)
-        for name in sorted(self.scene_objects.keys())[:150]:
+        sorted_names = sorted(self.scene_objects.keys())[:150]
+        for name in sorted_names:
             obj = self.scene_objects[name]
             ox, oy, rot = self._eval_object_transform(obj, self.timeline_frame)
-            self.outliner_list.insert(tk.END, f"OBJ  | {name} | ({ox:.1f}, {oy:.1f}) r={rot:.1f}")
+            self.outliner_list.insert(tk.END, f"OBJ  | {name} [{obj.kind}] [{obj.collection}] | ({ox:.1f}, {oy:.1f}) r={rot:.1f}")
 
         limit = min(150, len(self.world.particles))
         for i in range(limit):
             p = self.world.particles[i]
             self.outliner_list.insert(tk.END, f"PART | {i:04d} | {p.material.name} | ({p.x:.1f}, {p.y:.1f})")
+        if self.selected_object_name in sorted_names:
+            self.outliner_list.selection_set(sorted_names.index(self.selected_object_name))
+            return
         if prev_sel is not None and 0 <= prev_sel < limit:
             self.outliner_list.selection_set(len(self.scene_objects) + prev_sel)
 
@@ -1365,9 +1738,14 @@ class AtomSimulatorApp:
         idx = int(sel[0])
         obj_count = min(150, len(self.scene_objects))
         if idx < obj_count:
+            names = sorted(self.scene_objects.keys())[:150]
+            if idx < len(names):
+                self.selected_object_name = names[idx]
+                self.selected_index = None
             return
         pidx = idx - obj_count
         if 0 <= pidx < len(self.world.particles):
+            self.selected_object_name = None
             self.selected_index = pidx
 
     def _tick(self) -> None:
@@ -1609,27 +1987,12 @@ class AtomSimulatorApp:
 
         # Draw objects
         for obj in self.scene_objects.values():
+            if not obj.visible:
+                continue
             ox, oy, rot = self._eval_object_transform(obj, frame)
+            self._draw_export_object(draw, obj, ox, oy, rot, img_pil)
             half = max(2.0, obj.size * 0.5)
-            rr = math.radians(rot)
-            c = math.cos(rr)
-            s = math.sin(rr)
-            corners = [(-half, -half), (half, -half), (half, half), (-half, half)]
-            pts = []
-            for px, py in corners:
-                rx = px * c - py * s
-                ry = px * s + py * c
-                pts.append((int(round(ox + rx)), int(round(oy + ry))))
-            draw.polygon(pts, fill=(*self._hex_to_rgb(obj.color), 255), outline=(232, 237, 255, 255))
-            draw.text((int(ox - half), int(oy - half - 12)), obj.name, fill=(210, 220, 230, 255))
-
-            if obj.texture_pil is not None:
-                tex_size = max(8, int(round(obj.size)))
-                tex = obj.texture_pil.resize((tex_size, tex_size), Image.Resampling.BICUBIC)
-                tex = tex.rotate(-rot, expand=True, resample=Image.Resampling.BICUBIC)
-                px = int(round(ox - tex.width * 0.5))
-                py = int(round(oy - tex.height * 0.5))
-                img_pil.paste(tex, (px, py), tex)
+            draw.text((int(ox - half), int(oy - half - 12)), f"{obj.name} ({obj.kind})", fill=(210, 220, 230, 255))
 
         return np.asarray(img_pil, dtype=np.uint8)
 
@@ -1847,10 +2210,18 @@ class AtomSimulatorApp:
 
             elif op == "obj":
                 if len(parts) < 2:
-                    raise ValueError("usage: obj <addcube <name> <x> <y> <size>|del <name>|list>")
+                    raise ValueError("usage: obj <addcube|addplane|addsphere|addlight|addcamera> <name> <x> <y> <size> | obj del <name> | obj list")
                 sub = parts[1].lower()
                 if sub == "addcube" and len(parts) == 6:
                     self.add_cube_object(parts[2], float(parts[3]), float(parts[4]), float(parts[5]))
+                elif sub == "addplane" and len(parts) == 6:
+                    self.add_plane_object(parts[2], float(parts[3]), float(parts[4]), float(parts[5]))
+                elif sub == "addsphere" and len(parts) == 6:
+                    self.add_sphere_object(parts[2], float(parts[3]), float(parts[4]), float(parts[5]))
+                elif sub == "addlight" and len(parts) == 6:
+                    self.add_light_object(parts[2], float(parts[3]), float(parts[4]), float(parts[5]))
+                elif sub == "addcamera" and len(parts) == 6:
+                    self.add_camera_object(parts[2], float(parts[3]), float(parts[4]), float(parts[5]))
                 elif sub == "del" and len(parts) == 3:
                     self.delete_object(parts[2])
                 elif sub == "list":
@@ -1858,9 +2229,36 @@ class AtomSimulatorApp:
                     for name in sorted(self.scene_objects.keys())[:100]:
                         obj = self.scene_objects[name]
                         x, y, r = self._eval_object_transform(obj, self.timeline_frame)
-                        self._log(f"obj {name} pos=({x:.1f},{y:.1f}) size={obj.size:.1f} rot={r:.1f}")
+                        self._log(
+                            f"obj {name} kind={obj.kind} pos=({x:.1f},{y:.1f}) size={obj.size:.1f} rot={r:.1f} "
+                            f"mat(r={obj.roughness:.2f} m={obj.metallic:.2f} e={obj.emission:.2f})"
+                        )
                 else:
-                    raise ValueError("usage: obj <addcube <name> <x> <y> <size>|del <name>|list>")
+                    raise ValueError("usage: obj <addcube|addplane|addsphere|addlight|addcamera> <name> <x> <y> <size> | obj del <name> | obj list")
+
+            elif op == "undo":
+                self.undo_scene_edit()
+
+            elif op == "redo":
+                self.redo_scene_edit()
+
+            elif op == "snap":
+                if len(parts) < 2:
+                    raise ValueError("usage: snap <on|off|grid <size>|status>")
+                sub = parts[1].lower()
+                if sub == "on":
+                    self.snap_enabled = True
+                    self._log(f"snap enabled={self.snap_enabled} grid={self.snap_grid:.2f}")
+                elif sub == "off":
+                    self.snap_enabled = False
+                    self._log(f"snap enabled={self.snap_enabled} grid={self.snap_grid:.2f}")
+                elif sub == "grid" and len(parts) == 3:
+                    self.snap_grid = max(0.1, float(parts[2]))
+                    self._log(f"snap grid={self.snap_grid:.2f}")
+                elif sub == "status":
+                    self._log(f"snap enabled={self.snap_enabled} grid={self.snap_grid:.2f}")
+                else:
+                    raise ValueError("usage: snap <on|off|grid <size>|status>")
 
             elif op == "key":
                 if len(parts) != 7 or parts[1].lower() != "set":

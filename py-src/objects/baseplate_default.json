@@ -1,9 +1,14 @@
 {
   "name": "baseplate",
   "type": "scene_cube",
+  "kind": "plane",
   "x_ratio": 0.5,
   "y_ratio": 0.86,
   "size_ratio": 0.62,
   "rot_deg": 0.0,
-  "color": "#3c4255"
+  "color": "#3c4255",
+  "roughness": 0.82,
+  "metallic": 0.06,
+  "emission": 0.0,
+  "collection": "Stage"
 }
