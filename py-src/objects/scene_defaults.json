@@ -1,9 +1,6 @@
 {
   "name": "scene_defaults",
   "objects": [
-    "baseplate_default",
-    "cube_default",
-    "light_default",
-    "camera_default"
+    "cube_origin_unit"
   ]
 }

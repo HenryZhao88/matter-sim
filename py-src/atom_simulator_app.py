@@ -715,8 +715,8 @@ class AtomSimulatorApp:
         self.rotate_key_undo_armed = False
         self.rotate_key_angular_velocity_dps = 90.0
         self.view_depth = 1200.0
-        self.camera_x = self.world_w * 0.5
-        self.camera_y = self.world_h * 0.5
+        self.camera_x = 0.0
+        self.camera_y = 0.0
         self.camera_z = -1200.0
         self.camera_yaw_deg = 0.0
         self.camera_pitch_deg = 0.0
@@ -739,6 +739,7 @@ class AtomSimulatorApp:
         self.cam_key_pitch_down = False
         self.cam_key_roll_left = False
         self.cam_key_roll_right = False
+        self.reset_camera()
         self.undo_stack: list[dict[str, dict]] = []
         self.redo_stack: list[dict[str, dict]] = []
         self.emergency_pause_enabled = True
@@ -1058,14 +1059,73 @@ class AtomSimulatorApp:
         self.view_pan_x = 0.0
         self.view_pan_y = 0.0
 
+    def _camera_look_at(self, tx: float, ty: float, tz: float) -> None:
+        dx = tx - self.camera_x
+        dy_up = -(ty - self.camera_y)
+        dz = tz - self.camera_z
+        dist = math.sqrt(dx * dx + dy_up * dy_up + dz * dz)
+        if dist < 1e-9:
+            return
+        self.camera_yaw_deg = math.degrees(math.atan2(dx, dz))
+        self.camera_pitch_deg = -math.degrees(math.asin(max(-1.0, min(1.0, dy_up / dist))))
+        self.camera_pitch_deg = max(-89.0, min(89.0, self.camera_pitch_deg))
+
+        # Refine yaw/pitch numerically so the target lands at screen center.
+        cx_t = self.world_w * 0.5
+        cy_t = self.world_h * 0.5
+        eps = 0.05
+        for _ in range(24):
+            proj = self.world3_to_screen(tx, ty, tz)
+            if proj is None:
+                break
+            sx, sy, _sc, _d = proj
+            ex = sx - cx_t
+            ey = sy - cy_t
+            if abs(ex) + abs(ey) < 0.5:
+                break
+
+            y0 = self.camera_yaw_deg
+            p0 = self.camera_pitch_deg
+
+            self.camera_yaw_deg = y0 + eps
+            p_yaw = self.world3_to_screen(tx, ty, tz)
+            self.camera_yaw_deg = y0
+            self.camera_pitch_deg = p0 + eps
+            p_pitch = self.world3_to_screen(tx, ty, tz)
+            self.camera_pitch_deg = p0
+            if p_yaw is None or p_pitch is None:
+                break
+
+            sx_y, sy_y, _a, _b = p_yaw
+            sx_p, sy_p, _c, _d2 = p_pitch
+            j11 = (sx_y - sx) / eps
+            j21 = (sy_y - sy) / eps
+            j12 = (sx_p - sx) / eps
+            j22 = (sy_p - sy) / eps
+            det = j11 * j22 - j12 * j21
+            if abs(det) < 1e-9:
+                break
+
+            # Solve J * delta = -error
+            dyaw = (-ex * j22 + j12 * ey) / det
+            dpitch = (-j11 * ey + ex * j21) / det
+            dyaw = max(-8.0, min(8.0, dyaw))
+            dpitch = max(-8.0, min(8.0, dpitch))
+
+            self.camera_yaw_deg += dyaw
+            self.camera_pitch_deg += dpitch
+            self.camera_pitch_deg = max(-89.0, min(89.0, self.camera_pitch_deg))
+
     def reset_camera(self) -> None:
-        self.camera_x = self.world_w * 0.5
-        self.camera_y = self.world_h * 0.5
+        # Default framing: offset camera that is explicitly aimed at world origin.
+        self.camera_x = 640.0
+        self.camera_y = 520.0
         self.camera_z = -1200.0
         self.camera_yaw_deg = 0.0
         self.camera_pitch_deg = 0.0
         self.camera_roll_deg = 0.0
         self.camera_fov_deg = 60.0
+        self._camera_look_at(0.0, 0.0, 0.0)
 
     def camera_status_text(self) -> str:
         return (
@@ -1858,6 +1918,7 @@ class AtomSimulatorApp:
             f"Timeline: {self.timeline_frame}/{self.timeline_length} @ {self.timeline_fps:.1f}fps play={self.timeline_playing} | "
             f"Selected: {self.selected_index if self.selected_index is not None else 'None'}"
         )
+        self._draw_axis_overlay()
         self._refresh_outliner()
 
     def _draw_mode_a(self) -> None:
@@ -1994,6 +2055,7 @@ class AtomSimulatorApp:
             f"Selected Particle: {self.selected_index if self.selected_index is not None else 'None'} | "
             f"Selected Object: {self.selected_object_name or 'None'} | {edit_state} | {cam_state}"
         )
+        self._draw_axis_overlay()
         self._refresh_outliner()
 
     def _draw_mode_a_background_canvas(self) -> None:
@@ -2130,6 +2192,52 @@ class AtomSimulatorApp:
                 px = int(round(csx - tex.width * 0.5))
                 py = int(round(csy - tex.height * 0.5))
                 img_pil.paste(tex, (px, py), tex)
+
+    def _camera_space_dir(self, wx: float, wy_up: float, wz: float) -> tuple[float, float, float]:
+        cx, cy, cz = self._rot_z(wx, wy_up, wz, -self.camera_roll_deg)
+        cx, cy, cz = self._rot_x(cx, cy, cz, -self.camera_pitch_deg)
+        cx, cy, cz = self._rot_y(cx, cy, cz, -self.camera_yaw_deg)
+        return cx, cy, cz
+
+    def _draw_axis_overlay(self) -> None:
+        # World-origin axes in scene space.
+        axis_len_world = 280.0
+        origin = self.world3_to_screen(0.0, 0.0, 0.0)
+        if origin is not None:
+            ox, oy, _s, _d = origin
+            px = self.world3_to_screen(axis_len_world, 0.0, 0.0)
+            py = self.world3_to_screen(0.0, axis_len_world, 0.0)
+            pz = self.world3_to_screen(0.0, 0.0, axis_len_world)
+            if px is not None:
+                self.canvas.create_line(ox, oy, px[0], px[1], fill="#ff5c5c", width=3)
+                self.canvas.create_text(px[0] + 10, px[1], text="X", fill="#ff8080", font=("TkDefaultFont", 10, "bold"))
+            if py is not None:
+                self.canvas.create_line(ox, oy, py[0], py[1], fill="#63d26e", width=3)
+                self.canvas.create_text(py[0], py[1] - 10, text="Y", fill="#7fe48a", font=("TkDefaultFont", 10, "bold"))
+            if pz is not None:
+                self.canvas.create_line(ox, oy, pz[0], pz[1], fill="#5e87ff", width=3)
+                self.canvas.create_text(pz[0] + 10, pz[1] - 10, text="Z", fill="#86a4ff", font=("TkDefaultFont", 10, "bold"))
+            self.canvas.create_oval(ox - 4, oy - 4, ox + 4, oy + 4, fill="#ffffff", outline="")
+            self.canvas.create_text(ox + 32, oy + 12, text="Origin (0,0,0)", fill="#e9eefc", anchor="w")
+
+        # Corner orientation gizmo (always visible).
+        gx = 90.0
+        gy = self.world_h - 90.0
+        gl = 48.0
+        self.canvas.create_oval(gx - 3, gy - 3, gx + 3, gy + 3, fill="#ffffff", outline="")
+
+        dirs = [
+            ("X", (1.0, 0.0, 0.0), "#ff5c5c"),
+            ("Y", (0.0, -1.0, 0.0), "#63d26e"),  # -Y because world Y is down
+            ("Z", (0.0, 0.0, 1.0), "#5e87ff"),
+        ]
+        for label, vec, color in dirs:
+            cx, cy, _cz = self._camera_space_dir(vec[0], vec[1], vec[2])
+            norm = max(1e-6, math.hypot(cx, cy))
+            ex = gx + (cx / norm) * gl
+            ey = gy - (cy / norm) * gl
+            self.canvas.create_line(gx, gy, ex, ey, fill=color, width=3)
+            self.canvas.create_text(ex + 10, ey, text=label, fill=color, font=("TkDefaultFont", 10, "bold"))
 
     def _refresh_outliner(self) -> None:
         if not hasattr(self, "outliner_list"):

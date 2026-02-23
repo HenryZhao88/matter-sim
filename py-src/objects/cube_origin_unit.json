@@ -1,0 +1,15 @@
+{
+  "name": "cube",
+  "type": "scene_cube",
+  "kind": "cube",
+  "x_ratio": 0.0,
+  "y_ratio": 0.0,
+  "z": 0.0,
+  "size_ratio": 0.00925925926,
+  "rot_deg": 0.0,
+  "color": "#8a93b6",
+  "roughness": 0.45,
+  "metallic": 0.12,
+  "emission": 0.0,
+  "collection": "Scene"
+}
