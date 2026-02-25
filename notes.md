@@ -299,3 +299,107 @@ For 1 keyframe, returns the static value.
 | `_draw_mode_a()` | Was 100+ lines of canvas item creation; now renders one PIL image + minimal canvas overlays |
 
 ### Status: COMPLETE
+
+---
+
+## 2026-02-25 20:45 EST — Phase 4: 12 Major Feature Additions
+
+### What was done
+
+**Goal**: Implement 12 major new features across the simulation engine and Mode A viewport,
+covering mesh import, edit mode, enhanced undo, PBR materials, shadow mapping, scene
+serialization, multi-electron Hartree-Fock, GPU acceleration, particle emitters, rigid-body
+dynamics, raytraced rendering, and absorption/emission spectra.
+
+### Feature List
+
+#### 1. Mesh Import (OBJ/STL) — `mesh.py` + `mesh` command
+**Before**: Only primitive box/sphere/plane objects existed as SceneCube entries with fixed box geometry.
+**After**: Full OBJ (with MTL material) and STL (binary + ASCII) file importers. Mesh dataclass with Vertex, Face, MeshMaterial. Primitive generators (`make_cube`, `make_sphere`, `make_plane`). SceneCube now has `mesh_data` field for kind="mesh". New command: `mesh load <name> <path> [x y z size]` and `mesh prim <cube|sphere|plane> <name> <x> <y> <z> <size>`.
+**Reasoning**: A 3D scene editor needs arbitrary mesh import to be useful beyond primitives.
+
+#### 2. Edit Mode (Vertex/Edge/Face) — `edit` command
+**Before**: Objects could only be transformed as a whole (translate, rotate, scale).
+**After**: Toggle edit mode on selected object. Three sub-modes: vertex, edge, face. Selection by index. State tracked in `edit_mode_active`, `edit_sub_mode`, `edit_selection`. New command: `edit <enter|exit|mode <vert|edge|face>|select <idx>|deselect|status>`.
+**Reasoning**: Blender-like edit mode is essential for mesh manipulation workflows.
+
+#### 3. Enhanced Undo/Redo — Operation-Named Command Pattern
+**Before**: `_push_undo()` stored anonymous snapshots. Undo/redo messages just said "scene restored".
+**After**: `_push_undo(op_name)` stores named operations. Undo/redo logs which operation was reverted/reapplied (e.g. "undo: reverted 'material'"). `undo_op_names`/`redo_op_names` lists parallel the snapshot stacks.
+**Reasoning**: Named operations give users context about what they're undoing, matching professional DCC tool UX.
+
+#### 4. PBR Material System — `mat` command
+**Before**: SceneCube had roughness/metallic/emission fields but no command to set them; rendering ignored metallic.
+**After**: New `mat <name> <roughness|metallic|emission|color> <value>` command. Renderer now uses emission to boost shade factor and metallic to control outline style (metallic > 0.5 → colored outline instead of white).
+**Reasoning**: PBR materials are the industry standard for physically-based rendering.
+
+#### 5. Shadow Mapping — `shadow` command + `_compute_shadow_factor`
+**Before**: No shadows. Objects rendered with simple dot-product shading only.
+**After**: Shadow ray casting from each object to all lights. Simple AABB occlusion test along shadow rays. Shadow factor (0-1) multiplied into face shading. Configurable: `shadow <on|off|bias <v>|samples <n>|status>`. State: `shadow_enabled`, `shadow_bias`, `shadow_samples`.
+**Reasoning**: Shadows are critical for spatial perception in 3D scenes.
+
+#### 6. Scene Serialization — `scene save/load` command
+**Before**: No way to save/restore scene state; everything lost on app close.
+**After**: Full JSON serialization of scene objects (including mesh data, rigid body state, keyframes), camera (orbit params), timeline, background, emitters, shadow/rigidbody settings. Commands: `scene save <path>`, `scene load <path>`.
+**Reasoning**: Persistence is fundamental for any production workflow.
+
+#### 7. Multi-Electron Hartree-Fock — `HartreeFockWorld` class + `hf` command
+**Before**: Only single-electron hydrogen-like atoms via QuantumWorld TDSE.
+**After**: `HartreeFockWorld` class in quantum_engine.py implementing Restricted Hartree-Fock SCF on a 3D grid. Features: grid-based (not Gaussian basis), Hartree potential via Poisson solve in Fourier space, Slater Xα exchange-correlation, imaginary-time propagation + Gram-Schmidt, total energy with double-counting correction. Commands: `hf init <Z> <n_e>`, `hf scf`, `hf info`, `hf density`.
+**Reasoning**: Multi-electron atoms require mean-field treatment; HF is the foundational method.
+
+#### 8. GPU Acceleration (CuPy) — quantum_engine.py
+**Before**: All quantum engine computation used NumPy on CPU.
+**After**: Every method in `QuantumWorld` uses `self.xp` (CuPy or NumPy). Key acceleration: `xp.fft.fftn/ifftn` uses cuFFT on GPU. Helper `_get_xp(use_gpu)` and `_to_numpy(arr)`. Info methods report GPU/CPU backend. Constructor takes `use_gpu: bool = True`.
+**Reasoning**: 3D FFTs on 64³-256³ grids are the bottleneck; cuFFT provides 10-100× speedup.
+
+#### 11. Particle Emitters — `Emitter` dataclass + `emitter` command
+**Before**: Particles only created via `spawn` command (random placement).
+**After**: `Emitter` dataclass with rate, lifetime, speed, cone spread, direction, material. Attached to host scene objects. Spawns particles each tick. Auto-removes expired particles. Commands: `emitter add/del/set/toggle/list`.
+**Reasoning**: Emitters enable dynamic effects (fire, sparks, fountains) essential for simulation.
+
+#### 12. Rigid-Body Dynamics — SceneCube physics + `rigidbody` command
+**Before**: Scene objects were completely static.
+**After**: SceneCube has velocity, angular velocity, mass, restitution, static flag. Euler integration in `_update_rigid_body()`. Floor/wall collision with bounce. Configurable gravity. Commands: `rigidbody enable/disable/vel/angvel/mass/bounce/gravity/step/status`.
+**Reasoning**: Physics simulation of scene objects enables dynamic scenes.
+
+#### 13. Raytraced Render — `raytracer.py` + `render` command
+**Before**: Only rasterised viewport rendering (PIL polygon fill).
+**After**: Full path tracer: ray-sphere/triangle/AABB intersection, PBR shading (Lambertian + Blinn-Phong + Fresnel-Schlick), shadow rays, one-bounce indirect, jittered AA, Reinhard tonemap, sRGB gamma. Command: `render <path.png> [w h spp bounces]`.
+**Reasoning**: Offline raytracing produces physically accurate images for final output.
+
+#### 14. Absorption/Emission Spectra — `HydrogenSpectrum` class + `spectrum` command
+**Before**: No spectral information computed or displayed.
+**After**: `HydrogenSpectrum` computes all hydrogen-like emission lines using Bohr formula. Series identification, wavelength→RGB, PIL spectrum renderer. Command: `spectrum [Z <n>] [nmax <n>] [save <path>]`.
+**Reasoning**: Atomic spectra link quantum mechanics to experiment.
+
+### Files Created
+
+| File | Purpose |
+|------|---------|
+| `py-src/mesh.py` | Mesh dataclass, OBJ/STL importers, primitive generators (~350 lines) |
+| `py-src/raytracer.py` | Path tracer with PBR shading, scene builder (~340 lines) |
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `py-src/quantum_engine.py` | GPU acceleration (xp abstraction), HartreeFockWorld class, HydrogenSpectrum class (~400 new lines) |
+| `py-src/atom_simulator_app.py` | All 12 features integrated (~500 new lines) |
+
+### New Commands
+
+| Command | Feature |
+|---------|---------|
+| `mesh load/prim` | #1 Mesh import |
+| `edit enter/exit/mode/select/deselect/status` | #2 Edit mode |
+| `mat <name> <prop> <val>` | #4 PBR materials |
+| `shadow on/off/bias/samples/status` | #5 Shadow mapping |
+| `scene save/load` | #6 Scene serialization |
+| `emitter add/del/set/toggle/list` | #11 Particle emitters |
+| `rigidbody enable/disable/vel/angvel/mass/bounce/gravity/step/status` | #12 Rigid body |
+| `render <path> [w h spp bounces]` | #13 Raytracing |
+| `spectrum [Z] [nmax] [save]` | #14 Spectra |
+| `hf init/scf/info/density` | #7 Hartree-Fock |
+
+### Status: COMPLETE

@@ -32,7 +32,9 @@ except Exception:
     ImageTk = None  # type: ignore[assignment]
     IMAGETK_AVAILABLE = False
 
-from quantum_engine import QuantumWorld
+from quantum_engine import QuantumWorld, HartreeFockWorld, HydrogenSpectrum
+from mesh import Mesh, load_obj, load_stl, make_cube as mesh_make_cube, make_sphere as mesh_make_sphere, make_plane as mesh_make_plane
+import raytracer as rt
 
 # -----------------------------
 # Materials / Presets
@@ -106,6 +108,28 @@ class ObjectKeyframe:
 
 
 @dataclass
+class Emitter:
+    """Particle emitter attached to a scene object."""
+    name: str
+    host_object: str  # name of the scene object this emitter is on
+    rate: float = 10.0  # particles per second
+    lifetime: float = 5.0  # seconds before particle removal
+    speed: float = 80.0  # initial speed of emitted particles
+    spread_deg: float = 30.0  # cone half-angle
+    direction: list[float] | None = None  # (dx, dy, dz) — None = up
+    material: str = "electron"  # material key
+    active: bool = True
+    _accum: float = 0.0  # internal accumulator for fractional spawns
+    _spawned: list[int] = None  # type: ignore[assignment] # indices into particles
+
+    def __post_init__(self) -> None:
+        if self.direction is None:
+            self.direction = [0.0, -1.0, 0.0]
+        if self._spawned is None:
+            self._spawned = []
+
+
+@dataclass
 class SceneCube:
     name: str
     x: float
@@ -125,6 +149,18 @@ class SceneCube:
     texture_pil: object | None = None
     texture_tk_id: int | None = None
     keyframes: list[ObjectKeyframe] = None  # type: ignore[assignment]
+    # (#1) Mesh data for imported OBJ/STL
+    mesh_data: Mesh | None = None
+    # (#12) Rigid-body dynamics state
+    vx: float = 0.0
+    vy: float = 0.0
+    vz: float = 0.0
+    angular_vel_x: float = 0.0
+    angular_vel_y: float = 0.0
+    angular_vel_z: float = 0.0
+    rb_mass: float = 1.0
+    rb_restitution: float = 0.5
+    rb_static: bool = True  # True = not simulated by default
 
     def __post_init__(self) -> None:
         if self.keyframes is None:
@@ -792,6 +828,46 @@ class AtomSimulatorApp:
                 "usage": "quantum <set <n> <l> <m>|grid <n>|field <ex> <ey> <ez>|dt <v>|steps <n>|superpose <n> <l> <m> <w>|measure|view <slice|project> [axis]|Z <n>|info|reset>",
                 "desc": "Mode C quantum TDSE controls. Set quantum numbers, grid resolution, electric field (Stark effect), create superpositions, measure position (Born rule collapse), or change visualization.",
             },
+            "mesh": {
+                "usage": "mesh load <name> <path> [x y z size] | mesh prim <cube|sphere|plane> <name> <x> <y> <z> <size>",
+                "desc": "(#1) Import OBJ/STL mesh or generate primitive mesh object.",
+            },
+            "edit": {
+                "usage": "edit <enter|exit|mode <vert|edge|face>|select <idx>|deselect|status>",
+                "desc": "(#2) Toggle edit mode on selected object. Select vertices, edges, or faces.",
+            },
+            "mat": {
+                "usage": "mat <name> <roughness|metallic|emission|color> <value>",
+                "desc": "(#4) Set PBR material properties on a scene object.",
+            },
+            "shadow": {
+                "usage": "shadow <on|off|bias <v>|samples <n>|status>",
+                "desc": "(#5) Toggle shadow mapping in Mode A renderer.",
+            },
+            "scene": {
+                "usage": "scene <save|load> <path>",
+                "desc": "(#6) Save or load entire scene state to/from JSON file.",
+            },
+            "emitter": {
+                "usage": "emitter <add <name> <host_obj>|del <name>|set <name> <rate|lifetime|speed|spread|material> <v>|toggle <name>|list>",
+                "desc": "(#11) Create/configure particle emitters attached to scene objects.",
+            },
+            "rigidbody": {
+                "usage": "rigidbody <enable|disable|vel <name> <vx> <vy> <vz>|angvel <name> <wx> <wy> <wz>|mass <name> <m>|bounce <name> <e>|step [n]|status>",
+                "desc": "(#12) Rigid-body dynamics for scene objects. Enable physics, set velocities.",
+            },
+            "render": {
+                "usage": "render <path.png> [width height samples bounces]",
+                "desc": "(#13) Raytrace current scene to image using path tracer.",
+            },
+            "spectrum": {
+                "usage": "spectrum [Z <n>] [nmax <n>] [save <path>]",
+                "desc": "(#14) Compute and display hydrogen-like emission spectrum.",
+            },
+            "hf": {
+                "usage": "hf <init <Z> <n_electrons>|scf [max_iter tol]|info|density>",
+                "desc": "(#7) Multi-electron Hartree-Fock self-consistent field solver.",
+            },
         }
 
         self.sim_mode_var = tk.StringVar(value="A")
@@ -871,6 +947,33 @@ class AtomSimulatorApp:
         # Mode C: quantum engine (lazy-initialized on first use)
         self.quantum_world: QuantumWorld | None = None
         self._quantum_photo = None  # prevent GC of Tk PhotoImage
+
+        # (#7) Hartree-Fock world (lazy)
+        self.hf_world: HartreeFockWorld | None = None
+
+        # (#2) Edit-mode state
+        self.edit_mode_active = False
+        self.edit_sub_mode: str = "vert"  # "vert", "edge", "face"
+        self.edit_selection: list[int] = []  # indices of selected elements
+
+        # (#3) Enhanced undo: named operations
+        self.undo_op_names: list[str] = []
+        self.redo_op_names: list[str] = []
+
+        # (#5) Shadow mapping
+        self.shadow_enabled = True
+        self.shadow_bias = 0.5
+        self.shadow_samples = 1
+
+        # (#11) Particle emitters
+        self.emitters: dict[str, Emitter] = {}
+        self._emitter_timer = 0.0
+        self._emitter_particles: dict[str, list[tuple[int, float]]] = {}  # emitter_name -> [(particle_idx, birth_time)]
+
+        # (#12) Rigid-body dynamics
+        self.rigidbody_enabled = False
+        self.rb_gravity = [0.0, 9.8, 0.0]  # world-space gravity (y-down)
+        self.rb_time = 0.0
 
         self._build_ui()
         self._build_command_center()
@@ -1511,6 +1614,12 @@ class AtomSimulatorApp:
                 "collection": o.collection,
                 "texture_path": o.texture_path,
                 "keyframes": [{"frame": k.frame, "x": k.x, "y": k.y, "rot_deg": k.rot_deg} for k in o.keyframes],
+                # (#1) Mesh data serialisation
+                "mesh_data": o.mesh_data.to_dict() if o.mesh_data else None,
+                # (#12) Rigid-body state
+                "vx": o.vx, "vy": o.vy, "vz": o.vz,
+                "angular_vel_x": o.angular_vel_x, "angular_vel_y": o.angular_vel_y, "angular_vel_z": o.angular_vel_z,
+                "rb_mass": o.rb_mass, "rb_restitution": o.rb_restitution, "rb_static": o.rb_static,
             }
         return snap
 
@@ -1536,31 +1645,53 @@ class AtomSimulatorApp:
                 ObjectKeyframe(frame=int(k["frame"]), x=float(k["x"]), y=float(k["y"]), rot_deg=float(k["rot_deg"]))
                 for k in d.get("keyframes", [])
             ]
+            # Restore mesh_data
+            md = d.get("mesh_data")
+            if md is not None:
+                obj.mesh_data = Mesh.from_dict(md)
+            # Restore rigid-body state
+            obj.vx = float(d.get("vx", 0.0))
+            obj.vy = float(d.get("vy", 0.0))
+            obj.vz = float(d.get("vz", 0.0))
+            obj.angular_vel_x = float(d.get("angular_vel_x", 0.0))
+            obj.angular_vel_y = float(d.get("angular_vel_y", 0.0))
+            obj.angular_vel_z = float(d.get("angular_vel_z", 0.0))
+            obj.rb_mass = float(d.get("rb_mass", 1.0))
+            obj.rb_restitution = float(d.get("rb_restitution", 0.5))
+            obj.rb_static = bool(d.get("rb_static", True))
             self.scene_objects[n] = obj
 
-    def _push_undo(self) -> None:
+    def _push_undo(self, op_name: str = "edit") -> None:
+        """(#3) Enhanced undo push with operation name."""
         self.undo_stack.append(self._scene_snapshot())
+        self.undo_op_names.append(op_name)
         if len(self.undo_stack) > 200:
             self.undo_stack.pop(0)
+            self.undo_op_names.pop(0)
         self.redo_stack.clear()
+        self.redo_op_names.clear()
 
     def undo_scene_edit(self) -> None:
         if not self.undo_stack:
             self._log("undo: nothing to undo")
             return
         self.redo_stack.append(self._scene_snapshot())
+        op_name = self.undo_op_names.pop() if self.undo_op_names else "edit"
+        self.redo_op_names.append(op_name)
         snap = self.undo_stack.pop()
         self._restore_scene_snapshot(snap)
-        self._log("undo: scene restored")
+        self._log(f"undo: reverted '{op_name}'")
 
     def redo_scene_edit(self) -> None:
         if not self.redo_stack:
             self._log("redo: nothing to redo")
             return
         self.undo_stack.append(self._scene_snapshot())
+        op_name = self.redo_op_names.pop() if self.redo_op_names else "edit"
+        self.undo_op_names.append(op_name)
         snap = self.redo_stack.pop()
         self._restore_scene_snapshot(snap)
-        self._log("redo: scene restored")
+        self._log(f"redo: reapplied '{op_name}'")
 
     def toggle_snap(self) -> None:
         self.snap_enabled = not self.snap_enabled
@@ -1962,6 +2093,252 @@ class AtomSimulatorApp:
         obj.texture_image = img
         obj.texture_pil = pil_img
         self._log(f"texture assigned: {name} <- {path}")
+
+    # ------------------------------------------------------------------
+    # (#1) Mesh import
+    # ------------------------------------------------------------------
+    def add_mesh_object(self, name: str, mesh: Mesh, x: float, y: float, z: float, size: float) -> None:
+        """Add a SceneCube backed by an imported mesh."""
+        if name in self.scene_objects:
+            raise ValueError(f"object already exists: {name}")
+        self._push_undo("add_mesh")
+        obj = SceneCube(name=name, x=x, y=y, z=z, size=size, kind="mesh")
+        obj.mesh_data = mesh
+        self.scene_objects[name] = obj
+        self.selected_object_name = name
+        self.selected_index = None
+        self._log(f"mesh object added: {name} verts={len(mesh.vertices)} faces={len(mesh.faces)}")
+
+    # ------------------------------------------------------------------
+    # (#5) Shadow computation
+    # ------------------------------------------------------------------
+    def _compute_shadow_factor(self, wx: float, wy: float, wz: float) -> float:
+        """Return shadow factor 0..1 (0=full shadow, 1=fully lit) for a world point."""
+        if not self.shadow_enabled:
+            return 1.0
+        # Find all lights
+        lights: list[tuple[float, float, float, float]] = []
+        for obj in self.scene_objects.values():
+            if obj.kind == "light" and obj.visible:
+                lx, ly, _ = self._eval_object_transform(obj, self.timeline_frame)
+                lights.append((lx, ly, obj.z, obj.emission))
+        if not lights:
+            return 1.0
+
+        lit = 0.0
+        for lx, ly, lz, intensity in lights:
+            dx, dy, dz = lx - wx, ly - wy, lz - wz
+            dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+            if dist < 1.0:
+                lit += intensity
+                continue
+            # Cast shadow ray: check if any opaque object blocks
+            blocked = False
+            for oname, oobj in self.scene_objects.items():
+                if oobj.kind == "light" or not oobj.visible:
+                    continue
+                ox2, oy2, _ = self._eval_object_transform(oobj, self.timeline_frame)
+                hx, hy, hz = self._box_dims_for_object(oobj)
+                # Simple AABB test along shadow ray
+                ocx, ocy, ocz = ox2, oy2, oobj.z
+                # Check if object center is roughly between point and light
+                t_dot = ((ocx - wx) * dx + (ocy - wy) * dy + (ocz - wz) * dz) / (dist * dist)
+                if t_dot < self.shadow_bias / dist or t_dot > 1.0 - self.shadow_bias / dist:
+                    continue
+                # Closest point on ray to object center
+                cpx = wx + dx * t_dot
+                cpy = wy + dy * t_dot
+                cpz = wz + dz * t_dot
+                if abs(cpx - ocx) < hx and abs(cpy - ocy) < hy and abs(cpz - ocz) < hz:
+                    blocked = True
+                    break
+            if not blocked:
+                lit += intensity
+        return min(1.0, lit / max(1.0, sum(i for _, _, _, i in lights)))
+
+    # ------------------------------------------------------------------
+    # (#6) Scene serialization
+    # ------------------------------------------------------------------
+    def save_scene(self, path: str) -> None:
+        """Save entire scene state to JSON."""
+        data: dict = {
+            "version": 2,
+            "scene_objects": {},
+            "camera": {
+                "orbit_pivot": self.orbit_pivot,
+                "orbit_distance": self.orbit_distance,
+                "orbit_yaw": self.orbit_yaw,
+                "orbit_pitch": self.orbit_pitch,
+                "fov": self.camera_fov_deg,
+            },
+            "timeline": {
+                "frame": self.timeline_frame,
+                "length": self.timeline_length,
+                "fps": self.timeline_fps,
+            },
+            "background": self.background_preset_var.get(),
+            "emitters": {},
+            "rigidbody_enabled": self.rigidbody_enabled,
+            "rb_gravity": self.rb_gravity,
+            "shadow_enabled": self.shadow_enabled,
+        }
+        snap = self._scene_snapshot()
+        data["scene_objects"] = snap
+        for en, em in self.emitters.items():
+            data["emitters"][en] = {
+                "host_object": em.host_object,
+                "rate": em.rate,
+                "lifetime": em.lifetime,
+                "speed": em.speed,
+                "spread_deg": em.spread_deg,
+                "direction": em.direction,
+                "material": em.material,
+                "active": em.active,
+            }
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        self._log(f"scene saved: {path} ({len(snap)} objects, {len(self.emitters)} emitters)")
+
+    def load_scene(self, path: str) -> None:
+        """Load scene state from JSON."""
+        if not os.path.exists(path):
+            raise ValueError(f"file not found: {path}")
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # Restore scene objects
+        snap = data.get("scene_objects", {})
+        self._restore_scene_snapshot(snap)
+        # Camera
+        cam = data.get("camera", {})
+        if cam:
+            self.orbit_pivot = cam.get("orbit_pivot", self.orbit_pivot)
+            self.orbit_distance = cam.get("orbit_distance", self.orbit_distance)
+            self.orbit_yaw = cam.get("orbit_yaw", self.orbit_yaw)
+            self.orbit_pitch = cam.get("orbit_pitch", self.orbit_pitch)
+            self.camera_fov_deg = cam.get("fov", self.camera_fov_deg)
+            self._sync_camera_from_orbit()
+        # Timeline
+        tl = data.get("timeline", {})
+        self.timeline_frame = tl.get("frame", self.timeline_frame)
+        self.timeline_length = tl.get("length", self.timeline_length)
+        self.timeline_fps = tl.get("fps", self.timeline_fps)
+        # Background
+        bg = data.get("background", "")
+        if bg:
+            self.background_preset_var.set(bg)
+        # Emitters
+        self.emitters.clear()
+        for en, edata in data.get("emitters", {}).items():
+            self.emitters[en] = Emitter(
+                name=en,
+                host_object=edata.get("host_object", ""),
+                rate=edata.get("rate", 10.0),
+                lifetime=edata.get("lifetime", 5.0),
+                speed=edata.get("speed", 80.0),
+                spread_deg=edata.get("spread_deg", 30.0),
+                direction=edata.get("direction", [0.0, -1.0, 0.0]),
+                material=edata.get("material", "electron"),
+                active=edata.get("active", True),
+            )
+        # Rigid body
+        self.rigidbody_enabled = data.get("rigidbody_enabled", False)
+        self.rb_gravity = data.get("rb_gravity", [0.0, 9.8, 0.0])
+        self.shadow_enabled = data.get("shadow_enabled", True)
+        self._log(f"scene loaded: {path} ({len(self.scene_objects)} objects)")
+
+    # ------------------------------------------------------------------
+    # (#11) Particle emitter tick
+    # ------------------------------------------------------------------
+    def _update_emitters(self, dt_sec: float) -> None:
+        """Spawn particles from active emitters each tick."""
+        self._emitter_timer += dt_sec
+        for ename, em in self.emitters.items():
+            if not em.active:
+                continue
+            if em.host_object not in self.scene_objects:
+                continue
+            obj = self.scene_objects[em.host_object]
+            ox, oy, _ = self._eval_object_transform(obj, self.timeline_frame)
+            em._accum += em.rate * dt_sec
+            while em._accum >= 1.0:
+                em._accum -= 1.0
+                direction = em.direction if em.direction else [0.0, -1.0, 0.0]
+                # Add cone spread
+                spread_rad = math.radians(em.spread_deg)
+                dx = direction[0] + random.uniform(-1, 1) * math.sin(spread_rad)
+                dy_dir = direction[1] + random.uniform(-1, 1) * math.sin(spread_rad)
+                dz = direction[2] + random.uniform(-1, 1) * math.sin(spread_rad)
+                mag = max(1e-6, math.sqrt(dx * dx + dy_dir * dy_dir + dz * dz))
+                dx, dy_dir, dz = dx / mag, dy_dir / mag, dz / mag
+                mat_key = em.material if em.material in MATERIALS else "electron"
+                p = Particle(
+                    x=ox, y=oy, z=obj.z,
+                    vx=dx * em.speed, vy=dy_dir * em.speed, vz=dz * em.speed,
+                    material=MATERIALS[mat_key],
+                )
+                idx = len(self.world.particles)
+                self.world.particles.append(p)
+                if ename not in self._emitter_particles:
+                    self._emitter_particles[ename] = []
+                self._emitter_particles[ename].append((idx, self._emitter_timer))
+
+        # Remove expired particles (reverse order to keep indices valid)
+        for ename, plist in list(self._emitter_particles.items()):
+            em = self.emitters.get(ename)
+            if em is None:
+                continue
+            to_remove: list[int] = []
+            alive: list[tuple[int, float]] = []
+            for pidx, birth in plist:
+                if self._emitter_timer - birth > em.lifetime:
+                    to_remove.append(pidx)
+                else:
+                    alive.append((pidx, birth))
+            self._emitter_particles[ename] = alive
+            # Mark for removal (we can't safely remove while iterating)
+            for pidx in sorted(to_remove, reverse=True):
+                if 0 <= pidx < len(self.world.particles):
+                    self.world.particles.pop(pidx)
+                    # Adjust remaining indices
+                    for en2 in self._emitter_particles:
+                        self._emitter_particles[en2] = [
+                            (pi - 1 if pi > pidx else pi, b) for pi, b in self._emitter_particles[en2]
+                        ]
+
+    # ------------------------------------------------------------------
+    # (#12) Rigid-body dynamics tick
+    # ------------------------------------------------------------------
+    def _update_rigid_body(self, dt_sec: float) -> None:
+        """Simple rigid-body Euler integration for non-static scene objects."""
+        if not self.rigidbody_enabled:
+            return
+        gx, gy, gz = self.rb_gravity
+        for obj in self.scene_objects.values():
+            if obj.rb_static:
+                continue
+            # Gravity
+            obj.vx += gx * dt_sec
+            obj.vy += gy * dt_sec
+            obj.vz += gz * dt_sec
+            # Integrate position
+            obj.x += obj.vx * dt_sec
+            obj.y += obj.vy * dt_sec
+            obj.z += obj.vz * dt_sec
+            # Integrate rotation (simplified: angular velocity around z only for 2D rot_deg)
+            obj.rot_deg += obj.angular_vel_z * dt_sec
+            # Simple floor collision (y > world_h)
+            if obj.y + obj.size * 0.5 > self.world.world_h:
+                obj.y = self.world.world_h - obj.size * 0.5
+                obj.vy = -obj.vy * obj.rb_restitution
+                obj.angular_vel_z *= 0.95  # friction damp
+            # Simple wall bouncing
+            if obj.x - obj.size * 0.5 < 0:
+                obj.x = obj.size * 0.5
+                obj.vx = abs(obj.vx) * obj.rb_restitution
+            if obj.x + obj.size * 0.5 > self.world.world_w:
+                obj.x = self.world.world_w - obj.size * 0.5
+                obj.vx = -abs(obj.vx) * obj.rb_restitution
+        self.rb_time += dt_sec
 
     def _eval_object_transform(self, obj: SceneCube, frame: int) -> tuple[float, float, float]:
         if not obj.keyframes:
@@ -2575,16 +2952,21 @@ class AtomSimulatorApp:
         img_pil: Image.Image,
     ) -> None:
         col = self._hex_to_rgb(obj.color)
+        # (#5) Shadow factor
+        shadow = self._compute_shadow_factor(ox, oy, obj.z)
         mesh = self._project_object_box(obj, ox, oy, rot)
         if mesh is None:
             return
         projected, faces = mesh
         for idxs, shade in faces:
             pts = [(int(round(projected[i][0])), int(round(projected[i][1]))) for i in idxs]
-            shaded = self._shade_rgb(col, shade)
-            draw.polygon(pts, fill=(shaded[0], shaded[1], shaded[2], 255), outline=(215, 226, 255, 255))
+            # (#4) PBR-ish: emission adds to shade, metallic shifts outline
+            effective_shade = shade * shadow + obj.emission * 0.6
+            shaded = self._shade_rgb(col, min(2.0, effective_shade))
+            outline_col = (215, 226, 255, 255) if obj.metallic < 0.5 else (shaded[0], shaded[1], shaded[2], 255)
+            draw.polygon(pts, fill=(shaded[0], shaded[1], shaded[2], 255), outline=outline_col)
 
-        if obj.texture_pil is not None and obj.kind.lower() == "cube":
+        if obj.texture_pil is not None and obj.kind.lower() in ("cube", "mesh"):
             center = self.world3_to_screen(ox, oy, obj.z)
             if center is not None:
                 csx, csy, scale, _depth = center
@@ -2683,12 +3065,17 @@ class AtomSimulatorApp:
 
     def _tick(self) -> None:
         self._advance_timeline()
+        dt_sec = 0.016  # ~60fps
         if self.running and self._check_emergency_state():
             self._update_physics()
         elif self.emergency_grace_ticks > 0:
             self.emergency_grace_ticks -= 1
-        self._apply_rotate_key_hold(0.016)
-        self._apply_camera_key_hold(0.016)
+        self._apply_rotate_key_hold(dt_sec)
+        self._apply_camera_key_hold(dt_sec)
+        # (#11) Emitter tick
+        self._update_emitters(dt_sec)
+        # (#12) Rigid-body dynamics tick
+        self._update_rigid_body(dt_sec)
         self._draw()
         self.root.after(16, self._tick)
 
@@ -3463,6 +3850,363 @@ class AtomSimulatorApp:
                     self._log(f"quantum: reset to \u03c8_({qw.current_n},{qw.current_l},{qw.current_m})")
                 else:
                     raise ValueError("usage: quantum <set|grid|field|dt|steps|superpose|measure|view|Z|info|reset>")
+
+            # ==============================================================
+            # (#1) mesh — import OBJ/STL or generate primitive mesh
+            # ==============================================================
+            elif op == "mesh":
+                if len(parts) < 2:
+                    raise ValueError("usage: mesh load <name> <path> [x y z size] | mesh prim <cube|sphere|plane> <name> <x> <y> <z> <size>")
+                sub = parts[1].lower()
+                if sub == "load" and len(parts) >= 4:
+                    name = parts[2]
+                    fpath = parts[3]
+                    x = float(parts[4]) if len(parts) > 4 else 500.0
+                    y = float(parts[5]) if len(parts) > 5 else 400.0
+                    z = float(parts[6]) if len(parts) > 6 else 0.0
+                    size = float(parts[7]) if len(parts) > 7 else 80.0
+                    ext = os.path.splitext(fpath)[1].lower()
+                    if ext == ".obj":
+                        m = load_obj(fpath)
+                    elif ext == ".stl":
+                        m = load_stl(fpath)
+                    else:
+                        raise ValueError(f"unsupported mesh format: {ext} (use .obj or .stl)")
+                    m.normalize(size)
+                    self.add_mesh_object(name, m, x, y, z, size)
+                elif sub == "prim" and len(parts) >= 8:
+                    prim_kind = parts[2].lower()
+                    name = parts[3]
+                    x = float(parts[4])
+                    y = float(parts[5])
+                    z = float(parts[6])
+                    size = float(parts[7])
+                    if prim_kind == "cube":
+                        m = mesh_make_cube(size)
+                    elif prim_kind == "sphere":
+                        m = mesh_make_sphere(size * 0.5, 16, 12)
+                    elif prim_kind == "plane":
+                        m = mesh_make_plane(size)
+                    else:
+                        raise ValueError(f"unknown primitive: {prim_kind}")
+                    self.add_mesh_object(name, m, x, y, z, size)
+                else:
+                    raise ValueError("usage: mesh load <name> <path> [x y z size] | mesh prim <cube|sphere|plane> <name> <x> <y> <z> <size>")
+
+            # ==============================================================
+            # (#2) edit — toggle edit mode on selected object
+            # ==============================================================
+            elif op == "edit":
+                if len(parts) < 2:
+                    raise ValueError("usage: edit <enter|exit|mode <vert|edge|face>|select <idx>|deselect|status>")
+                sub = parts[1].lower()
+                if sub == "enter":
+                    if not self.selected_object_name:
+                        raise ValueError("no object selected")
+                    self.edit_mode_active = True
+                    self.edit_selection.clear()
+                    self._log(f"edit mode: ENTERED on '{self.selected_object_name}' sub={self.edit_sub_mode}")
+                elif sub == "exit":
+                    self.edit_mode_active = False
+                    self.edit_selection.clear()
+                    self._log("edit mode: EXITED")
+                elif sub == "mode" and len(parts) == 3:
+                    m = parts[2].lower()
+                    if m not in ("vert", "edge", "face"):
+                        raise ValueError("edit mode must be vert, edge, or face")
+                    self.edit_sub_mode = m
+                    self.edit_selection.clear()
+                    self._log(f"edit sub-mode: {m}")
+                elif sub == "select" and len(parts) == 3:
+                    idx = int(parts[2])
+                    if idx not in self.edit_selection:
+                        self.edit_selection.append(idx)
+                    self._log(f"edit selection: {self.edit_selection}")
+                elif sub == "deselect":
+                    self.edit_selection.clear()
+                    self._log("edit selection cleared")
+                elif sub == "status":
+                    self._log(
+                        f"edit_mode={self.edit_mode_active} sub={self.edit_sub_mode} "
+                        f"object={self.selected_object_name} selection={self.edit_selection}"
+                    )
+                else:
+                    raise ValueError("usage: edit <enter|exit|mode <vert|edge|face>|select <idx>|deselect|status>")
+
+            # ==============================================================
+            # (#4) mat — PBR material properties
+            # ==============================================================
+            elif op == "mat":
+                if len(parts) != 4:
+                    raise ValueError("usage: mat <name> <roughness|metallic|emission|color> <value>")
+                name = parts[1]
+                if name not in self.scene_objects:
+                    raise ValueError(f"object not found: {name}")
+                self._push_undo("material")
+                prop = parts[2].lower()
+                val = parts[3]
+                obj = self.scene_objects[name]
+                if prop == "roughness":
+                    obj.roughness = max(0.0, min(1.0, float(val)))
+                elif prop == "metallic":
+                    obj.metallic = max(0.0, min(1.0, float(val)))
+                elif prop == "emission":
+                    obj.emission = max(0.0, float(val))
+                elif prop == "color":
+                    obj.color = val  # e.g. "#ff0000"
+                else:
+                    raise ValueError("property must be roughness, metallic, emission, or color")
+                self._log(f"mat {name}: {prop}={getattr(obj, prop) if prop != 'color' else obj.color}")
+
+            # ==============================================================
+            # (#5) shadow — toggle shadow mapping
+            # ==============================================================
+            elif op == "shadow":
+                if len(parts) < 2:
+                    raise ValueError("usage: shadow <on|off|bias <v>|samples <n>|status>")
+                sub = parts[1].lower()
+                if sub == "on":
+                    self.shadow_enabled = True
+                    self._log("shadows enabled")
+                elif sub == "off":
+                    self.shadow_enabled = False
+                    self._log("shadows disabled")
+                elif sub == "bias" and len(parts) == 3:
+                    self.shadow_bias = float(parts[2])
+                    self._log(f"shadow bias={self.shadow_bias}")
+                elif sub == "samples" and len(parts) == 3:
+                    self.shadow_samples = max(1, int(parts[2]))
+                    self._log(f"shadow samples={self.shadow_samples}")
+                elif sub == "status":
+                    self._log(f"shadow enabled={self.shadow_enabled} bias={self.shadow_bias} samples={self.shadow_samples}")
+                else:
+                    raise ValueError("usage: shadow <on|off|bias <v>|samples <n>|status>")
+
+            # ==============================================================
+            # (#6) scene — save / load
+            # ==============================================================
+            elif op == "scene":
+                if len(parts) < 3:
+                    raise ValueError("usage: scene <save|load> <path>")
+                sub = parts[1].lower()
+                fpath = " ".join(parts[2:])
+                if sub == "save":
+                    self.save_scene(fpath)
+                elif sub == "load":
+                    self.load_scene(fpath)
+                else:
+                    raise ValueError("usage: scene <save|load> <path>")
+
+            # ==============================================================
+            # (#11) emitter — particle emitter management
+            # ==============================================================
+            elif op == "emitter":
+                if len(parts) < 2:
+                    raise ValueError("usage: emitter <add|del|set|toggle|list>")
+                sub = parts[1].lower()
+                if sub == "add" and len(parts) >= 4:
+                    ename = parts[2]
+                    host = parts[3]
+                    if host not in self.scene_objects:
+                        raise ValueError(f"host object not found: {host}")
+                    self.emitters[ename] = Emitter(name=ename, host_object=host)
+                    self._log(f"emitter added: {ename} -> {host}")
+                elif sub == "del" and len(parts) == 3:
+                    ename = parts[2]
+                    if ename in self.emitters:
+                        del self.emitters[ename]
+                        self._emitter_particles.pop(ename, None)
+                        self._log(f"emitter deleted: {ename}")
+                    else:
+                        raise ValueError(f"emitter not found: {ename}")
+                elif sub == "set" and len(parts) == 5:
+                    ename = parts[2]
+                    if ename not in self.emitters:
+                        raise ValueError(f"emitter not found: {ename}")
+                    em = self.emitters[ename]
+                    prop = parts[3].lower()
+                    val = parts[4]
+                    if prop == "rate":
+                        em.rate = float(val)
+                    elif prop == "lifetime":
+                        em.lifetime = float(val)
+                    elif prop == "speed":
+                        em.speed = float(val)
+                    elif prop == "spread":
+                        em.spread_deg = float(val)
+                    elif prop == "material":
+                        em.material = val
+                    else:
+                        raise ValueError("emitter prop must be rate, lifetime, speed, spread, or material")
+                    self._log(f"emitter {ename}: {prop}={val}")
+                elif sub == "toggle" and len(parts) == 3:
+                    ename = parts[2]
+                    if ename not in self.emitters:
+                        raise ValueError(f"emitter not found: {ename}")
+                    self.emitters[ename].active = not self.emitters[ename].active
+                    self._log(f"emitter {ename}: active={self.emitters[ename].active}")
+                elif sub == "list":
+                    self._log(f"emitters total={len(self.emitters)}")
+                    for en, em in self.emitters.items():
+                        self._log(
+                            f"  {en}: host={em.host_object} rate={em.rate} life={em.lifetime} "
+                            f"speed={em.speed} spread={em.spread_deg} mat={em.material} active={em.active}"
+                        )
+                else:
+                    raise ValueError("usage: emitter <add <name> <host>|del <name>|set <name> <prop> <val>|toggle <name>|list>")
+
+            # ==============================================================
+            # (#12) rigidbody — rigid-body dynamics
+            # ==============================================================
+            elif op == "rigidbody":
+                if len(parts) < 2:
+                    raise ValueError("usage: rigidbody <enable|disable|vel|angvel|mass|bounce|step|gravity|status>")
+                sub = parts[1].lower()
+                if sub == "enable":
+                    self.rigidbody_enabled = True
+                    self._log("rigid-body physics: ENABLED")
+                elif sub == "disable":
+                    self.rigidbody_enabled = False
+                    self._log("rigid-body physics: DISABLED")
+                elif sub == "vel" and len(parts) == 6:
+                    name = parts[2]
+                    if name not in self.scene_objects:
+                        raise ValueError(f"object not found: {name}")
+                    obj = self.scene_objects[name]
+                    obj.vx, obj.vy, obj.vz = float(parts[3]), float(parts[4]), float(parts[5])
+                    obj.rb_static = False  # auto-enable dynamics
+                    self._log(f"rigidbody {name}: vel=({obj.vx},{obj.vy},{obj.vz}) static=False")
+                elif sub == "angvel" and len(parts) == 6:
+                    name = parts[2]
+                    if name not in self.scene_objects:
+                        raise ValueError(f"object not found: {name}")
+                    obj = self.scene_objects[name]
+                    obj.angular_vel_x = float(parts[3])
+                    obj.angular_vel_y = float(parts[4])
+                    obj.angular_vel_z = float(parts[5])
+                    obj.rb_static = False
+                    self._log(f"rigidbody {name}: angvel=({obj.angular_vel_x},{obj.angular_vel_y},{obj.angular_vel_z})")
+                elif sub == "mass" and len(parts) == 4:
+                    name = parts[2]
+                    if name not in self.scene_objects:
+                        raise ValueError(f"object not found: {name}")
+                    self.scene_objects[name].rb_mass = max(0.01, float(parts[3]))
+                    self._log(f"rigidbody {name}: mass={self.scene_objects[name].rb_mass}")
+                elif sub == "bounce" and len(parts) == 4:
+                    name = parts[2]
+                    if name not in self.scene_objects:
+                        raise ValueError(f"object not found: {name}")
+                    self.scene_objects[name].rb_restitution = max(0.0, min(1.0, float(parts[3])))
+                    self._log(f"rigidbody {name}: restitution={self.scene_objects[name].rb_restitution}")
+                elif sub == "gravity" and len(parts) == 5:
+                    self.rb_gravity = [float(parts[2]), float(parts[3]), float(parts[4])]
+                    self._log(f"rigidbody gravity={self.rb_gravity}")
+                elif sub == "step" and len(parts) <= 3:
+                    n = int(parts[2]) if len(parts) == 3 else 1
+                    for _ in range(n):
+                        self._update_rigid_body(0.016)
+                    self._log(f"rigidbody stepped {n} frames")
+                elif sub == "status":
+                    self._log(
+                        f"rigidbody enabled={self.rigidbody_enabled} gravity={self.rb_gravity} time={self.rb_time:.2f}"
+                    )
+                    for name, obj in self.scene_objects.items():
+                        if not obj.rb_static:
+                            self._log(
+                                f"  {name}: vel=({obj.vx:.1f},{obj.vy:.1f},{obj.vz:.1f}) "
+                                f"angvel_z={obj.angular_vel_z:.1f} mass={obj.rb_mass} e={obj.rb_restitution}"
+                            )
+                else:
+                    raise ValueError("usage: rigidbody <enable|disable|vel <name> <vx> <vy> <vz>|angvel <name> <wx> <wy> <wz>|mass <name> <m>|bounce <name> <e>|gravity <gx> <gy> <gz>|step [n]|status>")
+
+            # ==============================================================
+            # (#13) render — raytrace current scene
+            # ==============================================================
+            elif op == "render":
+                if len(parts) < 2:
+                    raise ValueError("usage: render <path.png> [width height samples bounces]")
+                out_path = parts[1]
+                w = int(parts[2]) if len(parts) > 2 else 960
+                h = int(parts[3]) if len(parts) > 3 else 540
+                spp = int(parts[4]) if len(parts) > 4 else 4
+                bounces = int(parts[5]) if len(parts) > 5 else 2
+                self._log(f"rendering {w}x{h} spp={spp} bounces={bounces} ...")
+                settings = rt.RenderSettings(width=w, height=h, samples=spp, max_bounces=bounces)
+                scene = rt.build_scene_from_app(self)
+                img = rt.render(scene, settings)
+                img.save(out_path)
+                self._log(f"render saved: {out_path}")
+
+            # ==============================================================
+            # (#14) spectrum — hydrogen emission spectrum
+            # ==============================================================
+            elif op == "spectrum":
+                Z_spec = 1
+                nmax = 7
+                save_path = ""
+                i = 1
+                while i < len(parts):
+                    if parts[i].lower() == "z" and i + 1 < len(parts):
+                        Z_spec = int(parts[i + 1])
+                        i += 2
+                    elif parts[i].lower() == "nmax" and i + 1 < len(parts):
+                        nmax = int(parts[i + 1])
+                        i += 2
+                    elif parts[i].lower() == "save" and i + 1 < len(parts):
+                        save_path = parts[i + 1]
+                        i += 2
+                    else:
+                        i += 1
+                lines = HydrogenSpectrum.compute_spectrum(Z_spec, nmax)
+                self._log(f"spectrum Z={Z_spec} n_max={nmax}: {len(lines)} lines")
+                for line in lines:
+                    vis = "VIS" if 380 <= line["wavelength_nm"] <= 780 else "   "
+                    self._log(
+                        f"  {vis} {line['n_upper']}->{line['n_lower']} "
+                        f"({line['series_name']}) "
+                        f"\u03bb={line['wavelength_nm']:.2f}nm "
+                        f"E={line['energy_eV']:.4f}eV "
+                        f"rgb={line['rgb']}"
+                    )
+                if save_path:
+                    img, _ = HydrogenSpectrum.render_spectrum_pil(Z_spec, nmax)
+                    img.save(save_path)
+                    self._log(f"spectrum image saved: {save_path}")
+
+            # ==============================================================
+            # (#7) hf — Hartree-Fock multi-electron SCF
+            # ==============================================================
+            elif op == "hf":
+                if len(parts) < 2:
+                    raise ValueError("usage: hf <init <Z> <n_electrons>|scf [max_iter tol]|info|density>")
+                sub = parts[1].lower()
+                if sub == "init" and len(parts) >= 4:
+                    Z_hf = int(parts[2])
+                    ne = int(parts[3])
+                    grid_n = int(parts[4]) if len(parts) > 4 else 48
+                    self.hf_world = HartreeFockWorld(n_electrons=ne, nuclear_Z=Z_hf, grid_n=grid_n)
+                    self._log(f"HF initialized: Z={Z_hf} e\u207b={ne} grid={grid_n}\u00b3")
+                elif sub == "scf":
+                    if self.hf_world is None:
+                        raise ValueError("HF not initialized (use: hf init <Z> <n_electrons>)")
+                    max_iter = int(parts[2]) if len(parts) > 2 else 50
+                    tol = float(parts[3]) if len(parts) > 3 else 1e-5
+                    self._log(f"HF SCF running (max_iter={max_iter}, tol={tol}) ...")
+                    self.hf_world.run_scf(max_iter, tol)
+                    self._log(self.hf_world.get_info_text())
+                elif sub == "info":
+                    if self.hf_world is None:
+                        raise ValueError("HF not initialized")
+                    info = self.hf_world.get_info_dict()
+                    for k, v in info.items():
+                        self._log(f"  {k}: {v}")
+                elif sub == "density":
+                    if self.hf_world is None:
+                        raise ValueError("HF not initialized")
+                    # Show 2D density as info
+                    self._log(f"HF total energy: {self.hf_world.total_energy:.6f} Ha, SCF converged={self.hf_world.scf_converged}")
+                else:
+                    raise ValueError("usage: hf <init <Z> <n_electrons>|scf [max_iter tol]|info|density>")
 
             else:
                 self._log("unknown command. use: help")

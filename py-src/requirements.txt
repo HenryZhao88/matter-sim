@@ -3,3 +3,4 @@ PyOpenGL
 numpy
 scipy
 cupy
+imageio
