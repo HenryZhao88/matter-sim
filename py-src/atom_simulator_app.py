@@ -25,6 +25,15 @@ except Exception:
     messagebox = None  # type: ignore[assignment]
     TK_AVAILABLE = False
 
+try:
+    from PIL import ImageTk
+    IMAGETK_AVAILABLE = True
+except Exception:
+    ImageTk = None  # type: ignore[assignment]
+    IMAGETK_AVAILABLE = False
+
+from quantum_engine import QuantumWorld
+
 # -----------------------------
 # Materials / Presets
 # -----------------------------
@@ -685,6 +694,10 @@ class AtomSimulatorApp:
                 "usage": "emergency <on|off|status>",
                 "desc": "Configure emergency pause warning when interaction count is near crash territory.",
             },
+            "quantum": {
+                "usage": "quantum <set <n> <l> <m>|grid <n>|field <ex> <ey> <ez>|dt <v>|steps <n>|superpose <n> <l> <m> <w>|measure|view <slice|project> [axis]|Z <n>|info|reset>",
+                "desc": "Mode C quantum TDSE controls. Set quantum numbers, grid resolution, electric field (Stark effect), create superpositions, measure position (Born rule collapse), or change visualization.",
+            },
         }
 
         self.sim_mode_var = tk.StringVar(value="A")
@@ -747,6 +760,10 @@ class AtomSimulatorApp:
         self.emergency_grace_ticks = 0
         self.emergency_pair_threshold = 30_000_000
 
+        # Mode C: quantum engine (lazy-initialized on first use)
+        self.quantum_world: QuantumWorld | None = None
+        self._quantum_photo = None  # prevent GC of Tk PhotoImage
+
         self._build_ui()
         self._build_command_center()
         self._bind_events()
@@ -782,7 +799,7 @@ class AtomSimulatorApp:
         mode_row = ttk.Frame(panel)
         mode_row.pack(fill=tk.X, pady=(0, 4))
         ttk.Label(mode_row, text="Mode").pack(side=tk.LEFT)
-        self.mode_combo = ttk.Combobox(mode_row, textvariable=self.sim_mode_var, values=["A", "B"], state="readonly", width=8)
+        self.mode_combo = ttk.Combobox(mode_row, textvariable=self.sim_mode_var, values=["A", "B", "C"], state="readonly", width=8)
         self.mode_combo.pack(side=tk.LEFT, padx=6)
         self.mode_combo.bind("<<ComboboxSelected>>", lambda _e: self.apply_sim_mode(self.sim_mode_var.get()))
 
@@ -1148,14 +1165,19 @@ class AtomSimulatorApp:
 
     def apply_sim_mode(self, mode: str) -> None:
         m = mode.upper()
-        if m not in {"A", "B"}:
-            self._log("error: mode must be A or B")
+        if m not in {"A", "B", "C"}:
+            self._log("error: mode must be A, B, or C")
             return
         self.sim_mode_var.set(m)
         if m == "A":
             self._log("mode=A (Blender-like viewport, approximated simulation + proxy ray transport)")
-        else:
+        elif m == "B":
             self._log(f"mode=B (full equations + exact transport, backend={self.world.compute_backend})")
+        else:
+            if self.quantum_world is None:
+                self.quantum_world = QuantumWorld()
+                self._log("Quantum engine initialized (64\u00b3 grid, hydrogen Z=1)")
+            self._log("mode=C (quantum TDSE split-operator, exact Schr\u00f6dinger evolution)")
 
     def load_preset(self, name: str) -> None:
         cfg = SCALE_PROFILES.get(self.scale_profile_var.get(), SCALE_PROFILES["micro"])
@@ -1857,6 +1879,11 @@ class AtomSimulatorApp:
         self._log("running" if self.running else "paused")
 
     def _update_physics(self) -> None:
+        if self.sim_mode_var.get().upper() == "C":
+            if self.quantum_world is None:
+                self.quantum_world = QuantumWorld()
+            self.quantum_world.step_multi()
+            return
         self.world.k_coulomb = float(self.k_var.get())
         self.world.repulsion_k = float(self.rep_var.get())
         self.world.drag = float(self.drag_var.get())
@@ -1867,8 +1894,11 @@ class AtomSimulatorApp:
     # Rendering
     # -----------------------------
     def _draw(self) -> None:
-        if self.sim_mode_var.get().upper() == "A":
+        mode = self.sim_mode_var.get().upper()
+        if mode == "A":
             self._draw_mode_a()
+        elif mode == "C":
+            self._draw_mode_c()
         else:
             self._draw_mode_b()
 
@@ -1920,6 +1950,141 @@ class AtomSimulatorApp:
         )
         self._draw_axis_overlay()
         self._refresh_outliner()
+
+    def _draw_mode_c(self) -> None:
+        """Render Mode C: quantum wavefunction probability density."""
+        self.canvas.delete("all")
+
+        if self.quantum_world is None:
+            self.quantum_world = QuantumWorld()
+
+        qw = self.quantum_world
+
+        # Black background
+        self.canvas.create_rectangle(0, 0, self.world_w, self.world_h, fill="#020408", outline="")
+
+        # Get 2D density (slice or projection)
+        density = qw.get_density_2d()
+
+        # Normalize for colormap
+        max_val = float(density.max())
+        if max_val > 1e-30:
+            normalized = density / max_val
+        else:
+            normalized = density
+
+        # Apply fire colormap -> RGB uint8 array
+        rgb = self._quantum_fire_colormap(normalized)
+
+        # Create PIL image and scale to fit canvas
+        img = Image.fromarray(rgb, mode="RGB")
+        display_size = min(self.world_w, self.world_h) - 80
+        img = img.resize((display_size, display_size), Image.Resampling.BICUBIC)
+
+        # Convert to Tk PhotoImage and display centered
+        if IMAGETK_AVAILABLE:
+            self._quantum_photo = ImageTk.PhotoImage(img)
+        else:
+            # Fallback: save to temp PPM for Tk
+            import io
+            buf = io.BytesIO()
+            img.save(buf, format="PPM")
+            buf.seek(0)
+            self._quantum_photo = tk.PhotoImage(data=buf.read())
+
+        cx = self.world_w // 2
+        cy = self.world_h // 2
+        self.canvas.create_image(cx, cy, image=self._quantum_photo)
+
+        # Determine axis labels based on slice/projection axis
+        half = display_size // 2
+        ax = qw.slice_axis
+        if ax == "x":
+            xlabel, ylabel = "y", "z"
+        elif ax == "y":
+            xlabel, ylabel = "x", "z"
+        else:
+            xlabel, ylabel = "x", "y"
+
+        ext = qw.extent
+        fontsize_label = max(9, min(14, self.world_h // 160))
+        fontsize_info = max(9, min(13, self.world_h // 170))
+
+        # Axis labels
+        self.canvas.create_text(
+            cx + half + 30, cy,
+            text=f"{xlabel} \u2192\n{ext:.0f} a\u2080",
+            fill="#ffffff", font=("TkDefaultFont", fontsize_label),
+        )
+        self.canvas.create_text(
+            cx, cy - half - 20,
+            text=f"\u2191 {ylabel} ({ext:.0f} a\u2080)",
+            fill="#ffffff", font=("TkDefaultFont", fontsize_label),
+        )
+
+        # Scale bar
+        self.canvas.create_line(
+            cx - half, cy + half + 15, cx + half, cy + half + 15,
+            fill="#ffffff", width=2,
+        )
+        self.canvas.create_text(
+            cx, cy + half + 32,
+            text=f"{2 * ext:.0f} a\u2080  ({2 * ext * 0.529:.1f} \u00c5)",
+            fill="#aabbcc", font=("TkDefaultFont", fontsize_label - 1),
+        )
+
+        # Quantum info overlay
+        info = qw.get_info_text()
+        self.canvas.create_text(
+            20, 20, text=info, fill="#00e5ff",
+            font=("TkDefaultFont", fontsize_info), anchor="nw",
+        )
+
+        view_info = f"View: {qw.view_mode} along {qw.slice_axis}-axis | E_field=({qw.electric_field[0]:.3f}, {qw.electric_field[1]:.3f}, {qw.electric_field[2]:.3f})"
+        self.canvas.create_text(
+            20, 20 + fontsize_info + 12, text=view_info, fill="#8fa8ff",
+            font=("TkDefaultFont", fontsize_info - 1), anchor="nw",
+        )
+
+        # Exact vs computed energy comparison
+        exact_E = -float(qw.nuclear_Z) ** 2 / (2.0 * qw.current_n ** 2)
+        energy_err = abs(qw.last_energy - exact_E)
+        energy_text = (
+            f"Energy check: computed={qw.last_energy:.6f} Ha | exact={exact_E:.6f} Ha | "
+            f"\u0394E={energy_err:.6f} Ha ({energy_err * 27.211:.4f} eV)"
+        )
+        self.canvas.create_text(
+            20, 20 + 2 * (fontsize_info + 8), text=energy_text, fill="#63d26e",
+            font=("TkDefaultFont", fontsize_info - 1), anchor="nw",
+        )
+
+        self.info_var.set(info)
+        self._refresh_outliner()
+
+    @staticmethod
+    def _quantum_fire_colormap(values: np.ndarray) -> np.ndarray:
+        """Map values in [0,1] to RGB uint8 using fire/inferno colormap."""
+        colors = np.array(
+            [
+                [0, 0, 4],
+                [40, 0, 100],
+                [160, 0, 0],
+                [255, 100, 0],
+                [255, 220, 0],
+                [255, 255, 255],
+            ],
+            dtype=np.float64,
+        )
+        v = np.clip(values, 0.0, 1.0)
+        n_colors = len(colors)
+        scaled = v * (n_colors - 1)
+        i = np.floor(scaled).astype(int)
+        i = np.clip(i, 0, n_colors - 2)
+        t = (scaled - i)[..., np.newaxis]
+        c0 = colors[i]
+        c1 = colors[np.minimum(i + 1, n_colors - 1)]
+        rgb = np.clip(c0 + t * (c1 - c0), 0, 255).astype(np.uint8)
+        return rgb
 
     def _draw_mode_a(self) -> None:
         self.canvas.delete("all")
@@ -3057,6 +3222,79 @@ class AtomSimulatorApp:
                 else:
                     raise ValueError("usage: emergency <on|off|status>")
 
+            elif op == "quantum":
+                if len(parts) < 2:
+                    raise ValueError("usage: quantum <set|grid|field|dt|steps|superpose|measure|view|Z|info|reset>")
+                if self.quantum_world is None:
+                    self.quantum_world = QuantumWorld()
+                    self._log("Quantum engine initialized (64\u00b3 grid, hydrogen Z=1)")
+                qw = self.quantum_world
+                sub = parts[1].lower()
+
+                if sub == "set" and len(parts) == 5:
+                    n_q = int(parts[2])
+                    l_q = int(parts[3])
+                    m_q = int(parts[4])
+                    qw.init_eigenstate(n_q, l_q, m_q)
+                    self._log(f"quantum: initialized \u03c8_({qw.current_n},{qw.current_l},{qw.current_m})")
+                elif sub == "grid" and len(parts) == 3:
+                    gn = int(parts[2])
+                    if gn not in {32, 48, 64, 96, 128, 192, 256}:
+                        raise ValueError("grid size should be 32, 48, 64, 96, 128, 192, or 256")
+                    self._log(f"quantum: resizing grid to {gn}\u00b3 (this may take a moment)...")
+                    qw.resize_grid(gn)
+                    self._log(f"quantum: grid resized to {gn}\u00b3, eigenstate reinitialized")
+                elif sub == "field" and len(parts) == 5:
+                    ex = float(parts[2])
+                    ey = float(parts[3])
+                    ez = float(parts[4])
+                    qw.set_electric_field(ex, ey, ez)
+                    self._log(f"quantum: electric field set to ({ex}, {ey}, {ez}) atomic units")
+                elif sub == "dt" and len(parts) == 3:
+                    dt_val = float(parts[2])
+                    qw.set_dt(dt_val)
+                    self._log(f"quantum: dt={dt_val} atomic units ({dt_val * 24.188:.2f} attoseconds)")
+                elif sub == "steps" and len(parts) == 3:
+                    s = max(1, int(parts[2]))
+                    qw.steps_per_tick = s
+                    self._log(f"quantum: steps_per_tick={s}")
+                elif sub == "superpose" and len(parts) == 6:
+                    n2 = int(parts[2])
+                    l2 = int(parts[3])
+                    m2 = int(parts[4])
+                    w = float(parts[5])
+                    qw.superpose_state(n2, l2, m2, w)
+                    self._log(f"quantum: superposed with \u03c8_({n2},{l2},{m2}) weight={w:.3f}")
+                elif sub == "measure":
+                    x0, y0, z0 = qw.measure_position()
+                    self._log(
+                        f"quantum: MEASUREMENT collapsed \u03c8 at "
+                        f"({x0:.3f}, {y0:.3f}, {z0:.3f}) a\u2080 "
+                        f"= ({x0 * 0.529:.3f}, {y0 * 0.529:.3f}, {z0 * 0.529:.3f}) \u00c5"
+                    )
+                elif sub == "view" and len(parts) >= 3:
+                    vm = parts[2].lower()
+                    if vm in {"slice", "project"}:
+                        qw.view_mode = vm
+                        if len(parts) >= 4 and parts[3].lower() in {"x", "y", "z"}:
+                            qw.slice_axis = parts[3].lower()
+                        self._log(f"quantum: view={qw.view_mode} axis={qw.slice_axis}")
+                    else:
+                        raise ValueError("usage: quantum view <slice|project> [x|y|z]")
+                elif sub == "z" and len(parts) == 3:
+                    Z_val = int(parts[2])
+                    qw.set_nuclear_Z(Z_val)
+                    self._log(f"quantum: nuclear charge Z={Z_val}")
+                elif sub == "info":
+                    info = qw.get_info_dict()
+                    for k, v in info.items():
+                        self._log(f"  {k}: {v}")
+                elif sub == "reset":
+                    qw.init_eigenstate(qw.current_n, qw.current_l, qw.current_m)
+                    self._log(f"quantum: reset to \u03c8_({qw.current_n},{qw.current_l},{qw.current_m})")
+                else:
+                    raise ValueError("usage: quantum <set|grid|field|dt|steps|superpose|measure|view|Z|info|reset>")
+
             else:
                 self._log("unknown command. use: help")
 
@@ -3072,6 +3310,7 @@ class ConsoleSimulatorApp:
         self.world = PhysicsWorld(1000, 860)
         self.world.load_preset("Hydrogen")
         self.mode = "A"
+        self.quantum_world: QuantumWorld | None = None
 
     def print_state(self) -> None:
         print(f"Particles: {len(self.world.particles)}")
@@ -3083,7 +3322,7 @@ class ConsoleSimulatorApp:
 
     def run(self) -> None:
         print("Tk is unavailable. Running console mode.")
-        print("Commands: help, preset <name>, spawn <material> <count>, step <n>, setv <idx> <vx> <vy>, mode <A|B|status>, exact <...>, clear, list, quit")
+        print("Commands: help, preset <name>, spawn <material> <count>, step <n>, setv <idx> <vx> <vy>, mode <A|B|C|status>, exact <...>, quantum <...>, clear, list, quit")
         while True:
             try:
                 cmd = input("sim> ").strip()
@@ -3099,8 +3338,9 @@ class ConsoleSimulatorApp:
                     print("preset names: Hydrogen, Helium, Carbon, Plasma Box, Aluminum Cube (50nm, scaled)")
                     print("materials: " + ", ".join(MATERIALS.keys()))
                     print("scale profiles: " + ", ".join(SCALE_PROFILES.keys()))
-                    print("modes: A (approximate), B (full equations)")
+                    print("modes: A (approximate), B (full equations), C (quantum TDSE)")
                     print("exact: status | transport <on|off> | photons <n> | bounces <n> | energy <v> | coupling <v>")
+                    print("quantum: set <n> <l> <m> | grid <n> | field <ex> <ey> <ez> | dt <v> | steps <n> | info | reset")
                 elif op == "preset" and len(parts) >= 2:
                     name = " ".join(parts[1:])
                     self.world.load_preset(name)
@@ -3117,11 +3357,14 @@ class ConsoleSimulatorApp:
                     m = parts[1].upper()
                     if m == "STATUS":
                         print(f"mode={self.mode}")
-                    elif m in {"A", "B"}:
+                    elif m in {"A", "B", "C"}:
                         self.mode = m
+                        if m == "C" and self.quantum_world is None:
+                            self.quantum_world = QuantumWorld()
+                            print("Quantum engine initialized (64\u00b3 grid, hydrogen Z=1)")
                         print(f"mode={self.mode}")
                     else:
-                        print("usage: mode <A|B|status>")
+                        print("usage: mode <A|B|C|status>")
                 elif op == "exact" and len(parts) >= 2:
                     sub = parts[1].lower()
                     if sub == "status":
