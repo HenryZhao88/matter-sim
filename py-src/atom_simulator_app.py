@@ -409,6 +409,29 @@ class PhysicsWorld:
             p.vx += self.radiation_coupling * impulses_x[i] / mass
             p.vy += self.radiation_coupling * impulses_y[i] / mass
 
+    # ------------------------------------------------------------------
+    # Spatial hash for O(n) short-range force lookups  (#7)
+    # ------------------------------------------------------------------
+    def _build_spatial_hash(self, cell_size: float) -> dict[tuple[int, int, int], list[int]]:
+        grid: dict[tuple[int, int, int], list[int]] = {}
+        inv = 1.0 / max(1e-6, cell_size)
+        for i, p in enumerate(self.particles):
+            key = (int(math.floor(p.x * inv)), int(math.floor(p.y * inv)), int(math.floor(p.z * inv)))
+            if key in grid:
+                grid[key].append(i)
+            else:
+                grid[key] = [i]
+        return grid
+
+    @staticmethod
+    def _neighbor_keys(cx: int, cy: int, cz: int) -> list[tuple[int, int, int]]:
+        keys: list[tuple[int, int, int]] = []
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    keys.append((cx + dx, cy + dy, cz + dz))
+        return keys
+
     def _step_exact(self) -> None:
         if len(self.particles) <= 1:
             return
@@ -416,7 +439,15 @@ class PhysicsWorld:
         n = len(self.particles)
         fx = [0.0] * n
         fy = [0.0] * n
+        fz = [0.0] * n
 
+        # Use spatial hash for short-range repulsion, full pairwise for Coulomb (#7)
+        repulsion_range = max(p.radius for p in self.particles) * 2.0 + 4.0
+        cell_size = max(repulsion_range, 20.0)
+        grid = self._build_spatial_hash(cell_size)
+        inv = 1.0 / max(1e-6, cell_size)
+
+        # Full pairwise Coulomb + spatial-hash repulsion
         for i in range(n):
             pi = self.particles[i]
             for j in range(i + 1, n):
@@ -424,45 +455,87 @@ class PhysicsWorld:
 
                 dx = pj.x - pi.x
                 dy = pj.y - pi.y
-                r2 = dx * dx + dy * dy + self.softening
+                dz = pj.z - pi.z
+                r2 = dx * dx + dy * dy + dz * dz + self.softening
                 r = math.sqrt(r2)
                 nx = dx / r
                 ny = dy / r
+                nz = dz / r
 
                 f_c = self.k_coulomb * pi.charge * pj.charge / r2
-                overlap = (pi.radius + pj.radius) - r
-                f_rep = self.repulsion_k * overlap if overlap > 0 else 0.0
-                f_total = f_c - f_rep
+                f_total = f_c
 
                 fx_i = f_total * nx
                 fy_i = f_total * ny
+                fz_i = f_total * nz
 
                 fx[i] += fx_i
                 fy[i] += fy_i
+                fz[i] += fz_i
                 fx[j] -= fx_i
                 fy[j] -= fy_i
+                fz[j] -= fz_i
 
-        # Bond spring forces for crystalline structures.
+        # Short-range repulsion via spatial hash
+        visited: set[tuple[int, int]] = set()
+        for key, indices in grid.items():
+            cx, cy_cell, cz_cell = key
+            for nk in self._neighbor_keys(cx, cy_cell, cz_cell):
+                if nk not in grid:
+                    continue
+                for i in indices:
+                    pi = self.particles[i]
+                    for j in grid[nk]:
+                        if j <= i:
+                            continue
+                        pair = (i, j)
+                        if pair in visited:
+                            continue
+                        visited.add(pair)
+                        pj = self.particles[j]
+                        dx = pj.x - pi.x
+                        dy = pj.y - pi.y
+                        dz = pj.z - pi.z
+                        r = math.sqrt(dx * dx + dy * dy + dz * dz + 1e-12)
+                        overlap = (pi.radius + pj.radius) - r
+                        if overlap <= 0:
+                            continue
+                        nx = dx / r
+                        ny = dy / r
+                        nz = dz / r
+                        f_rep = self.repulsion_k * overlap
+                        fx[i] -= f_rep * nx
+                        fy[i] -= f_rep * ny
+                        fz[i] -= f_rep * nz
+                        fx[j] += f_rep * nx
+                        fy[j] += f_rep * ny
+                        fz[j] += f_rep * nz
+
+        # Bond spring forces for crystalline structures (3D).
         for b in self.bonds:
-            if b.i < 0 or b.j < 0 or b.i >= len(self.particles) or b.j >= len(self.particles):
+            if b.i < 0 or b.j < 0 or b.i >= n or b.j >= n:
                 continue
             pi = self.particles[b.i]
             pj = self.particles[b.j]
             dx = pj.x - pi.x
             dy = pj.y - pi.y
-            r = math.hypot(dx, dy)
+            dz = pj.z - pi.z
+            r = math.sqrt(dx * dx + dy * dy + dz * dz)
             if r < 1e-9:
                 continue
             nx = dx / r
             ny = dy / r
+            nz = dz / r
             extension = r - b.rest_length
             f = b.k * extension
             fx[b.i] += f * nx
             fy[b.i] += f * ny
+            fz[b.i] += f * nz
             fx[b.j] -= f * nx
             fy[b.j] -= f * ny
+            fz[b.j] -= f * nz
 
-        self._integrate_forces(fx, fy)
+        self._integrate_forces(fx, fy, fz)
 
     def _step_approximate(self) -> None:
         if len(self.particles) <= 1:
@@ -471,26 +544,39 @@ class PhysicsWorld:
         n = len(self.particles)
         fx = [0.0] * n
         fy = [0.0] * n
+        fz = [0.0] * n
 
         samples = max(4, min(self.mode_a_pair_samples, n - 1))
-        stride = max(1, (n // samples) + 1)
         scale_back = n / float(samples)
 
-        # Approximate interactions: each particle samples only a subset of partners.
+        # (#5) Random partner sampling — unbiased, no stride artifacts.
         for i in range(n):
             pi = self.particles[i]
-            for s in range(1, samples + 1):
-                j = (i + s * stride) % n
-                if j == i:
-                    continue
+            # Build sample list excluding self, random.sample is O(samples).
+            pool_size = n - 1
+            if pool_size <= samples:
+                partner_indices = [j for j in range(n) if j != i]
+            else:
+                partner_indices = []
+                attempts = 0
+                seen: set[int] = set()
+                while len(partner_indices) < samples and attempts < samples * 3:
+                    j = random.randint(0, n - 1)
+                    attempts += 1
+                    if j != i and j not in seen:
+                        seen.add(j)
+                        partner_indices.append(j)
+            for j in partner_indices:
                 pj = self.particles[j]
 
                 dx = pj.x - pi.x
                 dy = pj.y - pi.y
-                r2 = dx * dx + dy * dy + self.softening
+                dz = pj.z - pi.z
+                r2 = dx * dx + dy * dy + dz * dz + self.softening
                 r = math.sqrt(r2)
                 nx = dx / r
                 ny = dy / r
+                nz = dz / r
 
                 f_c = self.k_coulomb * pi.charge * pj.charge / r2
                 overlap = (pi.radius + pj.radius) - r
@@ -499,37 +585,45 @@ class PhysicsWorld:
 
                 fx[i] += f_total * nx
                 fy[i] += f_total * ny
+                fz[i] += f_total * nz
 
-        # Keep bonded structure but soften in mode A.
+        # Keep bonded structure but soften in mode A (3D).
         for b in self.bonds:
-            if b.i < 0 or b.j < 0 or b.i >= len(self.particles) or b.j >= len(self.particles):
+            if b.i < 0 or b.j < 0 or b.i >= n or b.j >= n:
                 continue
             pi = self.particles[b.i]
             pj = self.particles[b.j]
             dx = pj.x - pi.x
             dy = pj.y - pi.y
-            r = math.hypot(dx, dy)
+            dz = pj.z - pi.z
+            r = math.sqrt(dx * dx + dy * dy + dz * dz)
             if r < 1e-9:
                 continue
             nx = dx / r
             ny = dy / r
+            nz = dz / r
             extension = r - b.rest_length
             f = b.k * self.mode_a_bond_factor * extension
             fx[b.i] += f * nx
             fy[b.i] += f * ny
+            fz[b.i] += f * nz
             fx[b.j] -= f * nx
             fy[b.j] -= f * ny
+            fz[b.j] -= f * nz
 
-        self._integrate_forces(fx, fy)
+        self._integrate_forces(fx, fy, fz)
 
-    def _integrate_forces(self, fx: list[float], fy: list[float]) -> None:
+    def _integrate_forces(self, fx: list[float], fy: list[float], fz: list[float] | None = None) -> None:
+        # (#6) Framerate-independent drag: drag_factor = drag^dt instead of bare drag.
+        drag_factor = self.drag ** self.dt if self.drag < 1.0 else self.drag
         for i, p in enumerate(self.particles):
             ax = fx[i] / max(1e-9, p.mass)
             ay = fy[i] / max(1e-9, p.mass)
+            az = (fz[i] / max(1e-9, p.mass)) if fz is not None else 0.0
 
-            p.vx = (p.vx + ax * self.dt) * self.drag
-            p.vy = (p.vy + ay * self.dt) * self.drag
-            p.vz = p.vz * self.drag
+            p.vx = (p.vx + ax * self.dt) * drag_factor
+            p.vy = (p.vy + ay * self.dt) * drag_factor
+            p.vz = (p.vz + az * self.dt) * drag_factor
 
             speed = math.sqrt(p.vx * p.vx + p.vy * p.vy + p.vz * p.vz)
             if speed > self.max_speed:
@@ -740,6 +834,18 @@ class AtomSimulatorApp:
         self.camera_turn_speed = 75.0
         self.camera_look_sensitivity = 0.22
         self.camera_look_drag_last: tuple[float, float] | None = None
+        # (#10) Orbit camera state
+        self.orbit_pivot = [500.0, 430.0, 0.0]  # world xyz the camera orbits around
+        self.orbit_distance = 1400.0
+        self.orbit_yaw = 0.0  # degrees
+        self.orbit_pitch = 15.0  # degrees
+        self.orbit_drag_last: tuple[float, float] | None = None  # right-click drag
+        self.pan_drag_last: tuple[float, float] | None = None  # middle-click drag
+        # (#11) Cached background image to avoid re-rendering every frame
+        self._cached_bg_pil: Image.Image | None = None
+        self._cached_bg_preset: str = ""
+        self._cached_bg_sun_enabled: bool = False
+        self._mode_a_photo = None  # prevent GC of live-render PhotoImage
         self.cam_key_forward = False
         self.cam_key_back = False
         self.cam_key_left = False
@@ -753,6 +859,8 @@ class AtomSimulatorApp:
         self.cam_key_roll_left = False
         self.cam_key_roll_right = False
         self.reset_camera()
+        # (#10) Initial orbit camera sync
+        self._sync_camera_from_orbit()
         self.undo_stack: list[dict[str, dict]] = []
         self.redo_stack: list[dict[str, dict]] = []
         self.emergency_pause_enabled = True
@@ -1134,15 +1242,28 @@ class AtomSimulatorApp:
             self.camera_pitch_deg = max(-89.0, min(89.0, self.camera_pitch_deg))
 
     def reset_camera(self) -> None:
-        # Default framing: offset camera that is explicitly aimed at world origin.
-        self.camera_x = 640.0
-        self.camera_y = 520.0
-        self.camera_z = -1200.0
-        self.camera_yaw_deg = 0.0
-        self.camera_pitch_deg = 0.0
+        # (#10) Orbit camera: reset orbit params and derive camera transform.
+        self.orbit_pivot = [500.0, 430.0, 0.0]
+        self.orbit_distance = 1400.0
+        self.orbit_yaw = 0.0
+        self.orbit_pitch = 15.0
         self.camera_roll_deg = 0.0
         self.camera_fov_deg = 60.0
-        self._camera_look_at(0.0, 0.0, 0.0)
+        self._sync_camera_from_orbit()
+
+    def _sync_camera_from_orbit(self) -> None:
+        """Derive camera_x/y/z and yaw/pitch from orbit pivot + distance + angles."""
+        yaw_r = math.radians(self.orbit_yaw)
+        pitch_r = math.radians(self.orbit_pitch)
+        # Camera position = pivot + offset in spherical coords (y-down world).
+        dx = self.orbit_distance * math.sin(yaw_r) * math.cos(pitch_r)
+        dy_up = self.orbit_distance * math.sin(pitch_r)
+        dz = -self.orbit_distance * math.cos(yaw_r) * math.cos(pitch_r)
+        self.camera_x = self.orbit_pivot[0] + dx
+        self.camera_y = self.orbit_pivot[1] - dy_up  # y-down
+        self.camera_z = self.orbit_pivot[2] + dz
+        # Look at pivot
+        self._camera_look_at(self.orbit_pivot[0], self.orbit_pivot[1], self.orbit_pivot[2])
 
     def camera_status_text(self) -> str:
         return (
@@ -1305,51 +1426,63 @@ class AtomSimulatorApp:
         self.drag_start = None
         self.drag_current = None
 
+    # (#10) Right-click = orbit/rotate around pivot
     def on_right_down_camera_look(self, event) -> None:
         if self.sim_mode_var.get().upper() != "A":
             return
-        self.camera_look_drag_last = (float(event.x), float(event.y))
+        self.orbit_drag_last = (float(event.x), float(event.y))
 
     def on_right_drag_camera_look(self, event) -> None:
         if self.sim_mode_var.get().upper() != "A":
             return
-        if self.camera_look_drag_last is None:
-            self.camera_look_drag_last = (float(event.x), float(event.y))
+        if self.orbit_drag_last is None:
+            self.orbit_drag_last = (float(event.x), float(event.y))
             return
-        lx, ly = self.camera_look_drag_last
+        lx, ly = self.orbit_drag_last
         nx, ny = float(event.x), float(event.y)
         dx = nx - lx
         dy = ny - ly
-        self.camera_yaw_deg += dx * self.camera_look_sensitivity
-        self.camera_pitch_deg = max(-89.0, min(89.0, self.camera_pitch_deg - dy * self.camera_look_sensitivity))
-        self.camera_look_drag_last = (nx, ny)
+        self.orbit_yaw += dx * self.camera_look_sensitivity
+        self.orbit_pitch = max(-89.0, min(89.0, self.orbit_pitch + dy * self.camera_look_sensitivity))
+        self._sync_camera_from_orbit()
+        self.orbit_drag_last = (nx, ny)
 
     def on_right_up_camera_look(self, event) -> None:
         _ = event
-        self.camera_look_drag_last = None
+        self.orbit_drag_last = None
 
+    # (#10) Middle-click = pan (translate pivot)
     def on_middle_down(self, event) -> None:
-        self.viewport_drag_last = (float(event.x), float(event.y))
+        self.pan_drag_last = (float(event.x), float(event.y))
 
     def on_middle_drag(self, event) -> None:
-        if self.viewport_drag_last is None:
+        if self.pan_drag_last is None:
             return
-        lx, ly = self.viewport_drag_last
+        lx, ly = self.pan_drag_last
         nx, ny = float(event.x), float(event.y)
         dx, dy = nx - lx, ny - ly
-        self.view_pan_x += dx / self.view_zoom
-        self.view_pan_y += dy / self.view_zoom
-        self.viewport_drag_last = (nx, ny)
+        # Pan in camera-local right/up plane
+        yaw_r = math.radians(self.orbit_yaw)
+        rx = math.cos(yaw_r)
+        rz = math.sin(yaw_r)
+        pan_speed = self.orbit_distance * 0.001
+        self.orbit_pivot[0] -= dx * rx * pan_speed
+        self.orbit_pivot[2] -= dx * rz * pan_speed
+        self.orbit_pivot[1] += dy * pan_speed
+        self._sync_camera_from_orbit()
+        self.pan_drag_last = (nx, ny)
 
     def on_middle_up(self, event) -> None:
-        self.viewport_drag_last = None
+        self.pan_drag_last = None
 
     def on_mouse_wheel(self, event) -> None:
+        # (#10) Scroll = zoom (change orbit distance)
         delta = event.delta if hasattr(event, "delta") else 0
         if delta > 0:
-            self._zoom_at(event.x, event.y, 1.1)
+            self.orbit_distance = max(50.0, self.orbit_distance * 0.9)
         elif delta < 0:
-            self._zoom_at(event.x, event.y, 1.0 / 1.1)
+            self.orbit_distance = min(50000.0, self.orbit_distance * 1.1)
+        self._sync_camera_from_orbit()
 
     def apply_velocity_to_selected(self) -> None:
         if self.selected_index is None:
@@ -1842,17 +1975,59 @@ class AtomSimulatorApp:
 
         left = keys[0]
         right = keys[-1]
+        seg_idx = 0
         for i in range(len(keys) - 1):
             if keys[i].frame <= frame <= keys[i + 1].frame:
                 left = keys[i]
                 right = keys[i + 1]
+                seg_idx = i
                 break
 
         span = max(1, right.frame - left.frame)
         t = (frame - left.frame) / span
-        x = left.x + (right.x - left.x) * t
-        y = left.y + (right.y - left.y) * t
-        r = left.rot_deg + (right.rot_deg - left.rot_deg) * t
+
+        # (#13) Cubic Hermite (Catmull-Rom) interpolation for smooth easing.
+        # Use neighboring keyframes to compute tangent vectors.
+        n_keys = len(keys)
+        if n_keys >= 3:
+            # Tangent at left
+            if seg_idx > 0:
+                prev = keys[seg_idx - 1]
+                m0x = 0.5 * (right.x - prev.x)
+                m0y = 0.5 * (right.y - prev.y)
+                m0r = 0.5 * (right.rot_deg - prev.rot_deg)
+            else:
+                m0x = right.x - left.x
+                m0y = right.y - left.y
+                m0r = right.rot_deg - left.rot_deg
+            # Tangent at right
+            if seg_idx + 2 < n_keys:
+                nxt = keys[seg_idx + 2]
+                m1x = 0.5 * (nxt.x - left.x)
+                m1y = 0.5 * (nxt.y - left.y)
+                m1r = 0.5 * (nxt.rot_deg - left.rot_deg)
+            else:
+                m1x = right.x - left.x
+                m1y = right.y - left.y
+                m1r = right.rot_deg - left.rot_deg
+
+            t2 = t * t
+            t3 = t2 * t
+            h00 = 2.0 * t3 - 3.0 * t2 + 1.0
+            h10 = t3 - 2.0 * t2 + t
+            h01 = -2.0 * t3 + 3.0 * t2
+            h11 = t3 - t2
+
+            x = h00 * left.x + h10 * m0x + h01 * right.x + h11 * m1x
+            y = h00 * left.y + h10 * m0y + h01 * right.y + h11 * m1y
+            r = h00 * left.rot_deg + h10 * m0r + h01 * right.rot_deg + h11 * m1r
+        else:
+            # Fallback for 2 keyframes: use smoothstep
+            t = t * t * (3.0 - 2.0 * t)
+            x = left.x + (right.x - left.x) * t
+            y = left.y + (right.y - left.y) * t
+            r = left.rot_deg + (right.rot_deg - left.rot_deg) * t
+
         return x, y, r
 
     def _advance_timeline(self) -> None:
@@ -2087,120 +2262,48 @@ class AtomSimulatorApp:
         return rgb
 
     def _draw_mode_a(self) -> None:
+        # (#11) Unified PIL renderer — renders to Image then displays as single PhotoImage.
+        # (#3) Frustum culling with 40° cushion on all sides.
+        # (#8) Unified depth sort — particles and objects interleaved by camera depth.
+        frame = self._render_mode_a_frame_pil(self.timeline_frame)
+        if IMAGETK_AVAILABLE:
+            self._mode_a_photo = ImageTk.PhotoImage(frame)
+        else:
+            import io
+            buf = io.BytesIO()
+            frame.save(buf, format="PPM")
+            buf.seek(0)
+            self._mode_a_photo = tk.PhotoImage(data=buf.read())
+
         self.canvas.delete("all")
-        self._draw_mode_a_background_canvas()
+        self.canvas.create_image(0, 0, image=self._mode_a_photo, anchor="nw")
 
-        cell = 14
-        gw = (self.world_w // cell) + 1
-        gh = (self.world_h // cell) + 1
-        bins = [0.0] * (gw * gh)
+        # Lightweight canvas overlays (axis gizmo, selection rings, drag arrow) stay on canvas
+        # because they need sharp vector lines and per-frame interactivity.
+        self._draw_axis_overlay()
 
-        for p in self.world.particles:
-            proj = self.world3_to_screen(p.x, p.y, p.z)
-            if proj is None:
-                continue
-            sx, sy, _sp, _dp = proj
-            ix = int(sx // cell)
-            iy = int(sy // cell)
-            if 0 <= ix < gw and 0 <= iy < gh:
-                idx = iy * gw + ix
-                speed = math.hypot(p.vx, p.vy)
-                bins[idx] += 1.0 + min(3.0, speed / 130.0)
-
-        max_bin = max(bins) if bins else 0.0
-        if max_bin > 0.0:
-            for iy in range(gh):
-                y0 = iy * cell
-                y1 = y0 + cell
-                for ix in range(gw):
-                    v = bins[iy * gw + ix]
-                    if v <= 0.0:
-                        continue
-                    t = min(1.0, v / max_bin)
-                    r = int(20 + 220 * t)
-                    g = int(40 + 150 * (t ** 0.6))
-                    b = int(90 + 120 * (1.0 - t * 0.5))
-                    color = f"#{r:02x}{g:02x}{b:02x}"
-                    x0 = ix * cell
-                    x1 = x0 + cell
-                    self.canvas.create_rectangle(x0, y0, x1, y1, fill=color, outline="")
-
-        # Mode-A scene objects (3D depth-sorted, perspective projected)
-        draw_items: list[tuple[float, str, SceneCube, float, float, float, float, float, float]] = []
-        for name, obj in self.scene_objects.items():
-            if not obj.visible:
-                continue
-            ox, oy, rot = self._eval_object_transform(obj, self.timeline_frame)
+        # Selection outlines — objects
+        if self.selected_object_name and self.selected_object_name in self.scene_objects:
+            obj = self.scene_objects[self.selected_object_name]
+            ox, oy, _rot = self._eval_object_transform(obj, self.timeline_frame)
             p3 = self.world3_to_screen(ox, oy, obj.z)
-            if p3 is None:
-                continue
-            sx, sy, perspective, cam_depth = p3
-            half = max(2.0, obj.size * 0.5 * perspective)
-            draw_items.append((cam_depth, name, obj, sx, sy, half, rot, ox, oy))
-
-        for _depth, name, obj, sx, sy, half, rot, ox, oy in sorted(draw_items, key=lambda it: it[0], reverse=True):
-            self._draw_mode_a_object_canvas(obj, ox, oy, rot, sx, sy, half)
-            self.canvas.create_text(sx, sy - half - 8, text=f"{name} ({obj.kind}) z={obj.z:.1f}", fill="#d3dcff", font=("TkDefaultFont", 8))
-
-            if self.selected_object_name == name:
+            if p3 is not None:
+                sx, sy, perspective, _cd = p3
+                half = max(2.0, obj.size * 0.5 * perspective)
                 rr = half + 6
                 self.canvas.create_oval(sx - rr, sy - rr, sx + rr, sy + rr, outline="#ffffff")
 
-            if obj.texture_image is not None:
-                if obj.texture_tk_id is not None:
-                    try:
-                        self.canvas.delete(obj.texture_tk_id)
-                    except Exception:
-                        pass
-                obj.texture_tk_id = self.canvas.create_image(sx, sy, image=obj.texture_image)
-
-        # Bonds sampled for speed.
-        bond_stride = max(1, len(self.world.bonds) // 3000)
-        for bi in range(0, len(self.world.bonds), bond_stride):
-            b = self.world.bonds[bi]
-            if b.i < 0 or b.j < 0 or b.i >= len(self.world.particles) or b.j >= len(self.world.particles):
-                continue
-            p1 = self.world.particles[b.i]
-            p2 = self.world.particles[b.j]
-            pp1 = self.world3_to_screen(p1.x, p1.y, p1.z)
-            pp2 = self.world3_to_screen(p2.x, p2.y, p2.z)
-            if pp1 is None or pp2 is None:
-                continue
-            x1, y1, _s1, _d1 = pp1
-            x2, y2, _s2, _d2 = pp2
-            self.canvas.create_line(x1, y1, x2, y2, fill="#5f7aa0")
-
-        # Particle sample with glow and ray-like velocity streak in 3D projection.
-        n = len(self.world.particles)
-        stride = max(1, n // 3500)
-        particle_items: list[tuple[float, int, Particle, float, float, float]] = []
-        for i in range(0, n, stride):
-            p = self.world.particles[i]
+        # Selection outlines — particles
+        if self.selected_index is not None and 0 <= self.selected_index < len(self.world.particles):
+            p = self.world.particles[self.selected_index]
             proj = self.world3_to_screen(p.x, p.y, p.z)
-            if proj is None:
-                continue
-            sx, sy, perspective, depth = proj
-            r = max(1.0, p.radius * self.render_radius_scale * 0.85 * perspective)
-            particle_items.append((depth, i, p, sx, sy, r))
-
-        for _depth, i, p, sx, sy, r in sorted(particle_items, key=lambda it: it[0], reverse=True):
-            speed = math.hypot(p.vx, p.vy)
-            trail = min(16.0, speed * 0.06)
-            if speed > 1e-4:
-                tx = p.x - (p.vx / speed) * trail
-                ty = p.y - (p.vy / speed) * trail
-                tproj = self.world3_to_screen(tx, ty, p.z)
-                if tproj is not None:
-                    tsx, tsy, _tp, _td = tproj
-                    self.canvas.create_line(sx, sy, tsx, tsy, fill="#dfe8ff")
-
-            self.canvas.create_oval(sx - (r + 2), sy - (r + 2), sx + (r + 2), sy + (r + 2), outline="#7aa6ff")
-            self.canvas.create_oval(sx - r, sy - r, sx + r, sy + r, fill=p.material.color, outline="")
-
-            if i == self.selected_index:
+            if proj is not None:
+                sx, sy, perspective, _d = proj
+                r = max(1.0, p.radius * self.render_radius_scale * 0.85 * perspective)
                 rr = r + 5
                 self.canvas.create_oval(sx - rr, sy - rr, sx + rr, sy + rr, outline="#ffffff")
 
+        # Drag arrow
         if self.drag_start and self.drag_current:
             sx, sy = self.drag_start
             cx, cy = self.drag_current
@@ -2210,8 +2313,8 @@ class AtomSimulatorApp:
 
         edit_state = f"T:{self.transform_mode or '-'} A:{self.transform_axis or '-'} snap={self.snap_enabled} g={self.snap_grid:.1f}"
         cam_state = (
-            f"cam pos=({self.camera_x:.0f},{self.camera_y:.0f},{self.camera_z:.0f}) "
-            f"rot=({self.camera_yaw_deg:.1f},{self.camera_pitch_deg:.1f},{self.camera_roll_deg:.1f}) "
+            f"orbit d={self.orbit_distance:.0f} yaw={self.orbit_yaw:.1f} pitch={self.orbit_pitch:.1f} "
+            f"pivot=({self.orbit_pivot[0]:.0f},{self.orbit_pivot[1]:.0f},{self.orbit_pivot[2]:.0f}) "
             f"fov={self.camera_fov_deg:.1f}"
         )
         self.info_var.set(
@@ -2220,24 +2323,138 @@ class AtomSimulatorApp:
             f"Selected Particle: {self.selected_index if self.selected_index is not None else 'None'} | "
             f"Selected Object: {self.selected_object_name or 'None'} | {edit_state} | {cam_state}"
         )
-        self._draw_axis_overlay()
         self._refresh_outliner()
 
-    def _draw_mode_a_background_canvas(self) -> None:
+    def _is_in_frustum(self, sx: float, sy: float, cushion: float = 0.0) -> bool:
+        """(#3) Return True if screen-space point is within viewport + cushion pixels."""
+        return -cushion <= sx <= self.world_w + cushion and -cushion <= sy <= self.world_h + cushion
+
+    def _get_frustum_cushion_px(self) -> float:
+        """(#3) Convert 40° angular cushion to approximate pixel margin at screen center."""
+        fov_rad = math.radians(max(10.0, min(160.0, self.camera_fov_deg)))
+        cushion_rad = math.radians(40.0)
+        focal = (self.world_h * 0.5) / math.tan(fov_rad * 0.5)
+        return focal * math.tan(cushion_rad)
+
+    def _render_mode_a_frame_pil(self, frame: int) -> Image.Image:
+        """Render a full Mode A frame to a PIL Image (used for both live display and export)."""
+        # Background (cached)
+        bg_key = self.background_preset_var.get().lower()
+        sun_key = self.sun_object_enabled
+        if self._cached_bg_pil is None or self._cached_bg_preset != bg_key or self._cached_bg_sun_enabled != sun_key:
+            self._cached_bg_pil = self._render_background_pil()
+            self._cached_bg_preset = bg_key
+            self._cached_bg_sun_enabled = sun_key
+
+        img = self._cached_bg_pil.copy()
+        draw = ImageDraw.Draw(img, "RGBA")
+        cushion = self._get_frustum_cushion_px()
+
+        # --- Collect all drawable items into a single depth-sorted list (#8) ---
+        # Items are (cam_depth, kind_tag, payload)
+        # kind_tag: "particle", "bond", "object"
+        draw_list: list[tuple[float, str, object]] = []
+
+        n = len(self.world.particles)
+        stride_p = max(1, n // 3500)
+        for i in range(0, n, stride_p):
+            p = self.world.particles[i]
+            proj = self.world3_to_screen(p.x, p.y, p.z)
+            if proj is None:
+                continue
+            sx, sy, perspective, depth = proj
+            # (#3) Frustum culling with 40° cushion
+            if not self._is_in_frustum(sx, sy, cushion):
+                continue
+            r = max(1, int(round(p.radius * self.render_radius_scale * 0.85 * perspective)))
+            draw_list.append((depth, "particle", (i, p, sx, sy, r, perspective)))
+
+        # Bonds
+        bond_stride = max(1, len(self.world.bonds) // 3000)
+        for bi in range(0, len(self.world.bonds), bond_stride):
+            b = self.world.bonds[bi]
+            if b.i < 0 or b.j < 0 or b.i >= n or b.j >= n:
+                continue
+            p1 = self.world.particles[b.i]
+            p2 = self.world.particles[b.j]
+            pp1 = self.world3_to_screen(p1.x, p1.y, p1.z)
+            pp2 = self.world3_to_screen(p2.x, p2.y, p2.z)
+            if pp1 is None or pp2 is None:
+                continue
+            x1, y1, _s1, d1 = pp1
+            x2, y2, _s2, d2 = pp2
+            avg_depth = (d1 + d2) * 0.5
+            # Frustum cull: skip if BOTH endpoints are off-screen beyond cushion
+            if not self._is_in_frustum(x1, y1, cushion) and not self._is_in_frustum(x2, y2, cushion):
+                continue
+            draw_list.append((avg_depth, "bond", (x1, y1, x2, y2)))
+
+        # Scene objects
+        for name, obj in self.scene_objects.items():
+            if not obj.visible:
+                continue
+            ox, oy, rot = self._eval_object_transform(obj, frame)
+            p3 = self.world3_to_screen(ox, oy, obj.z)
+            if p3 is None:
+                continue
+            sx, sy, perspective, cam_depth = p3
+            if not self._is_in_frustum(sx, sy, cushion):
+                continue
+            draw_list.append((cam_depth, "object", (name, obj, ox, oy, rot, sx, sy, perspective)))
+
+        # Sort far to near (painter's algorithm)
+        draw_list.sort(key=lambda it: it[0], reverse=True)
+
+        # --- Draw all items in depth order ---
+        for _depth, kind, payload in draw_list:
+            if kind == "bond":
+                x1, y1, x2, y2 = payload
+                draw.line((x1, y1, x2, y2), fill=(95, 122, 160, 255), width=1)
+
+            elif kind == "particle":
+                _i, p, sx, sy, r, _persp = payload
+                col = self._hex_to_rgb(p.material.color)
+                # Glow ring
+                draw.ellipse((sx - r - 2, sy - r - 2, sx + r + 2, sy + r + 2), outline=(122, 166, 255, 120))
+                # Main body
+                draw.ellipse((sx - r, sy - r, sx + r, sy + r), fill=(col[0], col[1], col[2], 255))
+                # Velocity streak
+                speed = math.sqrt(p.vx * p.vx + p.vy * p.vy)
+                trail = min(16.0, speed * 0.06)
+                if speed > 1e-4 and trail > 0.5:
+                    tx = p.x - (p.vx / speed) * trail
+                    ty = p.y - (p.vy / speed) * trail
+                    tproj = self.world3_to_screen(tx, ty, p.z)
+                    if tproj is not None:
+                        tsx, tsy, _tp, _td = tproj
+                        draw.line((sx, sy, int(tsx), int(tsy)), fill=(223, 232, 255, 200), width=1)
+
+            elif kind == "object":
+                name, obj, ox, oy, rot, sx, sy, perspective = payload
+                self._draw_export_object(draw, obj, ox, oy, rot, img)
+                half = max(2.0, obj.size * 0.5 * perspective)
+                draw.text(
+                    (int(sx - half), int(sy - half - 12)),
+                    f"{name} ({obj.kind}) z={obj.z:.1f}",
+                    fill=(210, 220, 230, 255),
+                )
+
+        return img
+
+    def _render_background_pil(self) -> Image.Image:
+        """Render the background (sky + optional sun) to a PIL Image. Cached."""
+        img = Image.new("RGB", (self.world_w, self.world_h), color=(11, 15, 20))
+        draw = ImageDraw.Draw(img, "RGBA")
         bg = self.background_preset_var.get().lower()
-        if bg == "none":
-            self.canvas.create_rectangle(0, 0, self.world_w, self.world_h, fill="#0b0f14", outline="")
-        else:
+        if bg != "none":
             sky = self._load_object_def(bg)
             if sky is not None:
-                self._draw_canvas_sky_object(sky)
-            else:
-                self.canvas.create_rectangle(0, 0, self.world_w, self.world_h, fill="#0b0f14", outline="")
-
+                self._draw_export_sky_object(draw, sky)
         if self.sun_object_enabled:
             sun = self._load_object_def(self.sun_object_name)
             if sun is not None:
-                self._draw_canvas_sun_object(sun)
+                self._draw_export_sun_object(draw, sun)
+        return img
 
     @staticmethod
     def _shade_rgb(col: tuple[int, int, int], factor: float) -> tuple[int, int, int]:
@@ -2293,15 +2510,35 @@ class AtomSimulatorApp:
             sx, sy, _scale, cam_depth = p
             projected.append((sx, sy, cam_depth))
 
-        # Faces + shade factors; draw far -> near.
-        faces: list[tuple[tuple[int, ...], float]] = [
-            ((4, 5, 6, 7), 1.00),  # top
-            ((0, 1, 2, 3), 0.55),  # bottom
-            ((0, 3, 7, 4), 0.78),  # left
-            ((1, 2, 6, 5), 0.88),  # right
-            ((3, 2, 6, 7), 0.95),  # front
-            ((0, 1, 5, 4), 0.68),  # back
+        # Faces — face normals computed per-frame for dot-product shading (#9).
+        face_defs: list[tuple[tuple[int, ...], tuple[float, float, float]]] = [
+            ((4, 5, 6, 7), (0.0, 0.0, 1.0)),   # +z top
+            ((0, 1, 2, 3), (0.0, 0.0, -1.0)),  # -z bottom
+            ((0, 3, 7, 4), (-1.0, 0.0, 0.0)),  # -x left
+            ((1, 2, 6, 5), (1.0, 0.0, 0.0)),   # +x right
+            ((3, 2, 6, 7), (0.0, 1.0, 0.0)),   # +y front
+            ((0, 1, 5, 4), (0.0, -1.0, 0.0)),  # -y back
         ]
+
+        # Rotate face normals by object rotation and compute shade via dot product with light direction.
+        rr = math.radians(rot_deg)
+        cr = math.cos(rr)
+        sr = math.sin(rr)
+        # Default light direction (towards upper-right-front, normalized).
+        lx, ly, lz = 0.4, -0.6, 0.7
+        ln = math.sqrt(lx * lx + ly * ly + lz * lz)
+        lx, ly, lz = lx / ln, ly / ln, lz / ln
+
+        faces: list[tuple[tuple[int, ...], float]] = []
+        for idxs, (fnx, fny, fnz) in face_defs:
+            # Rotate normal by object yaw (around z).
+            rnx = fnx * cr - fny * sr
+            rny = fnx * sr + fny * cr
+            rnz = fnz
+            dot = max(0.0, rnx * lx + rny * ly + rnz * lz)
+            shade = 0.25 + 0.75 * dot  # ambient 0.25, diffuse 0.75
+            faces.append((idxs, shade))
+
         faces.sort(key=lambda it: sum(projected[i][2] for i in it[0]) / len(it[0]), reverse=True)
         return projected, faces
 
@@ -2668,76 +2905,8 @@ class AtomSimulatorApp:
         )
 
     def _render_mode_a_frame_np(self, frame: int) -> np.ndarray:
-        img_pil = Image.new("RGB", (self.world_w, self.world_h), color=(11, 15, 20))
-        draw = ImageDraw.Draw(img_pil, "RGBA")
-        bg = self.background_preset_var.get().lower()
-
-        if bg == "none":
-            draw.rectangle((0, 0, self.world_w, self.world_h), fill=(11, 15, 20, 255))
-        else:
-            sky = self._load_object_def(bg)
-            if sky is not None:
-                self._draw_export_sky_object(draw, sky)
-            else:
-                draw.rectangle((0, 0, self.world_w, self.world_h), fill=(11, 15, 20, 255))
-
-        if self.sun_object_enabled:
-            sun = self._load_object_def(self.sun_object_name)
-            if sun is not None:
-                self._draw_export_sun_object(draw, sun)
-
-        # Draw bonds
-        for b in self.world.bonds:
-            if b.i < 0 or b.j < 0 or b.i >= len(self.world.particles) or b.j >= len(self.world.particles):
-                continue
-            p1 = self.world.particles[b.i]
-            p2 = self.world.particles[b.j]
-            pp1 = self.world3_to_screen(p1.x, p1.y, p1.z)
-            pp2 = self.world3_to_screen(p2.x, p2.y, p2.z)
-            if pp1 is None or pp2 is None:
-                continue
-            x1, y1, _s1, _d1 = pp1
-            x2, y2, _s2, _d2 = pp2
-            draw.line((x1, y1, x2, y2), fill=(79, 95, 122, 255), width=1)
-
-        # Draw particles
-        p_items: list[tuple[float, Particle, float, float, float]] = []
-        for p in self.world.particles:
-            proj = self.world3_to_screen(p.x, p.y, p.z)
-            if proj is None:
-                continue
-            sx, sy, perspective, depth = proj
-            p_items.append((depth, p, sx, sy, perspective))
-
-        for _depth, p, sx, sy, perspective in sorted(p_items, key=lambda it: it[0], reverse=True):
-            x = int(round(sx))
-            y = int(round(sy))
-            r = max(1, int(round(p.radius * self.render_radius_scale * perspective)))
-            col = self._hex_to_rgb(p.material.color)
-            draw.ellipse((x - r, y - r, x + r, y + r), fill=(col[0], col[1], col[2], 255))
-
-        # Draw objects (depth-sorted in camera space)
-        render_items: list[tuple[float, SceneCube, float, float, float]] = []
-        for obj in self.scene_objects.values():
-            if not obj.visible:
-                continue
-            ox, oy, rot = self._eval_object_transform(obj, frame)
-            p3 = self.world3_to_screen(ox, oy, obj.z)
-            if p3 is None:
-                continue
-            sx, sy, perspective, cam_depth = p3
-            render_items.append((cam_depth, obj, ox, oy, rot))
-
-        for _depth, obj, ox, oy, rot in sorted(render_items, key=lambda it: it[0], reverse=True):
-            self._draw_export_object(draw, obj, ox, oy, rot, img_pil)
-            center = self.world3_to_screen(ox, oy, obj.z)
-            if center is None:
-                continue
-            sx, sy, perspective, _ = center
-            half = max(2.0, obj.size * 0.5 * perspective)
-            draw.text((int(sx - half), int(sy - half - 12)), f"{obj.name} ({obj.kind}) z={obj.z:.1f}", fill=(210, 220, 230, 255))
-
-        return np.asarray(img_pil, dtype=np.uint8)
+        # (#11) Unified: reuse the same PIL renderer used for live display.
+        return np.asarray(self._render_mode_a_frame_pil(frame), dtype=np.uint8)
 
     def export_mp4_mode_a(self, out_path: str, start_frame: int, end_frame: int, fps: int) -> None:
         if end_frame < start_frame:
