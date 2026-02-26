@@ -8,11 +8,15 @@ import os
 import random
 from dataclasses import dataclass
 
-import cupy as cp  # type: ignore
-import imageio
-import imageio.v3 as iio
 import numpy as np
 from PIL import Image, ImageDraw
+
+try:
+    import cupy as cp  # type: ignore
+    _CUPY_AVAILABLE = True
+except Exception:
+    cp = None
+    _CUPY_AVAILABLE = False
 
 try:
     import tkinter as tk
@@ -483,34 +487,125 @@ class PhysicsWorld:
         grid = self._build_spatial_hash(cell_size)
         inv = 1.0 / max(1e-6, cell_size)
 
-        # Full pairwise Coulomb + spatial-hash repulsion
+        # ---- Barnes-Hut octree for O(n log n) Coulomb (#9) ----
+        BH_THETA = 0.7  # opening angle
+
+        # Build bounding box
+        xs = [p.x for p in self.particles]
+        ys = [p.y for p in self.particles]
+        zs = [p.z for p in self.particles]
+        cx_min, cx_max = min(xs), max(xs)
+        cy_min, cy_max = min(ys), max(ys)
+        cz_min, cz_max = min(zs), max(zs)
+        half = max(cx_max - cx_min, cy_max - cy_min, cz_max - cz_min) * 0.5 + 1.0
+        root_cx = (cx_min + cx_max) * 0.5
+        root_cy = (cy_min + cy_max) * 0.5
+        root_cz = (cz_min + cz_max) * 0.5
+
+        # Octree node: [cx, cy, cz, half_size, total_charge, com_x, com_y, com_z, children_or_pidx, is_leaf]
+        # Use flat list-of-lists for speed
+        _CX, _CY, _CZ, _HS, _Q, _MX, _MY, _MZ, _CH, _LEAF = range(10)
+        nodes: list[list] = []
+
+        def _make_node(cx: float, cy: float, cz: float, hs: float) -> int:
+            nid = len(nodes)
+            nodes.append([cx, cy, cz, hs, 0.0, 0.0, 0.0, 0.0, -1, True])
+            return nid
+
+        def _insert(nid: int, pidx: int) -> None:
+            node = nodes[nid]
+            px, py, pz, pq = self.particles[pidx].x, self.particles[pidx].y, self.particles[pidx].z, self.particles[pidx].charge
+
+            # Update center of mass
+            old_q = node[_Q]
+            new_q = old_q + pq
+            if abs(new_q) > 1e-30:
+                node[_MX] = (node[_MX] * old_q + px * pq) / new_q
+                node[_MY] = (node[_MY] * old_q + py * pq) / new_q
+                node[_MZ] = (node[_MZ] * old_q + pz * pq) / new_q
+            node[_Q] = new_q
+
+            if node[_LEAF]:
+                if node[_CH] == -1:
+                    # Empty leaf — just store
+                    node[_CH] = pidx
+                    return
+                # Occupied leaf — subdivide
+                old_pidx = node[_CH]
+                node[_LEAF] = False
+                node[_CH] = -1  # will become children list
+                children = [0] * 8
+                hs2 = node[_HS] * 0.5
+                for oct in range(8):
+                    sx = node[_CX] + hs2 * (1 if oct & 1 else -1)
+                    sy = node[_CY] + hs2 * (1 if oct & 2 else -1)
+                    sz = node[_CZ] + hs2 * (1 if oct & 4 else -1)
+                    children[oct] = _make_node(sx, sy, sz, hs2)
+                node[_CH] = children
+                # Re-insert old particle
+                _insert_internal(nid, old_pidx)
+                _insert_internal(nid, pidx)
+            else:
+                _insert_internal(nid, pidx)
+
+        def _insert_internal(nid: int, pidx: int) -> None:
+            node = nodes[nid]
+            children = node[_CH]
+            p = self.particles[pidx]
+            oct = 0
+            if p.x > node[_CX]:
+                oct |= 1
+            if p.y > node[_CY]:
+                oct |= 2
+            if p.z > node[_CZ]:
+                oct |= 4
+            _insert(children[oct], pidx)
+
+        root = _make_node(root_cx, root_cy, root_cz, half)
+        for i in range(n):
+            _insert(root, i)
+
+        # Tree walk to compute force on each particle
+        softening = self.softening
+        k_c = self.k_coulomb
+        theta2 = BH_THETA * BH_THETA
+
         for i in range(n):
             pi = self.particles[i]
-            for j in range(i + 1, n):
-                pj = self.particles[j]
+            stack = [root]
+            while stack:
+                nid = stack.pop()
+                node = nodes[nid]
+                if abs(node[_Q]) < 1e-30:
+                    continue
+                dx = node[_MX] - pi.x
+                dy = node[_MY] - pi.y
+                dz = node[_MZ] - pi.z
+                r2 = dx * dx + dy * dy + dz * dz + softening
+                s = node[_HS] * 2.0  # full cell size
 
-                dx = pj.x - pi.x
-                dy = pj.y - pi.y
-                dz = pj.z - pi.z
-                r2 = dx * dx + dy * dy + dz * dz + self.softening
-                r = math.sqrt(r2)
-                nx = dx / r
-                ny = dy / r
-                nz = dz / r
-
-                f_c = self.k_coulomb * pi.charge * pj.charge / r2
-                f_total = f_c
-
-                fx_i = f_total * nx
-                fy_i = f_total * ny
-                fz_i = f_total * nz
-
-                fx[i] += fx_i
-                fy[i] += fy_i
-                fz[i] += fz_i
-                fx[j] -= fx_i
-                fy[j] -= fy_i
-                fz[j] -= fz_i
+                if node[_LEAF]:
+                    # leaf with single particle
+                    pidx = node[_CH]
+                    if isinstance(pidx, int) and pidx == i:
+                        continue  # skip self
+                    r = math.sqrt(r2)
+                    f_c = k_c * pi.charge * node[_Q] / r2
+                    fx[i] += f_c * dx / r
+                    fy[i] += f_c * dy / r
+                    fz[i] += f_c * dz / r
+                elif s * s < theta2 * r2:
+                    # Sufficiently far — use multipole
+                    r = math.sqrt(r2)
+                    f_c = k_c * pi.charge * node[_Q] / r2
+                    fx[i] += f_c * dx / r
+                    fy[i] += f_c * dy / r
+                    fz[i] += f_c * dz / r
+                else:
+                    # Open the node
+                    children = node[_CH]
+                    if isinstance(children, list):
+                        stack.extend(children)
 
         # Short-range repulsion via spatial hash
         visited: set[tuple[int, int]] = set()
@@ -1161,7 +1256,7 @@ class AtomSimulatorApp:
         self.root.bind("<Delete>", lambda _e: self.delete_selected())
         self.root.bind("<g>", lambda _e: self.start_transform_mode("move"))
         self.root.bind("<r>", lambda _e: self.start_transform_mode("rotate"))
-        self.root.bind("<s>", lambda _e: self.start_transform_mode("scale"))
+        self.root.bind("<Shift-S>", lambda _e: self.start_transform_mode("scale"))
         self.root.bind("<x>", lambda _e: self.set_transform_axis("x"))
         self.root.bind("<y>", lambda _e: self.set_transform_axis("y"))
         self.root.bind("<Escape>", lambda _e: self.cancel_transform())
@@ -1475,7 +1570,7 @@ class AtomSimulatorApp:
                 self.transform_anchor_world = (wx, wy)
             if self.transform_initial is None:
                 self.transform_initial = (obj.x, obj.y, obj.rot_deg, obj.size)
-                self._push_undo()
+                self._push_undo(f"transform_{self.transform_mode}")
             x0, y0, r0, s0 = self.transform_initial
             ax, ay = self.transform_anchor_world
             dx, dy = wx - ax, wy - ay
@@ -1720,7 +1815,7 @@ class AtomSimulatorApp:
         if self.selected_object_name is None or self.selected_object_name not in self.scene_objects:
             return
         if not self.rotate_key_undo_armed:
-            self._push_undo()
+            self._push_undo("rotate_arrow")
             self.rotate_key_undo_armed = True
 
     def _on_rotate_arrow_release(self, direction: str) -> None:
@@ -1922,7 +2017,7 @@ class AtomSimulatorApp:
     def duplicate_selected_object(self) -> None:
         if self.selected_object_name is None or self.selected_object_name not in self.scene_objects:
             return
-        self._push_undo()
+        self._push_undo("duplicate")
         src = self.scene_objects[self.selected_object_name]
         base = f"{src.name}_copy"
         candidate = base
@@ -2036,7 +2131,7 @@ class AtomSimulatorApp:
     def _add_scene_object(self, kind: str, name: str, x: float, y: float, z: float, size: float) -> None:
         if name in self.scene_objects:
             raise ValueError(f"object already exists: {name}")
-        self._push_undo()
+        self._push_undo(f"add_{kind}")
         self.scene_objects[name] = SceneCube(name=name, x=x, y=y, z=z, size=size, kind=kind)
         self.selected_object_name = name
         self.selected_index = None
@@ -2063,7 +2158,7 @@ class AtomSimulatorApp:
     def delete_object(self, name: str) -> None:
         if name not in self.scene_objects:
             raise ValueError(f"object not found: {name}")
-        self._push_undo()
+        self._push_undo("delete")
         obj = self.scene_objects.pop(name)
         obj.texture_image = None
         if self.selected_object_name == name:
@@ -2073,7 +2168,7 @@ class AtomSimulatorApp:
     def set_object_keyframe(self, name: str, frame: int, x: float, y: float, rot_deg: float) -> None:
         if name not in self.scene_objects:
             raise ValueError(f"object not found: {name}")
-        self._push_undo()
+        self._push_undo("set_keyframe")
         obj = self.scene_objects[name]
         obj.keyframes = [k for k in obj.keyframes if k.frame != frame]
         obj.keyframes.append(ObjectKeyframe(frame=frame, x=x, y=y, rot_deg=rot_deg))
@@ -2085,7 +2180,7 @@ class AtomSimulatorApp:
             raise ValueError(f"object not found: {name}")
         if not os.path.exists(path):
             raise ValueError(f"texture file not found: {path}")
-        self._push_undo()
+        self._push_undo("assign_texture")
         img = tk.PhotoImage(file=path)
         pil_img = Image.open(path).convert("RGBA")
         obj = self.scene_objects[name]
@@ -2282,28 +2377,55 @@ class AtomSimulatorApp:
                     self._emitter_particles[ename] = []
                 self._emitter_particles[ename].append((idx, self._emitter_timer))
 
-        # Remove expired particles (reverse order to keep indices valid)
+        # Remove expired particles — tag-and-rebuild to keep all indices consistent
+        dead_set: set[int] = set()
         for ename, plist in list(self._emitter_particles.items()):
             em = self.emitters.get(ename)
             if em is None:
                 continue
-            to_remove: list[int] = []
             alive: list[tuple[int, float]] = []
             for pidx, birth in plist:
                 if self._emitter_timer - birth > em.lifetime:
-                    to_remove.append(pidx)
+                    dead_set.add(pidx)
                 else:
                     alive.append((pidx, birth))
             self._emitter_particles[ename] = alive
-            # Mark for removal (we can't safely remove while iterating)
-            for pidx in sorted(to_remove, reverse=True):
-                if 0 <= pidx < len(self.world.particles):
-                    self.world.particles.pop(pidx)
-                    # Adjust remaining indices
-                    for en2 in self._emitter_particles:
-                        self._emitter_particles[en2] = [
-                            (pi - 1 if pi > pidx else pi, b) for pi, b in self._emitter_particles[en2]
-                        ]
+
+        if dead_set:
+            # Build new particle list + index remapping
+            old_particles = self.world.particles
+            new_particles: list = []
+            remap: dict[int, int] = {}  # old_idx -> new_idx
+            for old_idx, p in enumerate(old_particles):
+                if old_idx in dead_set:
+                    continue
+                remap[old_idx] = len(new_particles)
+                new_particles.append(p)
+            self.world.particles = new_particles
+
+            # Remap emitter particle indices
+            for en2 in self._emitter_particles:
+                self._emitter_particles[en2] = [
+                    (remap[pi], b) for pi, b in self._emitter_particles[en2] if pi in remap
+                ]
+
+            # Remap selected_index
+            if self.selected_index is not None:
+                if self.selected_index in remap:
+                    self.selected_index = remap[self.selected_index]
+                else:
+                    self.selected_index = None
+
+            # Remap bonds
+            new_bonds: list = []
+            for bond in self.world.bonds:
+                ni = remap.get(bond.i)
+                nj = remap.get(bond.j)
+                if ni is not None and nj is not None:
+                    bond.i = ni
+                    bond.j = nj
+                    new_bonds.append(bond)
+            self.world.bonds = new_bonds
 
     # ------------------------------------------------------------------
     # (#12) Rigid-body dynamics tick
@@ -3302,6 +3424,7 @@ class AtomSimulatorApp:
 
         saved_frame = self.timeline_frame
         total = end_frame - start_frame + 1
+        import imageio  # lazy import — only needed when exporting
         with imageio.get_writer(out_path, fps=fps, codec="libx264", quality=8) as writer:
             for idx, fr in enumerate(range(start_frame, end_frame + 1), start=1):
                 self.timeline_frame = fr
@@ -3370,6 +3493,7 @@ class AtomSimulatorApp:
         draw.line((sx - int(sun_r * streak_scale), sy, sx + int(sun_r * streak_scale), sy), fill=(sc[0], sc[1], sc[2], 170), width=1)
 
     def export_test4k_png(self, out_path: str) -> None:
+        import imageio.v3 as iio  # lazy import — only needed when exporting
         frame = self._render_mode_a_frame_np(self.timeline_frame)
         iio.imwrite(out_path, frame)
 
@@ -3578,7 +3702,7 @@ class AtomSimulatorApp:
                     z = float(parts[3])
                     if name not in self.scene_objects:
                         raise ValueError(f"object not found: {name}")
-                    self._push_undo()
+                    self._push_undo("obj_set_z")
                     self.scene_objects[name].z = z
                     self._log(f"obj {name} z={z:.2f}")
                 elif sub == "del" and len(parts) == 3:

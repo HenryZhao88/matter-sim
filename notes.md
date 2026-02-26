@@ -403,3 +403,67 @@ dynamics, raytraced rendering, and absorption/emission spectra.
 | `hf init/scf/info/density` | #7 Hartree-Fock |
 
 ### Status: COMPLETE
+
+---
+
+## Phase 5: Stability, Bug Fixes & Performance
+
+### What was done
+
+**Goal**: Harden the codebase by fixing 4 bugs and adding 1 performance optimization,
+selected from the post-Phase 4 assessment list.
+
+### Fix List
+
+#### #1 — Remove hard `import cupy` / `import imageio` crashes
+**Before**: `import cupy as cp`, `import imageio`, `import imageio.v3 as iio` at the top of
+`atom_simulator_app.py` caused an immediate crash on any machine without an NVIDIA GPU
+(CuPy) or without imageio installed, even though neither was needed at startup. `cp` was
+never even referenced in the file.
+**After**: `cupy` import wrapped in `try/except` with `_CUPY_AVAILABLE` flag; `cp` set to
+`None` when unavailable. `imageio` imports removed from the top level entirely and moved to
+lazy imports inside `export_mp4_mode_a()` and `export_test4k_png()` — only imported when
+the user actually triggers an export.
+
+#### #3 — Fix emitter particle removal corrupting indices
+**Before**: `_update_emitters` removed expired particles one-by-one with `list.pop(idx)` in
+reverse order. It adjusted emitter-particle tracking lists but never touched
+`selected_index`, `world.bonds`, or any other index-based references, causing stale/corrupt
+indices after any emitter particle expired.
+**After**: Rewrote removal as a tag-and-rebuild pass: collect all dead indices into a set,
+build a new particle list in one sweep with an `old→new` index remap dict, then apply the
+remap to `_emitter_particles`, `selected_index`, and `world.bonds`. If a bond references a
+dead particle, the bond is removed.
+
+#### #4 — Give descriptive names to all `_push_undo()` calls
+**Before**: 9 out of 11 `_push_undo()` call sites used the default `"edit"` operation name,
+making the undo history opaque (`"undo edit"` for every action).
+**After**: Every call now has a specific `op_name`: `"transform_<mode>"`, `"rotate_arrow"`,
+`"duplicate"`, `"add_<kind>"`, `"delete"`, `"set_keyframe"`, `"assign_texture"`,
+`"obj_set_z"`, `"add_mesh"`, `"material"`.
+
+#### #6 — Fix `<s>` key conflict (scale vs camera backward)
+**Before**: `<s>` was bound to `start_transform_mode("scale")` at line 1164, then
+`<KeyPress-s>` was bound to camera backward movement at line 1183. The later binding
+silently overrode the earlier one, making scale-by-keyboard impossible.
+**After**: Changed scale transform binding from `<s>` to `<Shift-S>`. Camera `s` (WASD
+backward) keeps the plain `<KeyPress-s>` binding. Both work simultaneously.
+
+#### #9 — Barnes-Hut octree for O(n log n) Coulomb
+**Before**: `_step_exact` computed Coulomb forces with a full O(n²) pairwise loop over all
+particles. Above ~500 particles this dominated the frame time.
+**After**: Replaced the pairwise loop with a 3D Barnes-Hut octree (θ = 0.7). Each tick:
+(a) build bounding box, (b) insert all particles into an octree tracking total charge and
+charge-weighted center-of-mass per node, (c) for each particle, walk the tree — use the
+multipole approximation when `cell_size² < θ² · r²`, otherwise recurse into children.
+Complexity is O(n log n). The existing spatial-hash short-range repulsion and bond-spring
+code is unchanged.
+
+### Files Modified
+
+| File | Changes |
+|------|---------|
+| `py-src/atom_simulator_app.py` | All 5 fixes |
+| `notes.md` | This section |
+
+### Phase 5 Status: COMPLETE
