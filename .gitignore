@@ -16,3 +16,7 @@ py-src/__pycache__
 # =========================
 .env
 *.env
+
+.claude/
+.superpowers/
+docs

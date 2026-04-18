@@ -502,8 +502,13 @@ class PhysicsWorld:
         root_cy = (cy_min + cy_max) * 0.5
         root_cz = (cz_min + cz_max) * 0.5
 
+        # Minimum cell half-size. Prevents unbounded recursion when two particles
+        # are at (nearly) identical positions — at this scale we stop subdividing
+        # and accumulate coincident particles into a single list-leaf.
+        min_hs = max(half * 1e-9, 1e-6)
+
         # Octree node: [cx, cy, cz, half_size, total_charge, com_x, com_y, com_z, children_or_pidx, is_leaf]
-        # Use flat list-of-lists for speed
+        # Leaves store either a single pidx (int) or a list[int] of coincident pidxs.
         _CX, _CY, _CZ, _HS, _Q, _MX, _MY, _MZ, _CH, _LEAF = range(10)
         nodes: list[list] = []
 
@@ -529,6 +534,15 @@ class PhysicsWorld:
                 if node[_CH] == -1:
                     # Empty leaf — just store
                     node[_CH] = pidx
+                    return
+                # If the cell is already tiny, don't subdivide — coincident particles
+                # would recurse forever. Accumulate them in a list-leaf instead.
+                if node[_HS] <= min_hs:
+                    existing = node[_CH]
+                    if isinstance(existing, list):
+                        existing.append(pidx)
+                    else:
+                        node[_CH] = [existing, pidx]
                     return
                 # Occupied leaf — subdivide
                 old_pidx = node[_CH]
@@ -585,22 +599,39 @@ class PhysicsWorld:
                 s = node[_HS] * 2.0  # full cell size
 
                 if node[_LEAF]:
-                    # leaf with single particle
+                    # Leaf: a single pidx, or a list of coincident pidxs.
+                    # F_i = -k q_i q_j * r̂_{i→j} / r²; (dx,dy,dz) points i→j, so subtract.
                     pidx = node[_CH]
-                    if isinstance(pidx, int) and pidx == i:
+                    if isinstance(pidx, list):
+                        # Coincident-particle leaf: compute direct force per entry, skipping self.
+                        for pj_idx in pidx:
+                            if pj_idx == i:
+                                continue
+                            pj = self.particles[pj_idx]
+                            ddx = pj.x - pi.x
+                            ddy = pj.y - pi.y
+                            ddz = pj.z - pi.z
+                            rr2 = ddx * ddx + ddy * ddy + ddz * ddz + softening
+                            rr = math.sqrt(rr2)
+                            f_c = k_c * pi.charge * pj.charge / rr2
+                            fx[i] -= f_c * ddx / rr
+                            fy[i] -= f_c * ddy / rr
+                            fz[i] -= f_c * ddz / rr
+                        continue
+                    if pidx == i:
                         continue  # skip self
                     r = math.sqrt(r2)
                     f_c = k_c * pi.charge * node[_Q] / r2
-                    fx[i] += f_c * dx / r
-                    fy[i] += f_c * dy / r
-                    fz[i] += f_c * dz / r
+                    fx[i] -= f_c * dx / r
+                    fy[i] -= f_c * dy / r
+                    fz[i] -= f_c * dz / r
                 elif s * s < theta2 * r2:
                     # Sufficiently far — use multipole
                     r = math.sqrt(r2)
                     f_c = k_c * pi.charge * node[_Q] / r2
-                    fx[i] += f_c * dx / r
-                    fy[i] += f_c * dy / r
-                    fz[i] += f_c * dz / r
+                    fx[i] -= f_c * dx / r
+                    fy[i] -= f_c * dy / r
+                    fz[i] -= f_c * dz / r
                 else:
                     # Open the node
                     children = node[_CH]
@@ -709,10 +740,11 @@ class PhysicsWorld:
                 ny = dy / r
                 nz = dz / r
 
+                # F_i = -k q_i q_j r̂_{i→j} / r². Repulsion pushes i away from j (also -nx).
                 f_c = self.k_coulomb * pi.charge * pj.charge / r2
                 overlap = (pi.radius + pj.radius) - r
                 f_rep = self.repulsion_k * overlap if overlap > 0 else 0.0
-                f_total = (f_c - f_rep) * scale_back
+                f_total = -(f_c + f_rep) * scale_back
 
                 fx[i] += f_total * nx
                 fy[i] += f_total * ny

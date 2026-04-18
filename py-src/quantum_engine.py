@@ -832,7 +832,7 @@ class HartreeFockWorld:
         for i in range(len(new_orbitals)):
             for j in range(i):
                 overlap = xp.sum(xp.conj(new_orbitals[j]) * new_orbitals[i]) * self.dV
-                new_orbitals[i] = new_orbitals[i] - float(overlap) * new_orbitals[j]
+                new_orbitals[i] = new_orbitals[i] - complex(overlap) * new_orbitals[j]
             norm = float(xp.sqrt(xp.sum(xp.abs(new_orbitals[i]) ** 2) * self.dV))
             if norm > 1e-30:
                 new_orbitals[i] /= norm

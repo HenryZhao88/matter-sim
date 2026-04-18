@@ -341,7 +341,7 @@ def load_obj(path: str, normalize_size: float | None = None) -> Mesh:
         mesh.normalize(normalize_size)
 
     # Ensure default material exists
-    if "" not in mesh.materials and not mesh.materials:
+    if not mesh.materials:
         mesh.materials["default"] = MeshMaterial()
 
     return mesh
