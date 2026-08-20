@@ -1339,6 +1339,9 @@ class AtomSimulatorApp:
         self.world.bonds.clear()
         self.selected_index = None
         self.selected_object_name = None
+        # Particle indices are now invalid — drop emitter spawn tracking so a
+        # later emitter tick can't delete the wrong (newly-spawned) particles.
+        self._emitter_particles.clear()
 
     def apply_scale_profile(self, profile_name: str) -> None:
         if profile_name not in SCALE_PROFILES:
@@ -1533,6 +1536,8 @@ class AtomSimulatorApp:
     def load_preset(self, name: str) -> None:
         cfg = SCALE_PROFILES.get(self.scale_profile_var.get(), SCALE_PROFILES["micro"])
         self.world.load_preset(name, distance_scale=cfg["distance"], velocity_scale=cfg["velocity"])
+        # The particle list was rebuilt — stale emitter spawn indices must be dropped.
+        self._emitter_particles.clear()
         self.selected_index = 0 if self.world.particles else None
         if self.world.last_note:
             self._log(self.world.last_note)
@@ -4287,8 +4292,13 @@ class AtomSimulatorApp:
                 spp = int(parts[4]) if len(parts) > 4 else 4
                 bounces = int(parts[5]) if len(parts) > 5 else 2
                 self._log(f"rendering {w}x{h} spp={spp} bounces={bounces} ...")
-                settings = rt.RenderSettings(width=w, height=h, samples=spp, max_bounces=bounces)
-                scene = rt.build_scene_from_app(self)
+                # build_scene_from_app returns (scene, auto_settings) with camera/fov
+                # already derived from the app; override only resolution/spp/bounces.
+                scene, settings = rt.build_scene_from_app(self)
+                settings.width = w
+                settings.height = h
+                settings.samples_per_pixel = spp
+                settings.max_bounces = bounces
                 img = rt.render(scene, settings)
                 img.save(out_path)
                 self._log(f"render saved: {out_path}")
