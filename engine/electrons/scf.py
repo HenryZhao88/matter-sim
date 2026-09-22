@@ -56,7 +56,7 @@ class SCFResult:
 
 
 class SCFSolver:
-    def __init__(self, grid: Grid, system: System, functional: str = "lda", T_e: float = 1e-3,
+    def __init__(self, grid: Grid, system: System, functional: str = "lda", T_e: float = 3e-3,
                  n_extra: int = 4, seed: int = 0) -> None:
         if functional not in FUNCTIONALS:
             raise ValueError(f"functional must be one of {FUNCTIONALS}")

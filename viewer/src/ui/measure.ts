@@ -93,20 +93,33 @@ export class MeasureRail {
       if (refD[k] !== undefined) dd.append(el("span", { class: "ref" }, ` ref ${num(refD[k], 3)}`));
       rows.push(el("dt", {}, `${this.label(p.i, atoms[p.i].Z)}–${this.label(p.j, atoms[p.j].Z)}`), dd);
     });
-    if (P.length >= 3 && P.length <= 4) {
-      const refA = ref?.angles_deg?.[0];
-      for (let c = 0; c < P.length; c++) {
-        const others = [...Array(P.length).keys()].filter((k) => k !== c);
-        for (let a = 0; a < others.length; a++)
-          for (let b = a + 1; b < others.length; b++) {
-            const u = P[others[a]].map((x, k) => x - P[c][k]);
-            const v = P[others[b]].map((x, k) => x - P[c][k]);
-            const cos = (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (Math.hypot(...u) * Math.hypot(...v));
-            const ang = (Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI;
-            const dd = el("dd", {}, `${num(ang, 1)}°`);
-            if (refA !== undefined) dd.append(el("span", { class: "ref" }, ` ref ${num(refA, 1)}`));
-            rows.push(el("dt", {}, `∠ ${this.label(others[a], atoms[others[a]].Z)}${this.label(c, atoms[c].Z)}${this.label(others[b], atoms[others[b]].Z)}`), dd);
-          }
+    const angleAt = (c: number, a: number, b: number) => {
+      const u = P[a].map((x, k) => x - P[c][k]);
+      const v = P[b].map((x, k) => x - P[c][k]);
+      const cos = (u[0] * v[0] + u[1] * v[1] + u[2] * v[2]) / (Math.hypot(...u) * Math.hypot(...v));
+      return (Math.acos(Math.max(-1, Math.min(1, cos))) * 180) / Math.PI;
+    };
+    const refA = ref?.angles_deg?.[0];
+    const refSpan = (dd: HTMLElement) => {
+      if (refA !== undefined) dd.append(el("span", { class: "ref" }, ` ref ${num(refA, 1)}`));
+      return dd;
+    };
+    if (P.length >= 3) {
+      // Angles around the most central nucleus (smallest summed distance to the others).
+      const sumD = (k: number) => P.reduce((acc, _, j) => acc + (j === k ? 0 : d(k, j)), 0);
+      const centre = [...Array(P.length).keys()].reduce((best, k) => (sumD(k) < sumD(best) ? k : best), 0);
+      const others = [...Array(P.length).keys()].filter((k) => k !== centre);
+      const tri: [number, number, number][] = [];
+      for (let a = 0; a < others.length; a++)
+        for (let b = a + 1; b < others.length; b++) tri.push([others[a], others[b], angleAt(centre, others[a], others[b])]);
+      if (tri.length <= 3) {
+        for (const [i, j, ang] of tri)
+          rows.push(el("dt", {}, `∠ ${this.label(i, atoms[i].Z)}${this.label(centre, atoms[centre].Z)}${this.label(j, atoms[j].Z)}`),
+            refSpan(el("dd", {}, `${num(ang, 1)}°`)));
+      } else {
+        const angs = tri.map((t) => t[2]);
+        rows.push(el("dt", {}, `Angles at ${this.label(centre, atoms[centre].Z)}`),
+          refSpan(el("dd", {}, `${num(Math.min(...angs), 1)}–${num(Math.max(...angs), 1)}°`)));
       }
     }
     this.shape.replaceChildren(...rows);

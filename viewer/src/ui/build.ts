@@ -11,6 +11,7 @@ export class BuildRail {
   private charge = el("output", { class: "stepper-value" });
   private spin = el("div", { class: "segmented small", role: "radiogroup", "aria-label": "Unpaired spins" });
   private selection = el("section", { class: "selection" });
+  private findSpin = el("button", { class: "quiet small", title: "Solve every allowed spin here and keep the lowest energy" }, "Find lowest");
   private presets: PresetInfo[] = [];
   private elements: ElementInfo[] = [];
   private snap: Snapshot | null = null;
@@ -19,6 +20,7 @@ export class BuildRail {
   constructor(root: HTMLElement, private send: Send) {
     const minus = el("button", { class: "stepper-btn", "aria-label": "Remove an electron" }, "−");
     const plus = el("button", { class: "stepper-btn", "aria-label": "Add an electron" }, "+");
+    this.findSpin.onclick = () => this.send({ type: "find_spin" });
     minus.onclick = () => this.send({ type: "set_charge", charge: (this.snap?.meta.system.charge ?? 0) + 1 });
     plus.onclick = () => this.send({ type: "set_charge", charge: (this.snap?.meta.system.charge ?? 0) - 1 });
 
@@ -31,7 +33,7 @@ export class BuildRail {
         el("h2", {}, "Add a nucleus"),
         this.table,
         el("p", { class: "hint" },
-          "Lithium to neon need pseudopotentials built from the engine’s own all-electron atom solver. That’s the next milestone.")),
+          "Hydrogen and helium are bare nuclei. Lithium to neon carry pseudopotentials the engine derived from its own all-electron atoms.")),
       el("section", {},
         el("h2", {}, "Electrons"),
         el("div", { class: "field" },
@@ -39,7 +41,7 @@ export class BuildRail {
           el("div", { class: "stepper" }, minus, this.charge, plus)),
         el("div", { class: "field column" },
           el("span", { class: "field-label" }, "Unpaired spins"),
-          this.spin)),
+          el("div", { class: "spin-row" }, this.spin, this.findSpin))),
       this.selection,
     );
   }
@@ -47,14 +49,18 @@ export class BuildRail {
   setHello(h: Hello): void {
     this.presets = h.presets;
     this.elements = h.elements;
+    const groups = [...new Set(h.presets.map((p) => p.group))];
     this.presetList.replaceChildren(
-      ...h.presets.map((p) => {
-        const b = el("button", { class: "preset", "data-id": p.id },
-          el("span", { class: "preset-formula" }, p.formula),
-          el("span", { class: "preset-name" }, p.name));
-        b.onclick = () => this.send({ type: "load_preset", id: p.id });
-        return el("li", {}, b);
-      }),
+      ...groups.flatMap((g) => [
+        el("li", { class: "preset-group" }, g),
+        ...h.presets.filter((p) => p.group === g).map((p) => {
+          const b = el("button", { class: "preset", "data-id": p.id },
+            el("span", { class: "preset-formula" }, p.formula),
+            el("span", { class: "preset-name" }, p.name));
+          b.onclick = () => this.send({ type: "load_preset", id: p.id });
+          return el("li", {}, b);
+        }),
+      ]),
     );
     // Periodic-table layout: H and He on the first row's ends, Li–Ne below.
     const cell = (e: ElementInfo, col: number, row: number) => {

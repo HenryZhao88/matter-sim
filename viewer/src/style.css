@@ -140,6 +140,15 @@ button, input, select { font: inherit; color: inherit; }
 }
 .preset:hover { background: var(--pane); color: var(--paper); }
 .preset[aria-pressed="true"] { background: var(--pane-raised); color: var(--paper); }
+.preset-group {
+  margin: var(--s3) 0 2px;
+  padding: 0 var(--s2);
+  color: var(--faint);
+  font-size: 12px;
+}
+.preset-group:first-child { margin-top: 0; }
+.spin-row { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
+button.quiet.small { padding: 3px 10px; font-size: 12px; }
 .preset-formula { font: 400 16px/1.2 var(--serif); color: var(--paper); font-variant-numeric: lining-nums; }
 
 .ptable {

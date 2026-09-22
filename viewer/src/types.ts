@@ -21,6 +21,7 @@ export interface Reference {
 
 export interface PresetInfo {
   id: string;
+  group: string;
   name: string;
   formula: string;
   blurb: string;
@@ -119,5 +120,6 @@ export type ServerEvent =
   | Status
   | ScfProgress
   | VerifyResult
+  | { type: "spin_scan"; best: number; rows: { multiplicity: number; energy: number; converged: boolean }[] }
   | { type: "log"; level: string; message: string }
   | { type: "error"; message: string };

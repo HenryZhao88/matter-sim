@@ -73,6 +73,13 @@ function onEvent(e: ServerEvent): void {
       );
       break;
     }
+    case "spin_scan": {
+      const rows = [...e.rows].sort((a, b) => a.energy - b.energy);
+      const low = rows[0].energy;
+      const parts = rows.map((r) => `${r.multiplicity - 1} unpaired: ${r.energy === low ? "lowest" : `+${num((r.energy - low) * 27.2114, 2)} eV`}`);
+      toast(`Lowest energy with ${e.best - 1} unpaired spin${e.best === 2 ? "" : "s"}. ${parts.join(", ")}.`, "info");
+      break;
+    }
     case "log":
       toast(e.message, e.level === "info" ? "info" : "warn");
       break;

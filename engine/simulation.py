@@ -40,7 +40,7 @@ class Params:
     quality: str = "draft"
     mode: str = "relax"
     backend: str = "mlx"
-    T_e: float = 1e-3            # electronic temperature, Hartree
+    T_e: float = 3e-3            # electronic temperature, Hartree (~950 K)
     temperature_K: float = 0.0   # heat-bath temperature for dynamics
     dt: float = 10.0             # MD time step, a.u. (~0.24 fs)
     margin: float = 6.5          # vacuum around nuclei, bohr
@@ -117,6 +117,26 @@ class Simulation:
         self.relaxed = False
         self.fire = FIRE()
 
+    def find_spin(self, max_unpaired: int = 6, progress=None) -> list[dict]:
+        """Solve every allowed total spin at the current geometry; keep the lowest.
+
+        This is how Hund's rule shows up in 3D: nothing prefers a spin state
+        except the energy the solver computes for it.
+        """
+        sysm = self.system
+        ne = sysm.n_electrons
+        rows = []
+        for unpaired in range(ne % 2, min(ne, max_unpaired) + 1, 2):
+            trial = System(sysm.charges, sysm.positions.copy(), sysm.charge, unpaired + 1)
+            solver = SCFSolver(self.grid, trial, functional=self.params.functional, T_e=self.params.T_e)
+            res = solver.run(callback=self.on_scf_progress)
+            rows.append({"multiplicity": unpaired + 1, "energy": res.free_energy, "converged": res.converged})
+            if progress:
+                progress(rows[-1])
+        best = min(rows, key=lambda r: r["energy"])
+        self.set_system(System(sysm.charges, sysm.positions.copy(), sysm.charge, best["multiplicity"]))
+        return rows
+
     # ---------------------------------------------------------- stepping
     def _solve(self) -> None:
         self.result = self.solver.run(callback=self.on_scf_progress)
@@ -132,7 +152,12 @@ class Simulation:
             new = self.fire.step(sysm.positions, self.forces)
             self.solver.set_positions(new)
             self._solve()
-            if float(np.max(np.linalg.norm(self.forces, axis=1))) < self.params.fmax_relaxed:
+            fmax = float(np.max(np.linalg.norm(self.forces, axis=1)))
+            # Converged when forces vanish, or when the energy has stopped falling and only
+            # the grid's small egg-box ripple in the forces remains.
+            recent = self.energy_trace[-8:]
+            plateau = len(recent) == 8 and (max(recent) - min(recent)) < 2e-5 and fmax < 5 * self.params.fmax_relaxed
+            if fmax < self.params.fmax_relaxed or plateau:
                 self.relaxed = True
         elif mode == "dynamics":
             v = self.md.half_kick(sysm.velocities, self.forces)

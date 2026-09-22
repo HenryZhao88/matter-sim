@@ -134,6 +134,16 @@ class Session:
     def _apply(self, cmd: dict) -> None:
         self._guarded(self._dispatch, cmd)
 
+    def _prepare_species(self, charges) -> None:
+        """Tell the viewer when a pseudopotential is being derived (first use only)."""
+        from engine.atoms import species
+        for Z in sorted(set(charges)):
+            if species.is_pseudized(Z) and not (species.CACHE_DIR / f"v{species.CACHE_VERSION}_Z{Z}.pkl").exists():
+                self._pub_json({"type": "log", "level": "info",
+                                "message": f"Deriving the {ELEMENTS[Z].name.lower()} pseudopotential from its "
+                                           "all-electron atom. This happens once."})
+                species.pseudopotential(Z)
+
     def _dispatch(self, cmd: dict) -> None:
         t = cmd.get("type")
         sim = self.sim
@@ -146,6 +156,7 @@ class Session:
             self._step()
         elif t == "load_preset":
             p = preset(cmd["id"])
+            self._prepare_species([Z for Z, _ in p["atoms"]])
             self.preset_id = p["id"]
             sim.params.mode = p["mode"]
             sim.set_system(system_from_preset(p["id"]))
@@ -177,6 +188,12 @@ class Session:
             sim.set_params(**cmd["params"])
             if not self.running:
                 self._step()
+        elif t == "find_spin":
+            self._pub_json({"type": "log", "level": "info", "message": "Trying every total spin at this geometry…"})
+            rows = sim.find_spin()
+            best = min(rows, key=lambda r: r["energy"])
+            self._pub_json(sanitize({"type": "spin_scan", "rows": rows, "best": best["multiplicity"]}))
+            self._step()
         elif t == "verify":
             self._verify()
         elif t == "snapshot":
@@ -190,6 +207,7 @@ class Session:
         Z, P = list(s.charges), [list(p) for p in s.positions]
         if add is not None:
             z, pos = add
+            self._prepare_species([z])
             if z not in supported_elements():
                 raise ValueError(f"{ELEMENTS[z].symbol} needs a pseudopotential that is not built yet")
             if pos is None:
