@@ -98,10 +98,18 @@ button, input, select { font: inherit; color: inherit; }
   top: 10px;
   height: 1px;
 }
+.rung-btn {
+  display: flex; flex-direction: column; align-items: flex-start;
+  padding: 0; background: none; border: 0; color: inherit; text-align: left; font: inherit;
+}
+button.rung-btn { cursor: pointer; }
+button.rung-btn:hover .rung-name { color: var(--paper); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--rule); }
+.rung.live { color: var(--muted); }
+.rung.live::before { border-color: var(--amber); }
+.rung.current { color: var(--paper); }
 .rung-name { font-size: 12px; }
 .rung-size { font: 400 12px/1.2 var(--serif); font-variant-numeric: lining-nums; opacity: 0.8; }
-.rung.live { color: var(--paper); }
-.rung.live::before { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 10px rgba(240, 180, 85, 0.6); }
+.rung.current::before { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 10px rgba(240, 180, 85, 0.6); }
 
 /* -------------------------------------------------------------- rails */
 .rail {
@@ -381,3 +389,68 @@ input[type="range"] { accent-color: var(--amber); width: 96px; }
 @media (prefers-reduced-motion: reduce) {
   .toast { transition: none; }
 }
+
+/* ------------------------------------------------------- workspaces */
+body[data-workspace="atoms"] .particles-only { display: none; }
+body[data-workspace="particles"] #build,
+body[data-workspace="particles"] #stage,
+body[data-workspace="particles"] #measure,
+body[data-workspace="particles"] #runbar { display: none; }
+#p-left { grid-area: build; }
+#p-stage { grid-area: stage; }
+#p-right { grid-area: measure; }
+#p-bar { grid-area: run; }
+#p-view { width: 100%; height: 100%; display: block; touch-action: none; }
+
+/* ----------------------------------------------------------- collider */
+.beam-list { display: grid; gap: 2px; }
+.beam-list .preset[aria-checked="true"] { background: var(--pane-raised); color: var(--paper); }
+.chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.chips button {
+  padding: 4px 9px; border-radius: var(--r-control); border: 1px solid var(--rule);
+  background: transparent; color: var(--muted); cursor: pointer;
+  font: 400 14px/1.2 var(--serif); font-variant-numeric: tabular-nums lining-nums;
+}
+.chips button:hover { color: var(--paper); border-color: var(--muted); }
+.chips button[aria-checked="true"] { background: var(--pane-raised); color: var(--paper); border-color: var(--muted); }
+.event-title { font: 400 20px/1.3 var(--serif); margin-bottom: var(--s2); }
+.decay-tree, .decay-tree ol { list-style: none; margin: 0; padding: 0; }
+.decay-tree ol { padding-left: 14px; border-left: 1px solid var(--rule); margin-left: 6px; }
+.tree-node {
+  display: grid; grid-template-columns: 10px 3.2em 1fr auto; align-items: baseline; gap: 6px;
+  width: 100%; padding: 2px 4px; background: none; border: 0; border-radius: 4px; color: var(--paper);
+  text-align: left; cursor: pointer; font: inherit;
+}
+.tree-node:hover { background: var(--pane); }
+.tree-sym { font: 400 15px/1.2 var(--serif); }
+.tree-energy { color: var(--muted); font-variant-numeric: tabular-nums; }
+.tree-status { font-size: 11px; color: var(--faint); }
+.tree-status.confined { color: var(--amber); }
+.swatch { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.outcomes { display: grid; gap: 6px; margin-top: var(--s2); }
+.outcome { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; }
+.outcome-label { font: 400 14px/1.25 var(--serif); }
+.outcome-value { color: var(--muted); font-variant-numeric: tabular-nums; }
+.share-track { grid-column: 1 / -1; height: 3px; background: var(--pane); border-radius: 2px; overflow: hidden; }
+.share-bar { display: block; height: 100%; background: var(--amber); opacity: 0.85; }
+.scan { width: 100%; height: auto; display: block; margin-top: var(--s2); }
+.scan .axis { stroke: var(--rule); }
+.scan .tick { fill: var(--faint); font-size: 9px; }
+.scan .scan-dot { fill: var(--paper); }
+.scan .now { stroke: var(--amber); stroke-dasharray: 2 3; }
+.p-labels { inset: 0; pointer-events: none; overflow: hidden; }
+.p-label {
+  position: absolute; left: 0; top: 0; white-space: nowrap;
+  font: 400 14px/1 var(--serif); color: var(--paper); text-shadow: 0 0 6px var(--plate-deep);
+}
+.p-legend {
+  left: var(--s4); bottom: var(--s4); display: flex; flex-wrap: wrap; gap: var(--s3);
+  color: var(--muted); font-size: 12px; max-width: 70%;
+}
+.legend-item { display: inline-flex; align-items: center; gap: 6px; }
+.p-empty {
+  inset: 0; display: grid; place-content: center; text-align: center; gap: var(--s2);
+  color: var(--muted); pointer-events: none; padding: var(--s6);
+}
+.p-empty p:last-child { max-width: 46ch; margin: 0 auto; }
+.particle-info:empty { display: none; }

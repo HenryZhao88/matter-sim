@@ -69,9 +69,18 @@ def _boost(p, beta):
     return np.concatenate([[E], vec])
 
 
-@functools.lru_cache(maxsize=256)
+_TABLES: dict[tuple[str, str, float], tuple] = {}   # (beam, beam, √s) → outcome table
+
+
 def outcomes(a: str, b: str, sqrt_s: float) -> tuple:
     """((c, d, σ pb, cos nodes, dσ/dcos), ...) for every open final state, largest first."""
+    key = (a, b, float(sqrt_s))
+    if key not in _TABLES:
+        _TABLES[key] = _compute_outcomes(a, b, float(sqrt_s))
+    return _TABLES[key]
+
+
+def _compute_outcomes(a: str, b: str, sqrt_s: float) -> tuple:
     names = list(registry())
     qa, qb = species(a).charge, species(b).charge
     out, seen = [], set()

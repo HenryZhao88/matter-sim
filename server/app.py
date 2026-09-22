@@ -10,6 +10,7 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
+from .particles import ColliderWorker
 from .session import Session
 
 log = logging.getLogger("matter_sim.server")
@@ -45,11 +46,15 @@ def create_app(start_engine: bool = True) -> web.Application:
 
         session = Session(pub_json, pub_bytes)
         app_["session"] = session
+        collider = ColliderWorker(pub_json)
+        app_["collider"] = collider
         if start_engine:
             session.start()
+            collider.start()
 
     async def on_cleanup(app_):
         app_["session"].stop()
+        app_["collider"].stop()
 
     async def ws_handler(request):
         ws = web.WebSocketResponse(max_msg_size=0, heartbeat=20)
@@ -64,7 +69,11 @@ def create_app(start_engine: bool = True) -> web.Application:
             log.debug("ws message %s %s", msg.type, str(msg.data)[:120])
             if msg.type == WSMsgType.TEXT:
                 try:
-                    session.submit(json.loads(msg.data))
+                    cmd = json.loads(msg.data)
+                    if str(cmd.get("type", "")).startswith("collider."):
+                        request.app["collider"].submit(cmd)
+                    else:
+                        session.submit(cmd)
                 except json.JSONDecodeError:
                     await ws.send_str(json.dumps({"type": "error", "message": "bad JSON"}))
         clients.discard(ws)

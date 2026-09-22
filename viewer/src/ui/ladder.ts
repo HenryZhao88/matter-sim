@@ -1,19 +1,27 @@
 import { el } from "../format";
 
-// The scales of matter this project climbs. Only rung 2 exists today.
-const RUNGS = [
-  { name: "Quarks and nuclei", size: "10⁻¹⁵ m", live: false, note: "Not simulated. Nuclei enter as measured charge and mass." },
-  { name: "Electrons and nuclei", size: "10⁻¹⁰ m", live: true, note: "Running now: quantum electrons, moving nuclei." },
-  { name: "Materials", size: "10⁻⁸ m", live: false, note: "Next: forces learned from this rung drive many-atom simulations." },
-  { name: "Everyday matter", size: "10⁻² m", live: false, note: "The long goal: a cubic centimetre of aluminium." },
+export type Workspace = "particles" | "atoms";
+
+// The scales of matter this project climbs. The two lit rungs open their workspace.
+const RUNGS: { name: string; size: string; workspace?: Workspace; note: string }[] = [
+  { name: "Particles and forces", size: "10⁻¹⁸ m", workspace: "particles",
+    note: "The Standard Model: collide particles and see what the Lagrangian makes." },
+  { name: "Electrons and nuclei", size: "10⁻¹⁰ m", workspace: "atoms",
+    note: "Quantum electrons and moving nuclei: atoms and molecules." },
+  { name: "Materials", size: "10⁻⁸ m", note: "Next: forces learned from the rung below drive many-atom simulations." },
+  { name: "Everyday matter", size: "10⁻² m", note: "The long goal: a cubic centimetre of aluminium." },
 ];
 
-export function renderLadder(root: HTMLElement): void {
+export function renderLadder(root: HTMLElement, current: Workspace, onPick: (w: Workspace) => void): void {
   root.replaceChildren(
-    ...RUNGS.map((r) =>
-      el("li", { class: r.live ? "rung live" : "rung", title: r.note, "aria-current": r.live ? "step" : "false" },
-        el("span", { class: "rung-name" }, r.name),
-        el("span", { class: "rung-size" }, r.size)),
-    ),
+    ...RUNGS.map((r) => {
+      const live = r.workspace !== undefined;
+      const inner = [el("span", { class: "rung-name" }, r.name), el("span", { class: "rung-size" }, r.size)];
+      const node = live
+        ? el("button", { class: "rung-btn", title: r.note, "aria-pressed": String(r.workspace === current) }, ...inner)
+        : el("span", { class: "rung-btn", title: r.note }, ...inner);
+      if (live) node.addEventListener("click", () => onPick(r.workspace!));
+      return el("li", { class: `rung${live ? " live" : ""}${r.workspace === current ? " current" : ""}` }, node);
+    }),
   );
 }

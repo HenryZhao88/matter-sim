@@ -11,7 +11,9 @@ import { Link } from "./net";
 import { type RenderMode, Viewport } from "./scene/viewport";
 import type { Hello, PresetInfo, ServerEvent, Snapshot, Status } from "./types";
 import { BuildRail } from "./ui/build";
-import { renderLadder } from "./ui/ladder";
+import { Collider } from "./particles/collider";
+import type { ColliderEvent } from "./particles/types";
+import { renderLadder, type Workspace } from "./ui/ladder";
 import { MeasureRail } from "./ui/measure";
 import { RunBar } from "./ui/runbar";
 
@@ -23,6 +25,7 @@ let snap: Snapshot | null = null;
 
 const link = new Link(onEvent, onSnapshot, (up) => {
   $("offline").hidden = up;
+  if (up && document.body.dataset.workspace === "particles") collider.activate();
 });
 const send = (cmd: Record<string, unknown>) => link.send(cmd);
 
@@ -30,8 +33,20 @@ const viewport = new Viewport($("view") as HTMLCanvasElement);
 const build = new BuildRail($("build"), send);
 const measure = new MeasureRail($("measure"));
 const runbar = new RunBar($("runbar"), send);
-renderLadder($("ladder"));
 buildViewControls($("view-controls"));
+
+const collider = new Collider($("p-left"), $("p-right"), $("p-bar"), $("p-view") as HTMLCanvasElement,
+  $("p-labels"), $("p-legend"), $("p-progress"), $("p-empty"), send);
+
+function setWorkspace(w: Workspace): void {
+  document.body.dataset.workspace = w;
+  renderLadder($("ladder"), w, setWorkspace);
+  try { localStorage.setItem("workspace", w); } catch { /* storage may be unavailable */ }
+  if (w === "particles") collider.activate();
+}
+let savedWorkspace: Workspace = "atoms";
+try { if (localStorage.getItem("workspace") === "particles") savedWorkspace = "particles"; } catch { /* ignore */ }
+setWorkspace(savedWorkspace);
 
 viewport.onSelect = (i) => build.setSelected(i);
 viewport.onMoveAtom = (index, pos) => send({ type: "move_atom", index, pos });
@@ -41,7 +56,12 @@ function currentPreset(): PresetInfo | null {
   return hello?.presets.find((p) => p.id === status?.preset) ?? null;
 }
 
-function onEvent(e: ServerEvent): void {
+function onEvent(e: ServerEvent | ColliderEvent): void {
+  if (e.type.startsWith("collider.")) {
+    collider.onEvent(e as ColliderEvent);
+    return;
+  }
+  e = e as ServerEvent;
   switch (e.type) {
     case "hello":
       hello = e;

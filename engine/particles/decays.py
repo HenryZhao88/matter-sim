@@ -38,9 +38,27 @@ def _charge_ok(parent: str, products) -> bool:
     return abs(species(parent).charge - sum(species(p).charge for p in products)) < 1e-9
 
 
-@functools.lru_cache(maxsize=None)
+_CHANNELS: dict[str, tuple] = {}
+
+
 def channels(parent: str) -> tuple[tuple[tuple[str, ...], float], ...]:
-    """((products, width GeV), ...) sorted by width, for every open channel."""
+    """((products, width GeV), ...) sorted by width, for every open channel.
+
+    An antiparticle's channels are its particle's with every product conjugated: CPT
+    symmetry of the Lagrangian guarantees equal rates, so they are not recomputed.
+    """
+    if parent not in _CHANNELS:
+        from .process import antiparticle
+        anti = antiparticle(parent)
+        if anti != parent and anti in _CHANNELS:
+            _CHANNELS[parent] = tuple((tuple(sorted(antiparticle(x) for x in prods)), w)
+                                      for prods, w in _CHANNELS[anti])
+        else:
+            _CHANNELS[parent] = _compute_channels(parent)
+    return _CHANNELS[parent]
+
+
+def _compute_channels(parent: str) -> tuple[tuple[tuple[str, ...], float], ...]:
     names = [n for n in registry() if n != parent]
     M = species(parent).mass
     out = []
@@ -78,10 +96,26 @@ def _three_body_channels(parent: str):
                     continue
                 if not _charge_ok(parent, key) or not _allowed_by_confinement(parent, key):
                     continue
-                w = width_3body(parent, key, n_points=400)
+                if not _nonzero_3body(parent, key):
+                    continue
+                # the muon has a single channel and is a precision showcase; sample it densely
+                w = width_3body(parent, key, n_points=20000 if parent.startswith("mu") else 1500)
                 if w > 1e-30:
-                    out.append((key, width_3body(parent, key, n_points=3000)))
+                    out.append((key, w))
     return out
+
+
+def _nonzero_3body(parent: str, products) -> bool:
+    """One phase-space point: forbidden final states give exactly zero."""
+    M = species(parent).mass
+    ms = [species(p).mass for p in products]
+    rng = np.random.default_rng(7)
+    pts, _ = dalitz_points(M, *ms, 1, rng)
+    if not pts:
+        return False
+    amp = Amplitude(model(), [leg(parent, True)] + [leg(p, False) for p in products], _widths_for_propagators())
+    P = np.array([M, 0, 0, 0.0])
+    return any(np.any(np.abs(amp.evaluate([P] + mom)) > 1e-30) for mom in pts)
 
 
 def dalitz_points(M, m1, m2, m3, n, rng):
@@ -178,3 +212,21 @@ def branching_ratios(parent: str) -> list[tuple[tuple[str, ...], float]]:
     ch = channels(parent)
     tot = sum(w for _, w in ch)
     return [(p, w / tot) for p, w in ch]
+
+
+def warm_cache(path) -> None:
+    """Compute (or load) every unstable particle's decay table once, on disk."""
+    import pickle
+    from pathlib import Path
+    path = Path(path)
+    if path.exists():
+        try:
+            tables = pickle.loads(path.read_bytes())
+            for name, ch in tables.items():
+                _CHANNELS[name] = ch
+            return
+        except Exception:
+            path.unlink(missing_ok=True)
+    tables = {name: channels(name) for name in UNSTABLE}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(pickle.dumps(tables))

@@ -7,7 +7,7 @@
     <title>matter-sim</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%230F2A3F'/%3E%3Ccircle cx='16' cy='16' r='9' fill='%237FB6D6' opacity='.55'/%3E%3Ccircle cx='16' cy='16' r='3' fill='%23EAF2F5'/%3E%3C/svg%3E" />
   </head>
-  <body>
+  <body data-workspace="atoms">
     <div id="app">
       <header class="top">
         <div class="wordmark">matter-sim</div>
@@ -27,6 +27,19 @@
       </main>
       <aside class="rail rail-measure" id="measure" aria-label="Measurements"></aside>
       <footer class="runbar" id="runbar"></footer>
+      <aside class="rail rail-build particles-only" id="p-left" aria-label="Collider controls"></aside>
+      <main class="stage particles-only" id="p-stage">
+        <canvas id="p-view"></canvas>
+        <div class="overlay p-labels" id="p-labels" aria-hidden="true"></div>
+        <div class="overlay p-legend" id="p-legend"></div>
+        <div class="overlay progress" id="p-progress" hidden></div>
+        <div class="overlay p-empty" id="p-empty">
+          <p class="offline-title">Pick two beams and collide them</p>
+          <p>Every particle that comes out is computed from the Standard Model Lagrangian. Nothing about which particles exist is written into the code.</p>
+        </div>
+      </main>
+      <aside class="rail rail-measure particles-only" id="p-right" aria-label="What happened"></aside>
+      <footer class="runbar particles-only" id="p-bar"></footer>
     </div>
     <script type="module" src="/src/main.ts"></script>
   </body>

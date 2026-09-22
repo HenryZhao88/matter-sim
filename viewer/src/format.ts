@@ -42,3 +42,11 @@ export function el<K extends keyof HTMLElementTagNameMap>(
   e.append(...children);
   return e;
 }
+
+/** Text with "_x" rendered as a subscript (for symbols like ν_μ). */
+export function rich(text: string): HTMLSpanElement {
+  const span = document.createElement("span");
+  const esc = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  span.innerHTML = esc.replace(/_(\S)/g, "<sub>$1</sub>");
+  return span;
+}

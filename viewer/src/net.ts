@@ -1,3 +1,4 @@
+import type { ColliderEvent } from "./particles/types";
 import type { ServerEvent, Snapshot } from "./types";
 
 // WebSocket link to the engine. Reconnects on its own.
@@ -6,7 +7,7 @@ export class Link {
   private retry = 500;
 
   constructor(
-    private onEvent: (e: ServerEvent) => void,
+    private onEvent: (e: ServerEvent | ColliderEvent) => void,
     private onSnapshot: (s: Snapshot) => void,
     private onConnection: (up: boolean) => void,
   ) {
