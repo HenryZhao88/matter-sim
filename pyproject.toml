@@ -1,0 +1,29 @@
+[project]
+name = "matter-sim"
+version = "0.1.0"
+description = "First-principles matter simulator: quantum electrons and nuclei, with a browser viewer"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.0",
+    "scipy>=1.13",
+    "mlx>=0.32",
+    "aiohttp>=3.10",
+]
+
+[project.scripts]
+matter-sim = "matter_sim.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-aiohttp>=1.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["engine", "server", "matter_sim", "validation"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+markers = ["slow: takes more than ~10 s (deselect with -m 'not slow')"]

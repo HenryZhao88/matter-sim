@@ -1,22 +1,21 @@
-# =========================
-# Python virtual environments
-# =========================
+# Python
 .venv/
 venv/
-env/
-ENV/
-
-# =========================
-# Python bytecode / cache
-# =========================
-py-src/__pycache__
-
-# =========================
-# Environment variables
-# =========================
+__pycache__/
+*.pyc
+.pytest_cache/
 .env
 *.env
 
+# Node / viewer build
+node_modules/
+viewer/dist/
+
+# OS / tooling
+.DS_Store
 .claude/
 .superpowers/
 docs
+
+# Generated
+validation/results.json
