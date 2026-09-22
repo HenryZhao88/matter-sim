@@ -50,7 +50,7 @@ def main() -> None:
     ap.add_argument("--no-browser", action="store_true")
     v = sub.add_parser("validate", help="run the experiment-vs-simulation checks")
     v.add_argument("--quick", action="store_true", help="coarser grids, fewer checks")
-    v.add_argument("--part", choices=["all", "particles", "atoms"], default="all")
+    v.add_argument("--part", choices=["all", "particles", "atoms", "materials"], default="all")
     ps = sub.add_parser("pseudos", help="build and check the pseudopotentials for every element (slow, once)")
     ps.add_argument("--up-to", type=int, default=36)
     args = ap.parse_args()

@@ -74,10 +74,38 @@ def main(quick: bool = False, part: str = "all") -> None:
         particles_section(quick)
     if part in ("all", "atoms"):
         atoms_section(quick, q)
+    if part in ("all", "materials"):
+        materials_section()
     ok = [r["ok"] for r in rows if r["ok"] is not None]
     print(f"\n{sum(ok)}/{len(ok)} checks pass  ({time.time() - t0:.0f} s)")
     OUT.write_text(json.dumps({"quick": quick, "part": part, "rows": rows}, indent=2, default=float))
     print(f"Wrote {OUT}")
+
+
+def materials_section() -> None:
+    """Aluminium: what the learned forces and the continuum block produce, against measurement."""
+    from engine.materials.continuum import REFERENCE, Block, derived_aluminium
+    d = derived_aluminium()
+    if d is None:
+        print("\n(Materials checks skipped: the learned potential has not been trained and measured yet.)")
+        return
+    section("Aluminium: forces learned from this engine's own DFT, then molecular dynamics")
+    b = Block(d, T=293.15)
+    ref = {k: v[0] for k, v in REFERENCE.items()}
+    record("materials", "Melting point (solid–liquid coexistence)", d.T_melt, ref["T_melt"], "K",
+           "LDA over-binds; ±60 K is the usual spread", abs(d.T_melt - ref["T_melt"]) < 150)
+    record("materials", "Latent heat of fusion", d.latent_eV * 1000, ref["latent_eV"] * 1000, "meV/atom",
+           "", abs(d.latent_eV - ref["latent_eV"]) < 0.04)
+    record("materials", "Density at 293 K", b.density() / 1000, ref["density"] / 1000, "g/cm³",
+           "from the lattice constant and the nuclear mass", abs(b.density() - ref["density"]) < 150)
+    record("materials", "Linear thermal expansion", b.linear_expansion_per_K() * 1e6, ref["alpha_per_K"] * 1e6,
+           "10⁻⁶/K", "classical nuclei", abs(b.linear_expansion_per_K() - ref["alpha_per_K"]) < 8e-6)
+    record("materials", "Specific heat at 293 K", b.specific_heat_J_per_gK(), ref["c_J_per_gK"], "J/g·K",
+           "classical nuclei: no quantum freeze-out", abs(b.specific_heat_J_per_gK() - ref["c_J_per_gK"]) < 0.15)
+    record("materials", "Speed of sound (longitudinal)", b.sound_speeds()["longitudinal"], ref["sound_long"],
+           "m/s", "from the DFT elastic constants", abs(b.sound_speeds()["longitudinal"] - ref["sound_long"]) < 900)
+    record("materials", "Energy to melt 1 cm³ from room temperature", b.heat_to_melt_J() / 1000, 3.0, "kJ",
+           "≈2.9 kJ from measured tables", 2.0 < b.heat_to_melt_J() / 1000 < 4.5)
 
 
 def particles_section(quick: bool) -> None:
