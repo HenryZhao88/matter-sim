@@ -40,7 +40,8 @@ def label(conf: dict) -> dict:
     c = Crystal(conf["cell"], conf["charges"], conf["positions"])
     r = PeriodicDFT(c, h=0.3, kmesh=_kmesh(c.cell), T_e=T_E, symmetry=False).run(forces=True)
     out = {"cell": c.cell, "charges": c.charges, "positions": c.positions,
-           "energy": r.free_energy, "forces": r.forces, "converged": r.converged, "tag": conf.get("tag", "")}
+           "energy": r.free_energy, "forces": r.forces, "converged": r.converged, "tag": conf.get("tag", ""),
+           "kspacing": K_SPACING, "T_e": T_E}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(pickle.dumps(out))
     return out

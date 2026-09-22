@@ -129,6 +129,7 @@ def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=No
     import mlx.core as mx
     import mlx.optimizers as optim
 
+    mx.random.seed(seed)          # so a refit (and anything derived from it) is reproducible
     I_all, J_all, B_all, dB_all, U_all, cfg_of_atom, E_ref, F_ref, n_at = [], [], [], [], [], [], [], [], []
     off = 0
     for k, c in enumerate(configs):
