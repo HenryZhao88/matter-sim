@@ -32,6 +32,14 @@ ELEMENTS: dict[int, Element] = {
         Element(8, "O", "Oxygen", 15.99491462, "#ff5a5a"),
         Element(9, "F", "Fluorine", 18.99840316, "#8cffb0"),
         Element(10, "Ne", "Neon", 19.99244018, "#ff9ad5"),
+        Element(11, "Na", "Sodium", 22.98976928, "#b18cff"),
+        Element(12, "Mg", "Magnesium", 23.9850417, "#9dff9a"),
+        Element(13, "Al", "Aluminium", 26.98153853, "#d7c9c0"),
+        Element(14, "Si", "Silicon", 27.97692653, "#e8c28f"),
+        Element(15, "P", "Phosphorus", 30.97376200, "#ffa45c"),
+        Element(16, "S", "Sulfur", 31.97207117, "#ffe066"),
+        Element(17, "Cl", "Chlorine", 34.96885268, "#7dff7a"),
+        Element(18, "Ar", "Argon", 39.96238312, "#85d8ff"),
     ]
 }
 

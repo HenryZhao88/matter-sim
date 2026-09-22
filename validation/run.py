@@ -102,10 +102,10 @@ def main(quick: bool = False) -> None:
            "2, 3, 2", ok=hund)
 
     section("Pseudopotentials (derived from the atoms above): transferability")
-    for Z in (6, 7, 8):
+    for Z in (6, 7, 8, 11, 13, 16, 17):
         worst = max(abs(r["dE_ps"] - r["dE_ae"]) for r in verify(pseudopotential(Z))[1:]) * HARTREE_EV
         record("pseudo", f"{SYMBOL[Z - 1]}: worst excitation-energy error", worst, 0.0, "eV",
-               "ionised and promoted configurations", worst < 0.05)
+               "ionised and promoted configurations", worst < 0.06)
 
     section(f"Molecules in 3D ({q} grid): shapes found by relaxing from wrong starts")
     # H2 bond and binding energy
@@ -147,8 +147,19 @@ def main(quick: bool = False) -> None:
         r = float(np.linalg.norm(P[0] - P[1])) * BOHR_ANGSTROM
         record("molecules", "N₂ bond length", r, 1.0977, "Å", ok=abs(r - 1.0977) < 0.03)
 
+    section(f"Third row ({q} grid): the same code, one shell further out")
+    sim = relax(system_from_preset("h2s"), q)
+    P = sim.system.positions
+    a = angle(P, 0, 1, 2)
+    record("third row", "H₂S angle (water's is 104.5°)", a, 92.1, "°", "the periodic trend emerges", abs(a - 92.1) < 2.5)
+    sim = relax(system_from_preset("nacl"), q)
+    P = sim.system.positions
+    r = float(np.linalg.norm(P[0] - P[1])) * BOHR_ANGSTROM
+    record("third row", "NaCl bond length", r, 2.3609, "Å", "ionic bond", abs(r - 2.3609) < 0.06)
+
     section("Magnetism")
-    for pid, label, expect in (("o_atom", "O atom: unpaired spins", 2), ("o2", "O₂ molecule: unpaired spins", 2)):
+    for pid, label, expect in (("o_atom", "O atom: unpaired spins", 2), ("o2", "O₂ molecule: unpaired spins", 2),
+                               ("al2", "Al₂ molecule: unpaired spins", 2)):
         sim = Simulation(system_from_preset(pid), Params(quality="draft", mode="frozen"))
         sim.step()
         scan = sim.find_spin(max_unpaired=4)

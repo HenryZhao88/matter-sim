@@ -28,10 +28,10 @@ QUALITY_H = {"draft": 0.30, "standard": 0.20, "fine": 0.13}
 def supported_elements() -> set[int]:
     """Elements available in 3D.
 
-    H and He are all-electron; Li–Ne use pseudopotentials generated from the
+    H and He are all-electron; Li–Ar use pseudopotentials generated from the
     engine's own all-electron atoms (engine/atoms/pseudo.py).
     """
-    return set(range(1, 11))
+    return set(range(1, 19))
 
 
 @dataclass

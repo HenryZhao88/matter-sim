@@ -34,7 +34,8 @@ from .radial import AtomResult, RadialAtom, RadialGrid, hartree_potential
 from ..electrons.xc import lda_xc
 
 # Core radii (bohr), close to Troullier & Martins' published choices.
-DEFAULT_RC = {3: 2.4, 4: 1.9, 5: 1.6, 6: 1.5, 7: 1.5, 8: 1.45, 9: 1.4, 10: 1.4}
+DEFAULT_RC = {3: 2.4, 4: 1.9, 5: 1.6, 6: 1.5, 7: 1.5, 8: 1.45, 9: 1.4, 10: 1.4,
+              11: 2.6, 12: 2.4, 13: 2.3, 14: 2.0, 15: 1.9, 16: 1.8, 17: 1.7, 18: 1.6}
 R_GAUSS = 0.7  # width of the Gaussian that carries the long-range −Z_v/r in Fourier space
 
 
@@ -51,6 +52,8 @@ class Pseudopotential:
     occ: dict[int, float] = field(repr=False)             # reference occupations
     kb_energy: dict[int, float] = field(repr=False)       # 1/⟨φ|δV|φ⟩
     beta: dict[int, np.ndarray] = field(repr=False)       # δV·u/r (radial projector)
+    core: list[tuple[int, int]] = field(default_factory=list)       # (n, l) core subshells
+    valence_n: dict[int, int] = field(default_factory=dict)         # l → n of the valence level
 
     @property
     def v_local(self) -> np.ndarray:
@@ -91,16 +94,16 @@ def _bessel_transform(grid: RadialGrid, f: np.ndarray, l: int, q: np.ndarray) ->
 
 
 def _core_valence_split(levels) -> tuple[list, list]:
-    """Split occupied subshells at the largest energy gap (ratio): core below."""
+    """Core = every occupied shell below the outermost occupied principal shell.
+
+    Principal numbers come from counting each orbital's radial nodes.
+    """
     occ = sorted({(lv.n, lv.l): lv for lv in levels if lv.spin == 0 and lv.occupation > 1e-6}.values(),
                  key=lambda lv: lv.energy)
-    if len(occ) < 2:
-        return [], occ
-    ratios = [occ[i].energy / occ[i + 1].energy for i in range(len(occ) - 1)]
-    k = int(np.argmax(ratios))
-    if ratios[k] < 4.0:
-        return [], occ
-    return occ[: k + 1], occ[k + 1:]
+    if not occ:
+        return [], []
+    n_out = max(lv.n for lv in occ)
+    return [lv for lv in occ if lv.n < n_out], [lv for lv in occ if lv.n == n_out]
 
 
 def _local_fit(r, y, i, half=12, deg=6):
@@ -199,7 +202,7 @@ def generate(Z: int, rc: dict[int, float] | None = None, l_local: int = 1) -> Ps
     V = ref.v_up  # spin-unpolarised reference: both spins identical
     rc_all = rc or {0: DEFAULT_RC[Z], 1: DEFAULT_RC[Z]}
 
-    u_ps, v_scr, eps, occ, rcs = {}, {}, {}, {}, {}
+    u_ps, v_scr, eps, occ, rcs, valence_n = {}, {}, {}, {}, {}, {}
     for l in (0, 1):
         lv_list = [lv for lv in ref.levels if lv.spin == 0 and lv.l == l and (lv.n, lv.l) not in core_nl]
         if not lv_list:
@@ -208,6 +211,7 @@ def generate(Z: int, rc: dict[int, float] | None = None, l_local: int = 1) -> Ps
         u_ps[l], v_scr[l], rcs[l] = _tm_channel(grid, lv.u, V, lv.energy, l, rc_all[l])
         eps[l] = lv.energy
         occ[l] = 2 * lv.occupation  # both spins
+        valence_n[l] = lv.n
 
     r = grid.r
     rho_v = sum(occ[l] * u_ps[l] ** 2 for l in u_ps) / (4 * np.pi * r * r)
@@ -231,7 +235,8 @@ def generate(Z: int, rc: dict[int, float] | None = None, l_local: int = 1) -> Ps
         D = grid.integrate(u_ps[l] ** 2 * dv)
         kb[l] = 1.0 / D
         beta[l] = dv * u_ps[l] / r
-    return Pseudopotential(Z, float(Z_val), l_local, rcs, grid, v_ion, u_ps, eps, occ, kb, beta)
+    return Pseudopotential(Z, float(Z_val), l_local, rcs, grid, v_ion, u_ps, eps, occ, kb, beta,
+                           core=sorted(core_nl), valence_n=valence_n)
 
 
 # ------------------------------------------------------------------ checks
@@ -251,7 +256,7 @@ def verify(pp: Pseudopotential, configs: list[dict] | None = None) -> list[dict]
     for cfg in configs:
         ae_fixed, ps_fixed = dict(core_occ_ae), {}
         for l, n in cfg.items():
-            idx_ae = 1 if l == 0 else 0  # 2s is the 2nd s level; 2p the 1st p level
+            idx_ae = pp.valence_n[l] - l - 1  # e.g. 3s is the third s level
             ae_fixed[(0, l, idx_ae)] = n / 2
             ae_fixed[(1, l, idx_ae)] = n / 2
             ps_fixed[(0, l, 0)] = n / 2
@@ -262,7 +267,7 @@ def verify(pp: Pseudopotential, configs: list[dict] | None = None) -> list[dict]
         ps = RadialAtom(pp.Z, charge=int(round(pp.Z_val - ne_val)), grid=grid, v_external=pp.v_ion,
                         n_valence=pp.Z_val, occupations=ps_fixed).solve()
         rows.append({"config": cfg, "E_ae": ae.energy, "E_ps": ps.energy,
-                     "eps_ae": {l: _level(ae, l, 1 if l == 0 else 0) for l in cfg},
+                     "eps_ae": {l: _level(ae, l, pp.valence_n[l] - l - 1) for l in cfg},
                      "eps_ps": {l: _level(ps, l, 0) for l in cfg}})
     for row in rows:
         row["dE_ae"] = row["E_ae"] - rows[0]["E_ae"]
@@ -271,8 +276,12 @@ def verify(pp: Pseudopotential, configs: list[dict] | None = None) -> list[dict]
 
 
 def _core_occupations(pp: Pseudopotential) -> dict:
-    n_core_levels = int(round((pp.Z - pp.Z_val) / 2))  # first-row atoms: 1s² only
-    return {(0, 0, 0): 1.0, (1, 0, 0): 1.0} if n_core_levels == 1 else {}
+    """Full core subshells as fixed occupations {(spin, l, index): electrons}."""
+    occ = {}
+    for n, l in pp.core:
+        for spin in (0, 1):
+            occ[(spin, l, n - l - 1)] = float(2 * l + 1)
+    return occ
 
 
 def _level(res: AtomResult, l: int, index: int) -> float:

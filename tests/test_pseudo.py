@@ -13,7 +13,7 @@ from engine.simulation import Params, Simulation
 from engine.system import System
 
 
-@pytest.mark.parametrize("Z", [3, 6, 8, 10])
+@pytest.mark.parametrize("Z", [3, 6, 8, 10, 11, 13, 16, 18])
 def test_reference_eigenvalues_are_reproduced_exactly(Z):
     pp = pseudopotential(Z)
     row = verify(pp)[0]
@@ -21,11 +21,17 @@ def test_reference_eigenvalues_are_reproduced_exactly(Z):
         assert row["eps_ps"][l] == pytest.approx(row["eps_ae"][l], abs=2e-4)
 
 
-@pytest.mark.parametrize("Z", [5, 6, 7, 8, 9])
+@pytest.mark.parametrize("Z", [5, 6, 7, 8, 9, 12, 13, 14, 15, 16, 17])
 def test_transferable_to_ionised_and_excited_configurations(Z):
     """Excitation energies of the pseudo-atom track the all-electron atom."""
     for row in verify(pseudopotential(Z))[1:]:
         assert row["dE_ps"] == pytest.approx(row["dE_ae"], abs=2e-3)  # ≈ 0.05 eV
+
+
+def test_core_is_every_shell_below_the_outermost():
+    assert pseudopotential(8).core == [(1, 0)]
+    assert pseudopotential(13).core == [(1, 0), (2, 0), (2, 1)]
+    assert pseudopotential(13).Z_val == 3
 
 
 @pytest.mark.parametrize("Z,mult", [(6, 3), (8, 3)])

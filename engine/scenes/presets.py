@@ -117,6 +117,26 @@ PRESETS: list[dict] = [
         "reference": {"distances_A": [1.2075], "note": "experiment: triplet (paramagnetic)"},
         "mode": "relax",
     },
+    {
+        "id": "h2s", "name": "Hydrogen sulfide", "formula": "H₂S",
+        "blurb": "Sulfur sits right below oxygen. Is its angle the same as water's?",
+        "atoms": [(16, (0, 0, 0)), (1, (1.2, 0.5, 0)), (1, (-1.2, 0.5, 0))],
+        "reference": {"distances_A": [1.336, 1.336, 1.923], "angles_deg": [92.1], "note": "experiment"},
+        "mode": "relax",
+    },
+    {
+        "id": "nacl", "name": "Sodium chloride", "formula": "NaCl",
+        "blurb": "A metal and a halogen. Watch the density move from one atom to the other.",
+        "atoms": [(11, (-1.4, 0, 0)), (17, (1.4, 0, 0))], "reference": {"distances_A": [2.3609], "note": "experiment"},
+        "mode": "relax",
+    },
+    {
+        "id": "al2", "name": "Aluminium dimer", "formula": "Al₂",
+        "blurb": "Two aluminium atoms, all spins paired. Find the lowest spin.",
+        "atoms": [(13, (-1.5, 0, 0)), (13, (1.5, 0, 0))],
+        "reference": {"distances_A": [2.70], "note": "experiment: triplet ground state"},
+        "mode": "relax",
+    },
 ]
 
 

@@ -33,7 +33,7 @@ export class BuildRail {
         el("h2", {}, "Add a nucleus"),
         this.table,
         el("p", { class: "hint" },
-          "Hydrogen and helium are bare nuclei. Lithium to neon carry pseudopotentials the engine derived from its own all-electron atoms.")),
+          "Hydrogen and helium are bare nuclei. Lithium to argon carry pseudopotentials the engine derived from its own all-electron atoms.")),
       el("section", {},
         el("h2", {}, "Electrons"),
         el("div", { class: "field" },
@@ -78,6 +78,7 @@ export class BuildRail {
     if (byZ.get(1)) cells.push(cell(byZ.get(1)!, 1, 1));
     if (byZ.get(2)) cells.push(cell(byZ.get(2)!, 8, 1));
     for (let z = 3; z <= 10; z++) if (byZ.get(z)) cells.push(cell(byZ.get(z)!, z - 2, 2));
+    for (let z = 11; z <= 18; z++) if (byZ.get(z)) cells.push(cell(byZ.get(z)!, z - 10, 3));
     this.table.replaceChildren(...cells);
   }
 

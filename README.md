@@ -38,6 +38,9 @@ theory (LDA) is known to give; the gap to experiment belongs to the approximatio
 | Methane | 109.3–109.6° | 109.47° (tetrahedral) | started lopsided |
 | N₂ | 1.101 Å | 1.098 Å | started stretched |
 | O atom, O₂ | 2 unpaired spins each | triplet, paramagnetic | started with every spin paired |
+| H₂S | 91.8° | 92.1° | 13° flatter than water: the periodic trend emerges |
+| NaCl | 2.377 Å | 2.361 Å | ionic bond |
+| Al₂ | 2 unpaired spins, 2.65 Å | triplet, ~2.70 Å | started spin-paired |
 
 36 of 36 validation checks pass (38 minutes on an M4, `validation/results.json`).
 
@@ -67,7 +70,7 @@ interactions exact. The electron–electron term uses one of:
 relax to the nearest stable shape (FIRE) or move in real time with their real masses
 (Born–Oppenheimer molecular dynamics).
 
-**Core electrons** (`engine/atoms/`) of Li–Ne are handled by pseudopotentials that the engine
+**Core electrons** (`engine/atoms/`) of Li–Ar are handled by pseudopotentials that the engine
 **derives itself**:
 
 1. A spherical all-electron atom solver (Numerov on a log grid) computes each atom
@@ -100,8 +103,8 @@ tests/        pytest (fast: `uv run pytest -m "not slow"`, full: `uv run pytest`
 1. **Truth mode**: neural-network variational Monte Carlo (FermiNet/Psiformer-style) for
    small molecules. It converges to the exact many-electron answer and removes LDA's
    approximation where compute allows.
-2. **Heavier elements**: pseudopotentials beyond neon, with d-channel projectors and nonlinear
-   core corrections, up to aluminium and beyond.
+2. **Heavier elements**: beyond argon, with d-channel projectors, nonlinear core corrections
+   (which would also tighten sodium's 0.05 eV), and a relativistic atom solver for heavy elements.
 3. **Periodic crystals**: Bloch k-points, so aluminium's crystal structure, lattice constant and
    elastic constants can emerge.
 4. **Rung 3 (materials)**: train machine-learned interatomic potentials on rung-2 data, then
