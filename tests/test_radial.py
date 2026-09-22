@@ -8,7 +8,7 @@ from engine.core.units import HARTREE_EV
 
 
 def test_hydrogen_spectrum_is_exact():
-    g = RadialGrid()
+    g = RadialGrid(r_max=200.0)  # n = 5 orbitals reach ~2n² = 50 bohr
     for l in range(3):
         e, _ = radial_eigenstates(g, -1 / g.r, l, 3, 1.0)
         n = np.arange(l + 1, l + 4)
