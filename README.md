@@ -29,9 +29,9 @@ uv run matter-sim validate --part particles # just the particle rung (~1 min)
 ```
 
 The first launch builds the viewer (needs Node.js) and derives the decay tables (a few minutes,
-once). The first proton collision computes its parton–parton tables on every core (one to three
-hours, once) and fetches the proton's measured structure (0.5 MB). After that, everything is
-cached.
+once). The first proton collision fetches the proton's measured structure (0.5 MB) and computes
+870 parton–parton tables on every core (about 30 minutes on an M4, once). After that, everything
+is cached.
 
 ## The ladder of scales
 
@@ -64,11 +64,16 @@ loop corrections that level leaves out.
 | Lattice QCD plaquette at β = 6.0 | 0.5938 | 0.5937 | pure gauge |
 | Quark potential | rises linearly | confinement | string tension from Wilson loops |
 | Polyakov loop | jumps near β ≈ 5.7 | 5.69 | quark–gluon plasma transition |
+| pp → t t̄ at 13.6 TeV | 777 pb | ≈ 900 pb | partons measured, collision computed (leading order) |
+| pp → Z/γ* → μμ | 1.27 nb | ≈ 2.0 nb | leading order, |cos θ*| < 0.95 |
+| W⁺/W⁻ production ratio | 1.36 | ≈ 1.3 | because the proton is uud |
 
 ### The three particle tools
 
 - **Collider.** Choose beams (e⁺e⁻, μ⁺μ⁻, γγ, quarks, gluons, or protons at 13.6 TeV) and
-  collide them.
+  collide them. For protons, a trigger keeps only the rare collisions that make leptons, photons,
+  W, Z, top quarks or the Higgs, which is about 1 in 10⁵. It draws them from the exact conditional
+  distribution, the same way a real detector trigger selects its events.
   - Every final state is tried with amplitudes built from the vertices, so if the Lagrangian
     forbids an outcome, its rate comes out exactly zero.
   - Unstable particles decay by their computed branching ratios and lifetimes.

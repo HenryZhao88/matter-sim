@@ -45,7 +45,7 @@ export interface OutcomeRow {
 
 export type ColliderEvent =
   | { type: "collider.hello"; beams: BeamInfo[]; energies: number[]; particles: Record<string, ParticleMeta> }
-  | { type: "collider.outcomes"; beams: [string, string]; sqrt_s: number; total_pb: number; rows: OutcomeRow[] }
+  | { type: "collider.outcomes"; beams: [string, string]; sqrt_s: number; total_pb: number; rows: OutcomeRow[]; rare_pb?: number }
   | { type: "collider.events"; beams: [string, string]; sqrt_s: number; events: CEvent[] }
   | { type: "collider.scan_row"; beams: [string, string]; sqrt_s: number; total_pb: number; top: { final: [string, string]; pb: number }[] }
   | { type: "collider.scan_done"; beams: [string, string] }

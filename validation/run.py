@@ -116,6 +116,24 @@ def particles_section(quick: bool) -> None:
     record("particles", "σ(e⁺e⁻ → W⁺W⁻) at 200 GeV", s200, 17.0, "pb", "LEP2, tree level", 15 < s200 < 22)
     record("particles", "…and falls at 3 TeV (gauge cancellation)", s3000, "< σ(200)", "pb", ok=s3000 < s200)
 
+    from engine.particles.hadron import CACHE as HCACHE, HadronCollider
+    probe = HadronCollider.__new__(HadronCollider)
+    probe.sqrt_s = 13600.0
+    if all(probe._path(*j).exists() for j in HadronCollider.jobs(probe)):
+        section("Proton–proton at 13.6 TeV (partons measured, collisions computed, leading order)")
+        h = HadronCollider(13600.0)
+        h.build()
+        tab = {tuple(r["final"]): r["pb"] for r in h.summary(1000)}
+        get = lambda *n: tab.get(tuple(sorted(n)), 0.0)
+        tt = get("t", "t~")
+        record("protons", "σ(pp → t t̄)", tt, 900.0, "pb", "LO vs NNLO measurement", 400 < tt < 1200)
+        zmm = get("mu-", "mu+") / 1000
+        record("protons", "σ(pp → Z/γ* → μμ)", zmm, 2.0, "nb", "LO, |cos θ*| < 0.95", 0.8 < zmm < 2.5)
+        ratio = get("mu+", "nu_mu") / max(get("mu-", "nu_mu~"), 1e-9)
+        record("protons", "W⁺/W⁻ ratio", ratio, 1.3, "", "the proton is uud", 1.15 < ratio < 1.5)
+    else:
+        print("\n(Proton–proton checks skipped: parton tables not built yet. Collide protons once in the viewer.)")
+
     section("Real-time QED in one space dimension (exact)")
     _, it = run_scenario("pair_creation", N=14, mass=0.3, t_max=4.0, frames=21, strength=1.0)
     frames = list(it)

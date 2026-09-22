@@ -114,13 +114,14 @@ class ColliderWorker:
             h = self._protons(float(cmd["sqrt_s"]))
             self._pub(sanitize({
                 "type": "collider.outcomes", "beams": ["p", "p"], "sqrt_s": h.sqrt_s, "total_pb": h.sigma_hard_pb,
-                "rows": h.summary(12),
+                "rows": h.summary(400), "rare_pb": h.sigma_rare_pb,
             }))
         elif t == "collider.collide" and cmd["beams"] == ["p", "p"]:
             self._warmup()
             h = self._protons(float(cmd["sqrt_s"]))
             n = max(1, min(int(cmd.get("n", 1)), 200))
-            events = [h.generate(self._rng) for _ in range(n)]
+            trig = bool(cmd.get("trigger", False))
+            events = [h.generate(self._rng, trigger=trig) for _ in range(n)]
             self._pub(sanitize({"type": "collider.events", "beams": ["p", "p"], "sqrt_s": h.sqrt_s, "events": events}))
         elif t == "collider.select":
             self._warmup()

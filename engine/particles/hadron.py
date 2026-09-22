@@ -65,6 +65,11 @@ def _colour_neutral(final) -> bool:
     return all(species(x).colour == 1 for x in final)
 
 
+def is_rare(final) -> bool:
+    """What a trigger keeps: anything besides quarks and gluons (top quarks count: they decay)."""
+    return any(species(x).colour == 1 or x in ("t", "t~") for x in final)
+
+
 class HadronCollider:
     def __init__(self, sqrt_s: float = 13600.0, notify=None) -> None:
         self.sqrt_s = sqrt_s
@@ -209,6 +214,13 @@ class HadronCollider:
         self.cells = cells
         self.weights = np.array([c[0] for c in cells])
         self.sigma_hard_pb = float(self.weights.sum())
+        rare = []
+        for W, E, a, b, lo, hi in cells:
+            ch = self.partonic(canonical(a, b)[0], E)
+            tot = sum(v[0] for v in ch.values())
+            rare.append(W * sum(v[0] for c, v in ch.items() if is_rare(c)) / tot if tot > 0 else 0.0)
+        self.rare_weights = np.array(rare)
+        self.sigma_rare_pb = float(self.rare_weights.sum())
 
     def summary(self, top: int = 10) -> list[dict]:
         """Hard cross section split by what the collision makes (rough, from the grid)."""
@@ -223,30 +235,31 @@ class HadronCollider:
         rows = sorted(agg.items(), key=lambda kv: -kv[1])[:top]
         return [{"final": list(k), "pb": v, "share": v / self.sigma_hard_pb} for k, v in rows]
 
-    def generate(self, rng: np.random.Generator) -> dict:
-        k = int(rng.choice(len(self.cells), p=self.weights / self.weights.sum()))
+    def generate(self, rng: np.random.Generator, trigger: bool = False) -> dict:
+        """One hard collision. With ``trigger``, only collisions that make something besides
+        quarks and gluons, drawn from the exact conditional distribution (like a detector trigger)."""
+        w_cells = self.rare_weights if trigger else self.weights
+        k = int(rng.choice(len(self.cells), p=w_cells / w_cells.sum()))
         _, _, a, b, lo, hi = self.cells[k]
         E = math.exp(math.log(lo) + (math.log(hi) - math.log(lo)) * rng.random()) if hi > lo else lo
         s = self.sqrt_s ** 2
         tau = E * E / s
         ymax = -0.5 * math.log(tau)
-        # rapidity from the parton luminosity at this ŝ (rejection sampling)
-        best = None
-        for _ in range(200):
-            y = (2 * rng.random() - 1) * ymax
+        # rapidity y from the parton luminosity x₁f(x₁)·x₂f(x₂) at this ŝ, by rejection sampling
+        def lum(y):
             x1, x2 = math.sqrt(tau) * math.exp(y), math.sqrt(tau) * math.exp(-y)
             if x1 >= 1 or x2 >= 1:
-                continue
-            wgt = x1 * self.pdf.f(a, x1, E) * x2 * self.pdf.f(b, x2, E)
-            if best is None or rng.random() < 0.5:
-                best = (y, x1, x2, wgt)
-            if rng.random() * 2.0 < wgt / max(best[3], 1e-300):
-                best = (y, x1, x2, wgt)
+                return 0.0, x1, x2
+            return x1 * self.pdf.f(a, x1, E) * x2 * self.pdf.f(b, x2, E), x1, x2
+        peak = max(lum(y)[0] for y in np.linspace(-ymax, ymax, 64)) * 1.2
+        for _ in range(10000):
+            y = (2 * rng.random() - 1) * ymax
+            w, x1, x2 = lum(y)
+            if rng.random() * peak <= w:
                 break
-        y, x1, x2, _ = best
         key, swap, conj = canonical(a, b)
         chans = self.partonic(key, E)
-        names = list(chans)
+        names = [c for c in chans if is_rare(c)] if trigger else list(chans)
         w = np.array([chans[c][0] for c in names])
         pick = names[int(rng.choice(len(names), p=w / w.sum()))]
         row = chans[pick][1]
@@ -270,7 +283,7 @@ class HadronCollider:
         for sign, x in ((+1, x1), (-1, x2)):
             Er = (1 - x) * self.sqrt_s / 2
             remnants.append({"p": [Er, 0.0, 0.0, sign * Er], "x": x})
-        return {"beams": ["p", "p"], "sqrt_s": self.sqrt_s, "channel": [c, d], "partons": [a, b],
+        return {"beams": ["p", "p"], "sqrt_s": self.sqrt_s, "channel": [c, d], "partons": [a, b], "trigger": trigger,
                 "x": [x1, x2], "sqrt_shat": E, "sigma_total_pb": self.sigma_hard_pb,
                 "particles": [vars(p) for p in parts], "remnants": remnants}
 

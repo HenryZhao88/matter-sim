@@ -53,6 +53,14 @@ export class Collider {
   private scanNote = el("p", { class: "hint" });
   private barText = el("div", { class: "readout" });
   private particleInfo = el("section", { class: "particle-info" });
+  private scanSection = el("section", {});
+  private triggerBox = el("input", { type: "checkbox" });
+  private triggerField = el("label", { class: "check" }, this.triggerBox,
+    el("span", {}, "Trigger: keep only collisions that make leptons, photons, W, Z, top quarks or the Higgs"));
+  private triggerNote = el("p", { class: "hint" });
+  private showAll = el("button", { class: "quiet small" }, "Show all");
+  private allShown = false;
+  private totalPb = 0;
 
   constructor(
     left: HTMLElement,
@@ -69,10 +77,15 @@ export class Collider {
     this.collideBtn.onclick = () => this.collide(1);
     this.many.onclick = () => this.collide(50);
     this.scanBtn.onclick = () => this.startScan();
+    this.scanSection.append(el("h2", {}, "Rate against energy"), this.scanSvg,
+      el("div", { class: "spin-row" }, this.scanNote, this.scanBtn));
+    this.showAll.onclick = () => { this.allShown = !this.allShown; this.renderOutcomes(this.totalPb); };
+    this.triggerBox.onchange = () => { this.tally.clear(); this.collisions = 0; this.renderTally(); };
     left.append(
       el("section", {}, el("h2", {}, "Beams"), this.beamList, this.beamNote),
       el("section", {}, el("h2", {}, "Collision energy"), this.energyChips,
         el("p", { class: "hint" }, "Total energy of the two beams in their centre-of-mass frame, in GeV.")),
+      el("section", { class: "trigger" }, el("h2", {}, "Trigger"), this.triggerField, this.triggerNote),
       el("section", {}, el("h2", {}, "What goes in"),
         el("p", { class: "hint" },
           "One equation, the Standard Model Lagrangian, plus 18 measured constants such as the electron's mass and the strength of each force. Particles, charges, masses of the W and Z, decays and lifetimes are all computed from it.")),
@@ -83,10 +96,9 @@ export class Collider {
     right.append(
       el("section", {}, el("h2", {}, "This collision"), this.eventTitle, this.tree),
       this.particleInfo,
-      el("section", {}, el("h2", {}, "What these beams can make"), this.outcomeHead, this.outcomeTable),
+      el("section", {}, el("h2", {}, "What these beams can make"), this.outcomeHead, this.outcomeTable, this.showAll),
       el("section", {}, el("h2", {}, "Counted so far"), this.tallyTable),
-      el("section", {}, el("h2", {}, "Rate against energy"), this.scanSvg,
-        el("div", { class: "spin-row" }, this.scanNote, this.scanBtn)),
+      this.scanSection,
     );
     bar.append(el("div", { class: "run-group" }, this.collideBtn, this.many), el("div", { class: "run-group end" }, this.barText));
     this.renderLegend();
@@ -112,6 +124,9 @@ export class Collider {
         if (!this.isCurrent(e.beams, e.sqrt_s)) return;
         this.outcomes = e.rows;
         this.renderOutcomes(e.total_pb);
+        this.triggerNote.textContent = e.rare_pb
+          ? `Most collisions only make jets of quarks and gluons. The rest are ${pb(e.rare_pb)} out of ${pb(e.total_pb)}: about one in ${Math.round(e.total_pb / e.rare_pb).toLocaleString()}. Real detectors use triggers for the same reason. With it on, collisions are drawn from exactly that rarer share.`
+          : "";
         this.setBusy(false);
         break;
       case "collider.events":
@@ -174,6 +189,9 @@ export class Collider {
       }),
     );
     if (!Es.includes(this.energy)) this.energy = Es.includes(200) ? 200 : Es[0];
+    const protons = b.id === "pp";
+    this.scanSection.hidden = protons;
+    (this.triggerField.closest("section") as HTMLElement | null)?.toggleAttribute("hidden", !protons);
     this.beamNote.textContent = b.note;
     for (const x of this.beamList.children) x.setAttribute("aria-checked", String((x as HTMLElement).dataset.id === b.id));
     this.scan.clear();
@@ -198,7 +216,8 @@ export class Collider {
   private collide(n: number): void {
     if (!this.beam) return;
     this.setBusy(true);
-    this.send({ type: "collider.collide", beams: this.beam.pair, sqrt_s: this.energy, n });
+    this.send({ type: "collider.collide", beams: this.beam.pair, sqrt_s: this.energy, n,
+      trigger: this.beam.id === "pp" && this.triggerBox.checked });
   }
 
   private startScan(): void {
@@ -215,8 +234,9 @@ export class Collider {
       else b.removeAttribute("disabled");
     }
     if (!busy) this.progress.hidden = true;
+    const E = this.energy >= 1000 ? `${this.energy / 1000} TeV` : `${this.energy} GeV`;
     this.barText.textContent = this.beam
-      ? `${this.sym(this.beam.pair[0])} ${this.sym(this.beam.pair[1])} at ${this.energy} GeV. ${this.collisions} collisions.`
+      ? `${this.sym(this.beam.pair[0])} ${this.sym(this.beam.pair[1])} at ${E}. ${this.collisions} collisions.`
       : "";
   }
 
@@ -227,12 +247,17 @@ export class Collider {
 
   private renderOutcomes(total: number): void {
     const b = this.beam!;
+    this.totalPb = total;
+    const E = this.energy >= 1000 ? `${this.energy / 1000} TeV` : `${this.energy} GeV`;
     this.outcomeHead.textContent = this.outcomes.length
-      ? `${this.outcomes.length} possible outcomes at ${this.energy} GeV. Total ${pb(total)}.`
-      : `These beams cannot make anything at ${this.energy} GeV.`;
+      ? `${this.outcomes.length} possible outcomes at ${E}. Total ${pb(total)}.`
+      : `These beams cannot make anything at ${E}.`;
+    const shown = this.allShown ? this.outcomes : this.outcomes.slice(0, 10);
     this.outcomeTable.replaceChildren(
-      ...this.outcomes.slice(0, 10).map((r) => this.outcomeRow(`${this.sym(b.pair[0])} ${this.sym(b.pair[1])} → ${this.finalLabel(r.final)}`, r.share, pb(r.pb))),
+      ...shown.map((r) => this.outcomeRow(`${this.sym(b.pair[0])} ${this.sym(b.pair[1])} → ${this.finalLabel(r.final)}`, r.share, pb(r.pb))),
     );
+    this.showAll.hidden = this.outcomes.length <= 10;
+    this.showAll.textContent = this.allShown ? "Show fewer" : `Show all ${this.outcomes.length}`;
   }
 
   private outcomeRow(label: string, share: number, value: string): HTMLElement {
