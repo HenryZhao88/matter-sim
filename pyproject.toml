@@ -8,6 +8,7 @@ dependencies = [
     "scipy>=1.13",
     "mlx>=0.32",
     "aiohttp>=3.10",
+    "numba>=0.67.0",
 ]
 
 [project.scripts]
