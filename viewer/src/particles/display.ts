@@ -20,6 +20,7 @@ export const FAMILY_COLOUR: Record<string, string> = {
   gluon: "#f7d08a",
   boson: "#c9a7ff",
   higgs: "#ff8a7a",
+  hadron: "#b89a78",
   other: "#eaf2f5",
 };
 
@@ -95,6 +96,7 @@ export class EventDisplay {
     }
     const miss = this.missingMomentum(ev);
     if (miss) this.addMissing(miss);
+    for (const [k, r] of (ev.remnants ?? []).entries()) this.addRemnant(r.p, k);
     this.t0 = performance.now();
   }
 
@@ -175,6 +177,22 @@ export class EventDisplay {
     geo.setDrawRange(0, 0);
     this.event.add(line);
     return { line, points: pts };
+  }
+
+  /** What is left of each proton carries on down the beam pipe, still confined. */
+  private addRemnant(p: [number, number, number, number], k: number): void {
+    const dir = new THREE.Vector3(0, 0, Math.sign(p[3]) || 1);
+    const len = 4.2;
+    const cone = new THREE.Mesh(
+      new THREE.ConeGeometry(0.12, len, 20, 1, true),
+      new THREE.MeshBasicMaterial({ color: new THREE.Color(FAMILY_COLOUR.hadron), transparent: true, opacity: 0.12,
+        side: THREE.DoubleSide, depthWrite: false }),
+    );
+    cone.position.copy(dir.clone().multiplyScalar(len / 2));
+    cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().negate());
+    this.event.add(cone);
+    this.tracks.push({ line: new THREE.Line(), points: [], label: k === 0 ? "proton remnant" : "proton remnant",
+      end: dir.clone().multiplyScalar(len) });
   }
 
   private missingMomentum(ev: CEvent): THREE.Vector3 | null {

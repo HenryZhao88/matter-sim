@@ -106,7 +106,7 @@ export class Collider {
         this.energies = e.energies;
         this.ready = true;
         this.renderBeams();
-        this.selectBeam(this.beams[0]);
+        this.selectBeam(this.beams.find((b) => b.id === "ee") ?? this.beams[0]);
         break;
       case "collider.outcomes":
         if (!this.isCurrent(e.beams, e.sqrt_s)) return;
@@ -161,17 +161,19 @@ export class Collider {
         return btn;
       }),
     );
-    this.energyChips.replaceChildren(
-      ...this.energies.map((E) => {
-        const chip = el("button", { role: "radio", "data-e": String(E) }, `${E}`);
-        chip.onclick = () => this.selectEnergy(E);
-        return chip;
-      }),
-    );
   }
 
   private selectBeam(b: BeamInfo): void {
     this.beam = b;
+    const Es = b.energies ?? this.energies;
+    this.energyChips.replaceChildren(
+      ...Es.map((E) => {
+        const chip = el("button", { role: "radio", "data-e": String(E) }, E >= 1000 ? `${E / 1000} TeV` : `${E}`);
+        chip.onclick = () => this.selectEnergy(E);
+        return chip;
+      }),
+    );
+    if (!Es.includes(this.energy)) this.energy = Es.includes(200) ? 200 : Es[0];
     this.beamNote.textContent = b.note;
     for (const x of this.beamList.children) x.setAttribute("aria-checked", String((x as HTMLElement).dataset.id === b.id));
     this.scan.clear();
@@ -294,6 +296,10 @@ export class Collider {
       return li;
     };
     this.tree.replaceChildren(...(byParent.get(null) ?? []).map(node));
+    if (ev.partons && ev.x) {
+      this.tree.prepend(el("li", { class: "tree-partons hint" },
+        rich(`Inside the protons: ${this.sym(ev.partons[0])} (carrying ${num(100 * ev.x[0], 1)}% of proton 1) met ${this.sym(ev.partons[1])} (${num(100 * ev.x[1], 1)}% of proton 2) with ${num(ev.sqrt_shat ?? 0, 0)} GeV.`)));
+    }
   }
 
   private renderParticle(e: Extract<ColliderEvent, { type: "collider.particle" }>): void {

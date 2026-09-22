@@ -25,6 +25,8 @@ from .protocol import sanitize
 CACHE = Path(__file__).resolve().parents[1] / ".cache" / "collider"
 
 BEAMS = [
+    {"id": "pp", "pair": ["p", "p"], "label": "Proton + proton", "energies": [13600.0],
+     "note": "LHC energy. Protons are bags of quarks and gluons; which ones collide comes from the proton's measured structure (CT14). Everything after that is computed. Only hard collisions are shown: partons meeting with more than 50 GeV."},
     {"id": "ee", "pair": ["e-", "e+"], "label": "Electron + positron",
      "note": "Clean collisions: nothing inside the beams but the particles themselves."},
     {"id": "mumu", "pair": ["mu-", "mu+"], "label": "Muon + antimuon",
@@ -41,6 +43,7 @@ SCAN = [5, 10, 20, 35, 50, 65, 80, 86, 88, 89.5, 90.5, 91.19, 92, 93.5, 96, 100,
         170, 185, 200, 250, 300, 350, 400, 500, 700, 1000]
 
 DISPLAY = {  # symbol, family (display only)
+    "p": ("p", "hadron"),
     "e-": ("e⁻", "lepton"), "e+": ("e⁺", "lepton"), "mu-": ("μ⁻", "lepton"), "mu+": ("μ⁺", "lepton"),
     "tau-": ("τ⁻", "lepton"), "tau+": ("τ⁺", "lepton"),
     "nu_e": ("νₑ", "neutrino"), "nu_e~": ("ν̄ₑ", "neutrino"), "nu_mu": ("ν_μ", "neutrino"),
@@ -61,6 +64,7 @@ class ColliderWorker:
         self._thread = threading.Thread(target=self._loop, name="collider", daemon=True)
         self._stop = threading.Event()
         self._warm = False
+        self._hadron = None
 
     def start(self) -> None:
         self._thread.start()
@@ -105,6 +109,19 @@ class ColliderWorker:
             self._pub({"type": "collider.progress", "message": "Standard Model ready."})
         elif t == "collider.hello":
             self._pub(self._hello())
+        elif t == "collider.select" and cmd["beams"] == ["p", "p"]:
+            self._warmup()
+            h = self._protons(float(cmd["sqrt_s"]))
+            self._pub(sanitize({
+                "type": "collider.outcomes", "beams": ["p", "p"], "sqrt_s": h.sqrt_s, "total_pb": h.sigma_hard_pb,
+                "rows": h.summary(12),
+            }))
+        elif t == "collider.collide" and cmd["beams"] == ["p", "p"]:
+            self._warmup()
+            h = self._protons(float(cmd["sqrt_s"]))
+            n = max(1, min(int(cmd.get("n", 1)), 200))
+            events = [h.generate(self._rng) for _ in range(n)]
+            self._pub(sanitize({"type": "collider.events", "beams": ["p", "p"], "sqrt_s": h.sqrt_s, "events": events}))
         elif t == "collider.select":
             self._warmup()
             a, b = cmd["beams"]
@@ -141,6 +158,21 @@ class ColliderWorker:
             raise ValueError(f"unknown collider command {t}")
 
     # ---------------------------------------------------------------- pieces
+    def _protons(self, sqrt_s: float):
+        from engine.particles.hadron import HadronCollider
+        from engine.particles.pdf import ensure_downloaded
+        if self._hadron is not None and self._hadron.sqrt_s == sqrt_s:
+            return self._hadron
+        ensure_downloaded(self._say)
+        h = HadronCollider(sqrt_s)
+        todo = sum(1 for j in h.jobs() if not h._path(*j).exists())
+        if todo:
+            self._say(f"First proton collisions: computing {todo} parton–parton tables from the Standard Model "
+                      "on every core. This takes a while once, then it is instant.")
+        h.build(progress=lambda d, n: self._say(f"Parton–parton tables: {d} of {n}.") if d % 20 == 0 else None)
+        self._hadron = h
+        return h
+
     def _outcomes(self, a: str, b: str, E: float, quiet: bool = False):
         from engine.particles import events
         key = f"{a}_{b}_{E:.3f}".replace("~", "bar").replace("+", "p").replace("-", "m")
@@ -172,6 +204,8 @@ class ColliderWorker:
         from engine.particles.decays import UNSTABLE, branching_ratios, lifetime_seconds, total_width
         from engine.particles.events import is_confined
         from engine.particles.process import species
+        if name == "p":
+            return {"type": "collider.particle", "name": "p", "mass": 0.93827, "confined": True}
         sp = species(name)
         info = {"type": "collider.particle", "name": name, "mass": sp.mass, "charge": sp.charge,
                 "confined": bool(sp.colour > 1 and is_confined(name))}

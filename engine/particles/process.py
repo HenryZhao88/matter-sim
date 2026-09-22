@@ -189,5 +189,5 @@ def width_2body(parent: str, c: str, d: str, widths=None) -> float:
     amp = Amplitude(model(), [leg(parent, True), leg(c, False), leg(d, False)], widths)
     P = np.array([M, 0, 0, 0.0])
     p3, p4, pf = two_body(M, mc, md, 0.3, 0.7)          # isotropic after spin sum
-    m2 = float(np.sum(np.abs(amp.evaluate([P, p3, p4])) ** 2)) / _avg_factor((parent,))
+    m2 = float(np.sum(np.abs(amp.evaluate([P, p3, p4])) ** 2)) * amp.config_scale / _avg_factor((parent,))
     return m2 * pf / (8 * math.pi * M * M) / _identical_factor((c, d))

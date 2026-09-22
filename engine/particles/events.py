@@ -72,6 +72,30 @@ def _boost(p, beta):
 _TABLES: dict[tuple[str, str, float], tuple] = {}   # (beam, beam, √s) → outcome table
 
 
+def quantum_numbers(name: str) -> tuple[float, float, int, int, int]:
+    """(charge, baryon number, L_e, L_μ, L_τ) of a particle.
+
+    These are symmetries of the Standard Model Lagrangian: every vertex conserves them.
+    They are used only to skip final states whose amplitude would be exactly zero anyway;
+    tests/test_particles.py checks that such final states really do vanish.
+    """
+    sp = species(name)
+    B = 0.0
+    if sp.colour == 3:
+        B = 1 / 3 if sp.kind == "f" else -1 / 3
+    Ls = [0, 0, 0]
+    for k, fam in enumerate(("e", "mu", "tau")):
+        if sp.base in (fam, f"nu_{fam}"):
+            Ls[k] = 1 if sp.kind == "f" else -1
+    return (sp.charge, B, *Ls)
+
+
+def conserves(initial, final) -> bool:
+    qi = np.sum([quantum_numbers(x) for x in initial], axis=0)
+    qf = np.sum([quantum_numbers(x) for x in final], axis=0)
+    return bool(np.all(np.abs(qi - qf) < 1e-9))
+
+
 def outcomes(a: str, b: str, sqrt_s: float) -> tuple:
     """((c, d, σ pb, cos nodes, dσ/dcos), ...) for every open final state, largest first."""
     key = (a, b, float(sqrt_s))
@@ -80,9 +104,8 @@ def outcomes(a: str, b: str, sqrt_s: float) -> tuple:
     return _TABLES[key]
 
 
-def _compute_outcomes(a: str, b: str, sqrt_s: float) -> tuple:
+def _compute_outcomes(a: str, b: str, sqrt_s: float, n_cos: int = 24, max_configs: int = 2048) -> tuple:
     names = list(registry())
-    qa, qb = species(a).charge, species(b).charge
     out, seen = [], set()
     for i, c in enumerate(names):
         for d in names[i:]:
@@ -90,7 +113,7 @@ def _compute_outcomes(a: str, b: str, sqrt_s: float) -> tuple:
             if key in seen:
                 continue
             seen.add(key)
-            if abs(species(c).charge + species(d).charge - qa - qb) > 1e-9:
+            if not conserves((a, b), (c, d)):
                 continue
             if species(c).mass + species(d).mass >= sqrt_s:
                 continue
@@ -99,8 +122,8 @@ def _compute_outcomes(a: str, b: str, sqrt_s: float) -> tuple:
             if not _nonzero(a, b, c, d, sqrt_s):
                 continue
             coloured = sum(species(x).colour > 1 for x in (a, b, c, d))
-            sig, x, ds = cross_section(a, b, c, d, sqrt_s, widths=_propagator_widths(), n_cos=24,
-                                       cos_max=ACCEPTANCE, max_configs=2048 if coloured >= 3 else None)
+            sig, x, ds = cross_section(a, b, c, d, sqrt_s, widths=_propagator_widths(), n_cos=n_cos,
+                                       cos_max=ACCEPTANCE, max_configs=max_configs if coloured >= 3 else None)
             if sig > 1e-9:
                 out.append((c, d, sig, tuple(x), tuple(ds)))
     out.sort(key=lambda r: -r[2])
@@ -119,7 +142,7 @@ def _nonzero(a, b, c, d, sqrt_s) -> bool:
     from .amplitudes import Amplitude
     from .process import beams, leg, model
     amp = Amplitude(model(), [leg(a, True), leg(b, True), leg(c, False), leg(d, False)])
-    amp.max_configs = 256
+    amp.max_configs = 48
     p1, p2, _ = beams(sqrt_s, species(a).mass, species(b).mass)
     p3, p4, _ = two_body(sqrt_s, species(c).mass, species(d).mass, 0.3718, 1.234)
     return bool(np.any(np.abs(amp.evaluate([p1, p2, p3, p4])) > 1e-14))

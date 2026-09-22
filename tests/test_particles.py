@@ -35,7 +35,7 @@ def _m2(names, rs=100.0, ct=0.3):
     A = Amplitude(model(), legs)
     p1, p2, _ = beams(rs, 0, 0)
     p3, p4, _ = two_body(rs, 0, 0, ct, 0.4)
-    M2 = float(np.sum(np.abs(A.evaluate([p1, p2, p3, p4])) ** 2)) / _avg_factor(names[:2])
+    M2 = float(np.sum(np.abs(A.evaluate([p1, p2, p3, p4])) ** 2)) * A.config_scale / _avg_factor(names[:2])
     s, t, u = rs * rs, -rs * rs / 2 * (1 - ct), -rs * rs / 2 * (1 + ct)
     return M2, s, t, u
 
@@ -96,3 +96,12 @@ def test_r_ratio_counts_quark_colours():
     had = sum(r[2] for r in tab if r[0].rstrip("~") in ("u", "d", "s", "c", "b"))
     mumu = next(r[2] for r in tab if {r[0], r[1]} == {"mu-", "mu+"})
     assert had / mumu == pytest.approx(3.58, abs=0.08)     # 11/3 with the b-quark threshold
+
+
+def test_conservation_filter_only_skips_true_zeros():
+    """Final states the quantum-number filter skips really have zero amplitude."""
+    from engine.particles.events import _nonzero, conserves
+    for final in [("e-", "mu+"), ("u", "e+"), ("d~", "g"), ("nu_e", "nu_mu~")]:
+        assert not conserves(("e-", "e+"), final)
+        assert not _nonzero("e-", "e+", final[0], final[1], 200.0)
+    assert conserves(("u", "d~"), ("W+", "g"))

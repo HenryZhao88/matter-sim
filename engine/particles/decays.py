@@ -174,7 +174,7 @@ def width_3body(parent: str, products, n_points: int = 3000, seed: int = 1) -> f
     if not pts:
         return 0.0
     P = np.array([M, 0, 0, 0.0])
-    m2 = [float(np.sum(np.abs(amp.evaluate([P] + mom)) ** 2)) for mom in pts]
+    m2 = [float(np.sum(np.abs(amp.evaluate([P] + mom)) ** 2)) * amp.config_scale for mom in pts]
     avg = float(np.mean(m2)) / _avg_factor((parent,))
     # dΓ = |M|² / (256 π³ M³) ds12 ds23
     return avg * area / (256 * math.pi ** 3 * M ** 3) / _identical_factor(products)

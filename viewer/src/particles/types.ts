@@ -23,6 +23,10 @@ export interface CEvent {
   sigma_pb?: number;
   sigma_total_pb: number;
   particles: CParticle[];
+  partons?: [string, string];
+  x?: [number, number];
+  sqrt_shat?: number;
+  remnants?: { p: [number, number, number, number]; x: number }[];
 }
 
 export interface BeamInfo {
@@ -30,6 +34,7 @@ export interface BeamInfo {
   pair: [string, string];
   label: string;
   note: string;
+  energies?: number[];
 }
 
 export interface OutcomeRow {

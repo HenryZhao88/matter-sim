@@ -225,15 +225,26 @@ class Amplitude:
 
     def _batch(self, momenta):
         per_leg = [external_states(self.m, leg, p) for leg, p in zip(self.legs, momenta)]
+        # Colour symmetry: the colour-summed |M|² is SU(3)-invariant, so the colour of one
+        # coloured particle can be fixed and the sum multiplied by its number of colours
+        # (Schur's lemma). Exact, and it divides the work by 3 or 8.
+        fixed_factor = 1.0
+        for i, leg in enumerate(self.legs):
+            ncol = len(leg.states)
+            if ncol in (3, 8):
+                per_spin = len(per_leg[i]) // ncol
+                per_leg[i] = per_leg[i][:per_spin]
+                fixed_factor = float(ncol)
+                break
         sizes = [len(x) for x in per_leg]
         total = int(np.prod(sizes))
         if self.max_configs is not None and total > self.max_configs:
             # Unbiased estimate of the spin/colour sum from a uniform random subset.
             combos = [tuple(int(self.rng.integers(k)) for k in sizes) for _ in range(self.max_configs)]
-            self.config_scale = total / self.max_configs
+            self.config_scale = fixed_factor * total / self.max_configs
         else:
             combos = list(itertools.product(*[range(k) for k in sizes]))
-            self.config_scale = 1.0
+            self.config_scale = fixed_factor
         B = len(combos)
         ext = []
         for i, states in enumerate(per_leg):
