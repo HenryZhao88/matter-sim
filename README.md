@@ -65,7 +65,7 @@ loop corrections that level leaves out.
 | Quark potential | rises linearly | confinement | string tension from Wilson loops |
 | Polyakov loop | jumps near β ≈ 5.7 | 5.69 | quark–gluon plasma transition |
 | pp → t t̄ at 13.6 TeV | 777 pb | ≈ 900 pb | partons measured, collision computed (leading order) |
-| pp → Z/γ* → μμ | 1.27 nb | ≈ 2.0 nb | leading order, |cos θ*| < 0.95 |
+| pp → Z/γ* → μμ | 1.27 nb | ≈ 2.0 nb | leading order, scattering angle cut at cos θ* = ±0.95 |
 | W⁺/W⁻ production ratio | 1.36 | ≈ 1.3 | because the proton is uud |
 
 ### The three particle tools
