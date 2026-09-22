@@ -12,6 +12,8 @@ import { type RenderMode, Viewport } from "./scene/viewport";
 import type { Hello, PresetInfo, ServerEvent, Snapshot, Status } from "./types";
 import { BuildRail } from "./ui/build";
 import { Collider } from "./particles/collider";
+import { LatticeQCD } from "./particles/qcd";
+import { Universe } from "./particles/universe";
 import type { ColliderEvent } from "./particles/types";
 import { renderLadder, type Workspace } from "./ui/ladder";
 import { MeasureRail } from "./ui/measure";
@@ -25,7 +27,7 @@ let snap: Snapshot | null = null;
 
 const link = new Link(onEvent, onSnapshot, (up) => {
   $("offline").hidden = up;
-  if (up && document.body.dataset.workspace === "particles") collider.activate();
+  if (up && document.body.dataset.workspace === "particles") { collider.activate(); universe.activate(); }
 });
 const send = (cmd: Record<string, unknown>) => link.send(cmd);
 
@@ -35,14 +37,46 @@ const measure = new MeasureRail($("measure"));
 const runbar = new RunBar($("runbar"), send);
 buildViewControls($("view-controls"));
 
-const collider = new Collider($("p-left"), $("p-right"), $("p-bar"), $("p-view") as HTMLCanvasElement,
-  $("p-labels"), $("p-legend"), $("p-progress"), $("p-empty"), send);
+// ---- particle workspace: three tools sharing the rails
+type Tool = "collider" | "universe" | "qcd";
+const toolBoxes = {} as Record<Tool, { left: HTMLElement; right: HTMLElement; bar: HTMLElement; stage: HTMLElement }>;
+const tabs = el("div", { class: "segmented tool-tabs", role: "tablist", "aria-label": "Particle tools" });
+$("p-left").append(tabs);
+for (const t of ["collider", "universe", "qcd"] as Tool[]) {
+  const box = { left: el("div", { class: "tool" }), right: el("div", { class: "tool" }), bar: el("div", { class: "tool tool-bar" }),
+    stage: $(`${t}-stage`) };
+  $("p-left").append(box.left);
+  $("p-right").append(box.right);
+  $("p-bar").append(box.bar);
+  toolBoxes[t] = box;
+}
+const collider = new Collider(toolBoxes.collider.left, toolBoxes.collider.right, toolBoxes.collider.bar,
+  $("p-view") as HTMLCanvasElement, $("p-labels"), $("p-legend"), $("p-progress"), $("p-empty"), send);
+const universe = new Universe(toolBoxes.universe.left, toolBoxes.universe.stage, toolBoxes.universe.right,
+  toolBoxes.universe.bar, send);
+const qcd = new LatticeQCD(toolBoxes.qcd.left, toolBoxes.qcd.stage, toolBoxes.qcd.right, toolBoxes.qcd.bar, send);
+const TOOL_NAMES: Record<Tool, string> = { collider: "Collider", universe: "1D world", qcd: "Lattice QCD" };
+let tool: Tool = "collider";
+function setTool(t: Tool): void {
+  tool = t;
+  for (const [k, box] of Object.entries(toolBoxes) as [Tool, (typeof toolBoxes)[Tool]][]) {
+    for (const node of [box.left, box.right, box.bar, box.stage]) node.hidden = k !== t;
+  }
+  tabs.replaceChildren(...(Object.keys(TOOL_NAMES) as Tool[]).map((k) => {
+    const b = el("button", { role: "tab", "aria-selected": String(k === t), "aria-checked": String(k === t) }, TOOL_NAMES[k]);
+    b.onclick = () => setTool(k);
+    return b;
+  }));
+  if (t === "collider") collider.activate();
+  if (t === "universe") universe.activate();
+}
+setTool("collider");
 
 function setWorkspace(w: Workspace): void {
   document.body.dataset.workspace = w;
   renderLadder($("ladder"), w, setWorkspace);
   try { localStorage.setItem("workspace", w); } catch { /* storage may be unavailable */ }
-  if (w === "particles") collider.activate();
+  if (w === "particles") setTool(tool);
 }
 let savedWorkspace: Workspace = "atoms";
 try { if (localStorage.getItem("workspace") === "particles") savedWorkspace = "particles"; } catch { /* ignore */ }
@@ -59,6 +93,14 @@ function currentPreset(): PresetInfo | null {
 function onEvent(e: ServerEvent | ColliderEvent): void {
   if (e.type.startsWith("collider.")) {
     collider.onEvent(e as ColliderEvent);
+    return;
+  }
+  if (e.type.startsWith("lattice.")) {
+    universe.onEvent(e as never);
+    return;
+  }
+  if (e.type.startsWith("qcd.")) {
+    qcd.onEvent(e as never);
     return;
   }
   e = e as ServerEvent;

@@ -147,6 +147,8 @@ button.rung-btn:hover .rung-name { color: var(--paper); text-decoration: underli
   cursor: pointer;
 }
 .preset:hover { background: var(--pane); color: var(--paper); }
+.preset.single { grid-template-columns: 1fr; }
+.preset.single[aria-checked="true"] { background: var(--pane-raised); color: var(--paper); }
 .preset[aria-pressed="true"] { background: var(--pane-raised); color: var(--paper); }
 .preset-group {
   margin: var(--s3) 0 2px;
@@ -454,3 +456,30 @@ body[data-workspace="particles"] #runbar { display: none; }
 }
 .p-empty p:last-child { max-width: 46ch; margin: 0 auto; }
 .particle-info:empty { display: none; }
+
+/* --------------------------------------------------- particle tools */
+.tool-tabs { display: flex; width: 100%; margin-bottom: var(--s4); }
+.tool-tabs button { flex: 1; padding: 6px 4px; font-size: 12px; white-space: nowrap; }
+.tool-tabs button[aria-selected="true"] { background: var(--pane-raised); color: var(--paper); box-shadow: inset 0 0 0 1px var(--rule); }
+.tool-bar { display: contents; }
+.tool-bar[hidden] { display: none; }
+.tool > section + section, .tool > section:not(:first-child) { margin-top: var(--s5); padding-top: var(--s4); border-top: 1px solid var(--rule); }
+.tool-stage { position: absolute; inset: 0; }
+.u-panels { position: absolute; inset: var(--s5) var(--s5) 56px; display: grid; grid-template-columns: 1fr 1fr; gap: var(--s5); }
+.u-panel { margin: 0; display: grid; grid-template-rows: 1fr auto; gap: var(--s2); min-height: 0; }
+.u-canvas { width: 100%; height: 100%; display: block; border: 1px solid var(--rule); border-radius: 4px; }
+.u-panel figcaption { color: var(--muted); font-size: 12px; }
+.u-key.plus { color: var(--up); }
+.u-key.minus { color: var(--down); }
+.u-axis-note { position: absolute; left: var(--s5); bottom: var(--s4); margin: 0; color: var(--faint); font-size: 12px; }
+.q-wrap { position: absolute; inset: var(--s5) var(--s5) 56px; display: grid; place-items: center; }
+.q-main { width: min(100%, 760px); }
+.q-chart { width: 100%; height: auto; display: block; }
+.q-chart .axis { stroke: var(--rule); }
+.q-chart .tick { fill: var(--faint); font-size: 12px; }
+.q-chart .q-label { fill: var(--muted); font-size: 13px; }
+.q-chart .q-fit { fill: none; stroke: var(--paper); stroke-width: 1.5; }
+.q-chart .q-linear { fill: none; stroke: var(--amber); stroke-width: 1.2; stroke-dasharray: 5 5; }
+.q-chart .q-dot { fill: var(--amber); }
+.q-chart .q-err { stroke: var(--amber); stroke-width: 1.2; }
+.q-wrap .u-axis-note { position: static; margin-top: var(--s3); max-width: 70ch; text-align: center; }

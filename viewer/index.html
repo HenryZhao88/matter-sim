@@ -29,14 +29,18 @@
       <footer class="runbar" id="runbar"></footer>
       <aside class="rail rail-build particles-only" id="p-left" aria-label="Collider controls"></aside>
       <main class="stage particles-only" id="p-stage">
-        <canvas id="p-view"></canvas>
-        <div class="overlay p-labels" id="p-labels" aria-hidden="true"></div>
-        <div class="overlay p-legend" id="p-legend"></div>
-        <div class="overlay progress" id="p-progress" hidden></div>
-        <div class="overlay p-empty" id="p-empty">
-          <p class="offline-title">Pick two beams and collide them</p>
-          <p>Every particle that comes out is computed from the Standard Model Lagrangian. Nothing about which particles exist is written into the code.</p>
+        <div class="tool-stage" id="collider-stage">
+          <canvas id="p-view"></canvas>
+          <div class="overlay p-labels" id="p-labels" aria-hidden="true"></div>
+          <div class="overlay p-legend" id="p-legend"></div>
+          <div class="overlay progress" id="p-progress" hidden></div>
+          <div class="overlay p-empty" id="p-empty">
+            <p class="offline-title">Pick two beams and collide them</p>
+            <p>Every particle that comes out is computed from the Standard Model Lagrangian. Nothing about which particles exist is written into the code.</p>
+          </div>
         </div>
+        <div class="tool-stage" id="universe-stage" hidden></div>
+        <div class="tool-stage" id="qcd-stage" hidden></div>
       </main>
       <aside class="rail rail-measure particles-only" id="p-right" aria-label="What happened"></aside>
       <footer class="runbar particles-only" id="p-bar"></footer>

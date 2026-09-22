@@ -10,6 +10,7 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
+from .lattice import LatticeWorker
 from .particles import ColliderWorker
 from .session import Session
 
@@ -48,13 +49,17 @@ def create_app(start_engine: bool = True) -> web.Application:
         app_["session"] = session
         collider = ColliderWorker(pub_json)
         app_["collider"] = collider
+        lattice = LatticeWorker(pub_json)
+        app_["lattice"] = lattice
         if start_engine:
             session.start()
             collider.start()
+            lattice.start()
 
     async def on_cleanup(app_):
         app_["session"].stop()
         app_["collider"].stop()
+        app_["lattice"].stop()
 
     async def ws_handler(request):
         ws = web.WebSocketResponse(max_msg_size=0, heartbeat=20)
@@ -70,8 +75,11 @@ def create_app(start_engine: bool = True) -> web.Application:
             if msg.type == WSMsgType.TEXT:
                 try:
                     cmd = json.loads(msg.data)
-                    if str(cmd.get("type", "")).startswith("collider."):
+                    kind = str(cmd.get("type", ""))
+                    if kind.startswith("collider."):
                         request.app["collider"].submit(cmd)
+                    elif kind.startswith(("lattice.", "qcd.")):
+                        request.app["lattice"].submit(cmd)
                     else:
                         session.submit(cmd)
                 except json.JSONDecodeError:
