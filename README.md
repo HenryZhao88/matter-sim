@@ -93,7 +93,6 @@ server/       engine thread + WebSocket streaming
 viewer/       TypeScript + three.js viewer (cyanotype density rendering, measurement rails)
 validation/   the experiment-vs-simulation checks
 tests/        pytest (fast: `uv run pytest -m "not slow"`, full: `uv run pytest`)
-legacy/       the original project, untouched
 ```
 
 ## Roadmap

@@ -1,6 +1,0 @@
-glfw
-PyOpenGL
-numpy
-scipy
-cupy
-imageio
