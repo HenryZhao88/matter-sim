@@ -66,14 +66,17 @@ class Simulation:
         self._build()
 
     # ----------------------------------------------------------- building
+    BOX_SLACK = 2.0  # bohr of room to move before the box must be rebuilt
+
     def box_size(self) -> float:
+        """Smallest box that keeps ``margin`` of vacuum around every nucleus."""
         P = self.system.positions
         extent = float(np.max(np.abs(P))) if len(P) else 0.0
         return max(12.0, 2 * (extent + self.params.margin))
 
     def _build(self) -> None:
         p = self.params
-        self.grid = Grid(self.box_size(), p.h, get_backend(p.backend))
+        self.grid = Grid(self.box_size() + self.BOX_SLACK, p.h, get_backend(p.backend))
         self.solver = SCFSolver(self.grid, self.system, functional=p.functional, T_e=p.T_e)
         self.fire = FIRE()
         self.md = VelocityVerlet(self.system.masses, dt=p.dt,
@@ -110,7 +113,7 @@ class Simulation:
         """Place nuclei (e.g. user drag). Rebuilds the box if they leave it."""
         positions = np.asarray(positions, dtype=float).reshape(-1, 3)
         self.system.positions = positions
-        if self.box_size() > self.grid.L + 1e-9 or self.box_size() < 0.75 * self.grid.L:
+        if self.box_size() > self.grid.L or self.box_size() < 0.7 * self.grid.L:
             self._build()
         else:
             self.solver.set_positions(positions)
@@ -166,10 +169,13 @@ class Simulation:
             v = self.md.half_kick(v, self.forces)
             sysm.velocities = self.md.thermostat(v)
             self.time_au += self.md.dt
-        # Keep the molecule inside its vacuum box.
-        if self.box_size() > self.grid.L + 1e-9:
+        # Keep the molecule inside its vacuum box (rebuilds only when it truly outgrows it).
+        if self.box_size() > self.grid.L:
+            relaxed, trace = self.relaxed, self.energy_trace
             self.move_nuclei(sysm.positions - sysm.positions.mean(axis=0))
             self._solve()
+            self.energy_trace = trace
+            self.relaxed = relaxed
         self.step_count += 1
         self.energy_trace.append(self.total_energy)
         self.energy_trace = self.energy_trace[-400:]
