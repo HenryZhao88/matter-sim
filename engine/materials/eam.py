@@ -116,11 +116,16 @@ def energy_forces(model: EAM, cell, positions):
 
 
 # ------------------------------------------------------------------ fitting (MLX autodiff)
-def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=None) -> EAM:
+def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=None,
+        e_scale_eV: float | None = 0.3) -> EAM:
     """configs: list of dicts {cell, positions, energy, forces} (Hartree, bohr).
 
     All configurations are packed into one graph (atoms numbered globally, energies summed
-    per configuration), so each training step is a handful of GPU kernels."""
+    per configuration), so each training step is a handful of GPU kernels.
+
+    ``e_scale_eV`` weights each configuration by 1 / (1 + (ΔE / e_scale)²), ΔE its energy per
+    atom above the lowest one: the potential should be most accurate where the metal actually
+    spends its time (solid and liquid near melting lie within a few tenths of an eV)."""
     import mlx.core as mx
     import mlx.optimizers as optim
 
@@ -144,6 +149,10 @@ def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=No
     E_t = mx.array((np.array(E_ref) - e_mean).astype(np.float32))
     F_t = f32(F_ref)
     n_atoms, n_cfg = off, len(configs)
+    dE = (np.array(E_ref) - min(E_ref)) * 27.211386
+    w_np = np.ones(n_cfg) if e_scale_eV is None else 1 / (1 + (dE / e_scale_eV) ** 2)
+    w_cfg = mx.array((w_np / w_np.mean()).astype(np.float32))
+    w_atom = w_cfg[cfg][:, None]
 
     rng = np.random.default_rng(seed)
     params = {"a": mx.array(rng.normal(0, 1e-3, N_BASIS).astype(np.float32)),
@@ -165,7 +174,7 @@ def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=No
 
     def loss_fn(p):
         E, F = predict(p)
-        return mx.mean((E - E_t) ** 2) * 1e4 + w_force * mx.mean((F - F_t) ** 2) * 1e2
+        return mx.mean(w_cfg * (E - E_t) ** 2) * 1e4 + w_force * mx.mean(w_atom * (F - F_t) ** 2) * 1e2
 
     opt = optim.Adam(learning_rate=3e-3)
     step = mx.value_and_grad(loss_fn)
@@ -181,3 +190,49 @@ def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=No
             opt.learning_rate = 3e-4
     to_np = lambda x: np.array(x, dtype=np.float64)
     return EAM(to_np(params["a"]), to_np(params["b"]), to_np(params["c"]), float(to_np(params["e0"])[0]) + e_mean)
+
+
+def refine(model: EAM, configs, w_force: float = 30.0, e_scale_eV: float | None = 0.3, log=None) -> EAM:
+    """Polish a fit in float64 with Levenberg–Marquardt least squares (29 parameters: small
+    enough for exact second-order convergence, which a stochastic optimiser does not reach)."""
+    from scipy.optimize import least_squares
+
+    pre = []
+    E_ref = []
+    for c in configs:
+        I, J, D = pairs_with_images(c["cell"], c["positions"])
+        r = np.linalg.norm(D, axis=1)
+        pre.append((len(c["positions"]), I, J, basis(r), basis_deriv(r), D / r[:, None], np.asarray(c["forces"])))
+        E_ref.append(float(c["energy"]) / len(c["positions"]))
+    E_ref = np.array(E_ref)
+    dE = (E_ref - E_ref.min()) * 27.211386
+    w = np.ones(len(configs)) if e_scale_eV is None else 1 / (1 + (dE / e_scale_eV) ** 2)
+    w = w / w.mean()
+    na, nb = N_BASIS, N_BASIS
+
+    def unpack(x):
+        return x[:na], x[na:na + nb], x[na + nb:na + nb + 4], x[-1]
+
+    def residuals(x):
+        a, b, cc, e0 = unpack(x)
+        out = []
+        for k, (n, I, J, B, dB, U, Fr) in enumerate(pre):
+            rho = np.maximum(np.bincount(I, B @ b, n), 1e-10)
+            Femb = cc[0] * np.sqrt(rho) + cc[1] * rho + cc[2] * rho ** 2 + cc[3] * rho ** 3
+            dF = 0.5 * cc[0] / np.sqrt(rho) + cc[1] + 2 * cc[2] * rho + 3 * cc[3] * rho ** 2
+            E = (Femb.sum() + 0.5 * (B @ a).sum()) / n + e0
+            dEdr = 0.5 * (dB @ a) + 0.5 * (dF[I] + dF[J]) * (dB @ b)
+            vec = dEdr[:, None] * U
+            F = np.zeros((n, 3))
+            np.add.at(F, I, vec)
+            np.add.at(F, J, -vec)
+            out.append([np.sqrt(w[k]) * (E - E_ref[k]) * 100.0])
+            out.append(np.sqrt(w[k] * w_force / (3 * n)) * (F - Fr).ravel() * 10.0)
+        return np.concatenate([np.ravel(o) for o in out])
+
+    x0 = np.concatenate([model.a, model.b, model.c, [model.e0]])
+    res = least_squares(residuals, x0, method="lm", max_nfev=4000, x_scale="jac")
+    if log:
+        log(f"least squares: cost {res.cost:.4g} after {res.nfev} evaluations ({res.message})")
+    a, b, cc, e0 = unpack(res.x)
+    return EAM(a, b, cc, float(e0))

@@ -133,9 +133,10 @@ class CrystalResult:
 
 class PeriodicDFT:
     def __init__(self, crystal: Crystal, h: float = 0.3, kmesh: int | tuple = 6, T_e: float = 0.005,
-                 symmetry: bool = True, extra_bands: int = 6) -> None:
+                 symmetry: bool = True, extra_bands: int = 6, smearing: str = "fd") -> None:
         self.c = crystal
         self.T_e = T_e
+        self.smearing = smearing
         self.N = tuple(fft_friendly(math.ceil(L / h)) for L in crystal.cell)
         self.Ntot = int(np.prod(self.N))
         self.dV = crystal.volume / self.Ntot
@@ -263,7 +264,7 @@ class PeriodicDFT:
                 B, _, E, _ = projs[ik]
                 lam, U[ik] = self._eig(k, Veff, B, E, U[ik], 30 if it == 1 else 5)
                 evals.append(lam)
-            occ, mu, S = fermi_all(evals, self.wk, ne, self.T_e)
+            occ, mu, S = fermi_all(evals, self.wk, ne, self.T_e, self.smearing)
             rho_out = np.zeros(self.N)
             for ik in range(nk):
                 dens = np.sum(occ[ik][:, None] * np.abs(U[ik]) ** 2, axis=0).reshape(self.N)
@@ -396,9 +397,34 @@ class PeriodicDFT:
 
 
 # ------------------------------------------------------------------ helpers
-def fermi_all(evals, wk, ne, T):
-    """Occupations (0..1 per spin state) with one chemical potential across all k."""
+def fermi_all(evals, wk, ne, T, smearing: str = "fd"):
+    """Occupations (0..1 per spin state) with one chemical potential across all k.
+
+    ``smearing`` "fd": Fermi–Dirac at temperature T (physical electronic temperature).
+    "mp": first-order Methfessel–Paxton with width T — a numerical device for metals whose
+    energy converges with k-points far faster and sits within ~σ⁴ of the zero-width answer."""
     flat = np.concatenate(evals)
+    if smearing == "mp":
+        from scipy.special import erfc
+
+        def f_mp(e, mu):
+            x = (e - mu) / T
+            return 0.5 * erfc(x) - x * np.exp(-x * x) / (2 * math.sqrt(math.pi))
+
+        lo, hi = flat.min() - 1, flat.max() + 1
+        for _ in range(200):
+            mu = 0.5 * (lo + hi)
+            if sum(2 * w * np.sum(f_mp(e, mu)) for e, w in zip(evals, wk)) > ne:
+                hi = mu
+            else:
+                lo = mu
+        occ = [f_mp(e, mu) for e in evals]
+        # generalised entropy: −T S = Σ 2 w σ · ½ A₁ H₂(x) e^{−x²},  A₁ = −1/(4√π), H₂ = 4x² − 2
+        S = 0.0
+        for e, w in zip(evals, wk):
+            x = (e - mu) / T
+            S -= 2 * w * float(np.sum(0.5 * (-1 / (4 * math.sqrt(math.pi))) * (4 * x * x - 2) * np.exp(-x * x)))
+        return occ, mu, S
 
     def count(mu):
         return sum(2 * w * np.sum(0.5 * (1 - np.tanh((e - mu) / (2 * T)))) for e, w in zip(evals, wk))

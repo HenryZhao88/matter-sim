@@ -21,7 +21,9 @@ import numpy as np
 from ..crystal.periodic import Crystal, PeriodicDFT, cubic
 
 CACHE = Path(__file__).resolve().parents[2] / ".cache" / "materials"
-K_SPACING = 26.0    # bohr: k-mesh n ≈ K_SPACING / L along each axis
+K_SPACING = 45.0    # bohr: k-mesh n ≈ K_SPACING / L along each axis (≈ 7 meV/atom converged, uniform
+                    # across cells; 26 bohr left ~30 meV/atom errors that differed from cell to cell)
+T_E = 0.01          # Ha, Fermi–Dirac smearing of the labels
 
 
 def _kmesh(cell):
@@ -31,12 +33,12 @@ def _kmesh(cell):
 def label(conf: dict) -> dict:
     """Run DFT on one configuration (cached by content hash)."""
     key = hashlib.sha1(pickle.dumps((np.round(conf["cell"], 6).tolist(), conf["charges"],
-                                     np.round(conf["positions"], 6).tolist()))).hexdigest()[:16]
+                                     np.round(conf["positions"], 6).tolist(), K_SPACING, T_E))).hexdigest()[:16]
     path = CACHE / "dft" / f"{key}.pkl"
     if path.exists():
         return pickle.loads(path.read_bytes())
     c = Crystal(conf["cell"], conf["charges"], conf["positions"])
-    r = PeriodicDFT(c, h=0.3, kmesh=_kmesh(c.cell), symmetry=False).run(forces=True)
+    r = PeriodicDFT(c, h=0.3, kmesh=_kmesh(c.cell), T_e=T_E, symmetry=False).run(forces=True)
     out = {"cell": c.cell, "charges": c.charges, "positions": c.positions,
            "energy": r.free_energy, "forces": r.forces, "converged": r.converged, "tag": conf.get("tag", "")}
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -87,6 +89,35 @@ def initial_configurations(Z: int, a0: float, seed: int = 0) -> list[dict]:
         pos = _random_packing(rng, n, L, 4.0)
         confs.append({"cell": np.array([L, L, L]), "charges": [Z] * n, "positions": pos, "tag": "disordered"})
     return confs
+
+
+def md_snapshots(model, a0: float, temps=(600.0, 1000.0, 1400.0), per_T: int = 6, seed: int = 0) -> list[dict]:
+    """Configurations the metal actually visits: 8-atom cells run with a learned potential
+    (hot enough to disorder, then held at T), sampled every few hundred femtoseconds."""
+    from ..core.units import AMU_ME, AU_TIME_FS, KELVIN_HARTREE
+    from .eam import energy_forces
+    rng = np.random.default_rng(seed)
+    base = cubic("fcc", a0, 13)
+    cell = base.cell * np.array([2, 1, 1])
+    out = []
+    mass = 26.9815385 * AMU_ME
+    dt = 3.0 / AU_TIME_FS
+    for T in temps:
+        pos = np.concatenate([base.positions, base.positions + np.array([base.cell[0], 0, 0])])
+        vel = rng.normal(0, math.sqrt(KELVIN_HARTREE * max(T, 1500.0 if T > 900 else T) / mass), pos.shape)
+        _, F = energy_forces(model, cell, pos)
+        for step in range(400 * per_T + 600):
+            target = (2500.0 if step < 300 else T) if T > 900 else T
+            vel += 0.5 * dt * F / mass
+            pos = (pos + dt * vel) % cell
+            _, F = energy_forces(model, cell, pos)
+            vel += 0.5 * dt * F / mass
+            vel -= vel.mean(axis=0)
+            kT = mass * np.sum(vel ** 2) / (3 * (len(pos) - 1))
+            vel *= math.sqrt(1 + 0.05 * (target * KELVIN_HARTREE / max(kT, 1e-12) - 1))   # weak rescaling
+            if step >= 600 and (step - 600) % 400 == 399:
+                out.append({"cell": cell, "charges": [13] * 8, "positions": pos.copy(), "tag": f"md-{int(T)}"})
+    return out
 
 
 def _random_packing(rng, n, L, dmin):

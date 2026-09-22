@@ -347,8 +347,17 @@ GOOD_TRANSFER = 0.05 / 27.211386     # Ha: accept the first ghost-free candidate
 
 def transfer_error(pp: Pseudopotential) -> float:
     """Largest AE–PS difference in excitation energy over verify()'s configurations (Ha)."""
-    rows = verify(pp)
-    return max(abs(r["dE_ps"] - r["dE_ae"]) for r in rows)
+    return worst_transfer(verify(pp))
+
+
+def worst_transfer(rows: list[dict]) -> float:
+    """Largest AE–PS excitation-energy difference over the configurations whose all-electron and
+    pseudo-atom calculations both converged (an unconverged solve says nothing about the
+    pseudopotential). Infinite if fewer than two remain."""
+    good = [r for r in rows if r.get("converged", True)]
+    if len(good) < 2 or not rows[0].get("converged", True):
+        return float("inf")
+    return max(abs(r["dE_ps"] - r["dE_ae"]) for r in good)
 
 
 def _build(Z: int, ref: AtomResult, grid: RadialGrid, rc, l_local: int) -> Pseudopotential:
@@ -466,9 +475,12 @@ def verify(pp: Pseudopotential, configs: list[dict] | None = None) -> list[dict]
         if 2 in pp.valence_n:
             # transition metal: reference, s → d promotion, d → s, and the cation
             s0, d0 = pp.occ[0], pp.occ[2]
-            third = {0: s0 + 1, 2: d0 - 1} if s0 <= 1 else {0: s0 - 2, 2: d0 + 2}
-            if d0 + 2 > 10 and s0 > 1:
-                third = {0: s0 - 1, 2: d0}                       # d¹⁰s²: remove an s electron instead
+            ds = min(1.0, 2.0 - s0, d0)                          # move up to one electron d → s
+            if ds > 0.25:
+                third = {0: s0 + ds, 2: d0 - ds}
+            else:                                                # s already full: two electrons s → d
+                move = min(s0, 10.0 - d0, 2.0)
+                third = {0: s0 - move, 2: d0 + move} if move > 0.25 else {0: s0 - 1, 2: d0}
             configs = [{0: s0, 2: d0}, {0: max(s0 - 1, 0), 2: min(d0 + min(1, s0), 10)},
                        third, {0: max(s0 - 1, 0), 2: d0 if s0 >= 1 else d0 - 1}]
         else:
@@ -493,7 +505,7 @@ def verify(pp: Pseudopotential, configs: list[dict] | None = None) -> list[dict]
         ae = _AE_CACHE[key]
         ps = RadialAtom(pp.Z, charge=int(round(pp.Z_val - ne_val)), grid=grid, v_external=pp.v_ion,
                         n_valence=pp.Z_val, occupations=ps_fixed, rho_core=pp.rho_core).solve()
-        rows.append({"config": cfg, "E_ae": ae.energy, "E_ps": ps.energy,
+        rows.append({"config": cfg, "E_ae": ae.energy, "E_ps": ps.energy, "converged": bool(ae.converged and ps.converged),
                      "eps_ae": {l: _level(ae, l, pp.valence_n[l] - l - 1) for l in cfg},
                      "eps_ps": {l: _level(ps, l, 0) for l in cfg}})
     for row in rows:

@@ -11,9 +11,11 @@ from __future__ import annotations
 import functools
 import json
 import pickle
+
+import numpy as np
 from pathlib import Path
 
-from .pseudo import GHOST_TOL, Pseudopotential, generate, ghost_check, verify
+from .pseudo import GHOST_TOL, Pseudopotential, generate, ghost_check, verify, worst_transfer
 
 CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "pseudo"
 CACHE_VERSION = 4
@@ -48,11 +50,10 @@ def _checks_path(Z: int) -> Path:
 def _record_checks(pp: Pseudopotential) -> dict:
     """Ghost states and transferability of a freshly generated pseudopotential, kept on disk."""
     ghosts = ghost_check(pp)
-    rows = verify(pp)
-    worst = max(abs(r["dE_ps"] - r["dE_ae"]) for r in rows) * 27.211386
+    worst = worst_transfer(verify(pp)) * 27.211386
     rec = {"ghost_free": bool(all(abs(a - b) < GHOST_TOL for a, b in ghosts.values())),
-           "transfer_eV": float(worst), "l_local": int(pp.l_local), "Z_val": float(pp.Z_val)}
-    rec["ok"] = bool(rec["ghost_free"] and worst < TRANSFER_TOL_EV)
+           "transfer_eV": float(worst) if np.isfinite(worst) else None, "l_local": int(pp.l_local), "Z_val": float(pp.Z_val)}
+    rec["ok"] = bool(rec["ghost_free"] and np.isfinite(worst) and worst < TRANSFER_TOL_EV)
     _checks_path(pp.Z).write_text(json.dumps(rec))
     return rec
 
