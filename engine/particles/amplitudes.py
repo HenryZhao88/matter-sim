@@ -220,9 +220,20 @@ class Amplitude:
         self.ssss24 = 24 * model.ssss
 
     # --------------------------------------------------------------- batch
+    max_configs: int | None = None   # sample spin/colour configurations above this many
+    rng = np.random.default_rng(12345)
+
     def _batch(self, momenta):
         per_leg = [external_states(self.m, leg, p) for leg, p in zip(self.legs, momenta)]
-        combos = list(itertools.product(*[range(len(x)) for x in per_leg]))
+        sizes = [len(x) for x in per_leg]
+        total = int(np.prod(sizes))
+        if self.max_configs is not None and total > self.max_configs:
+            # Unbiased estimate of the spin/colour sum from a uniform random subset.
+            combos = [tuple(int(self.rng.integers(k)) for k in sizes) for _ in range(self.max_configs)]
+            self.config_scale = total / self.max_configs
+        else:
+            combos = list(itertools.product(*[range(k) for k in sizes]))
+            self.config_scale = 1.0
         B = len(combos)
         ext = []
         for i, states in enumerate(per_leg):
@@ -319,23 +330,29 @@ class Amplitude:
 
     def _ffx(self, pb, psi, add):
         """ψ̄ Γ ψ: a vector current (FFV) and a scalar current (FFS)."""
-        XL = np.einsum("Bia,mab,Bjb->Bmij", pb, GL, psi)
-        XR = np.einsum("Bia,mab,Bjb->Bmij", pb, GR, psi)
+        pbL = np.einsum("Bia,mab->Bmib", pb, GL)                 # contract in two steps:
+        pbR = np.einsum("Bia,mab->Bmib", pb, GR)                 # multi-operand einsum is slow
+        XL = np.einsum("Bmib,Bjb->Bmij", pbL, psi)
+        XR = np.einsum("Bmib,Bjb->Bmij", pbR, psi)
         Jv = np.einsum("vij,Bmij->Bvm", self.L, XL) + np.einsum("vij,Bmij->Bvm", self.R, XR)
         add("vec", 1j * (Jv @ METRIC))               # vertex outputs carry a lower index
-        add("scalar", 1j * np.einsum("ij,Bia,Bja->B", self.Y, pb, psi))
+        add("scalar", 1j * np.einsum("ij,Bij->B", self.Y, np.einsum("Bia,Bja->Bij", pb, psi)))
+
+    def _vslash(self, V):
+        Vl = V @ METRIC
+        return np.einsum("Bvm,mab->Bvab", Vl, GL), np.einsum("Bvm,mab->Bvab", Vl, GR)
 
     def _v_on_psi(self, V, psi):
-        Vl = V @ METRIC
-        tL = np.einsum("vij,Bvm,mab,Bjb->Bia", self.L, Vl, GL, psi)
-        tR = np.einsum("vij,Bvm,mab,Bjb->Bia", self.R, Vl, GR, psi)
-        return tL + tR
+        SL, SR = self._vslash(V)
+        XL = np.einsum("Bvab,Bjb->Bvja", SL, psi)
+        XR = np.einsum("Bvab,Bjb->Bvja", SR, psi)
+        return np.einsum("vij,Bvja->Bia", self.L, XL) + np.einsum("vij,Bvja->Bia", self.R, XR)
 
     def _psibar_on_v(self, pb, V):
-        Vl = V @ METRIC
-        tL = np.einsum("Bia,vij,Bvm,mab->Bjb", pb, self.L, Vl, GL)
-        tR = np.einsum("Bia,vij,Bvm,mab->Bjb", pb, self.R, Vl, GR)
-        return tL + tR
+        SL, SR = self._vslash(V)
+        XL = np.einsum("Bia,Bvab->Bvib", pb, SL)
+        XR = np.einsum("Bia,Bvab->Bvib", pb, SR)
+        return np.einsum("vij,Bvib->Bjb", self.L, XL) + np.einsum("vij,Bvib->Bjb", self.R, XR)
 
     def _vvv(self, A, Bv, k1, k2):
         """Triple-gauge vertex; A, Bv upper index; returns lower-index current for the third leg."""

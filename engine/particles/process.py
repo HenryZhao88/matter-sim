@@ -157,13 +157,14 @@ def _identical_factor(names_out) -> float:
 
 
 def cross_section(a: str, b: str, c: str, d: str, sqrt_s: float, widths=None, n_cos: int = 64,
-                  cos_max: float = 1.0) -> tuple[float, np.ndarray, np.ndarray]:
+                  cos_max: float = 1.0, max_configs: int | None = None) -> tuple[float, np.ndarray, np.ndarray]:
     """σ(a b → c d) in pb, plus dσ/dcosθ on Gauss–Legendre nodes (θ of particle c)."""
     names_in, names_out = (a, b), (c, d)
     ma, mb, mc, md = (species(x).mass for x in (a, b, c, d))
     if sqrt_s <= mc + md or sqrt_s <= ma + mb:
         return 0.0, np.zeros(0), np.zeros(0)
     amp = Amplitude(model(), [leg(a, True), leg(b, True), leg(c, False), leg(d, False)], widths)
+    amp.max_configs = max_configs
     p1, p2, pi = beams(sqrt_s, ma, mb)
     x, w = np.polynomial.legendre.leggauss(n_cos)
     x, w = x * cos_max, w * cos_max
@@ -172,7 +173,7 @@ def cross_section(a: str, b: str, c: str, d: str, sqrt_s: float, widths=None, n_
     for k, ct in enumerate(x):
         p3, p4, pf = two_body(sqrt_s, mc, md, float(ct))
         M = amp.evaluate([p1, p2, p3, p4])
-        m2 = float(np.sum(np.abs(M) ** 2)) / _avg_factor(names_in)
+        m2 = float(np.sum(np.abs(M) ** 2)) * amp.config_scale / _avg_factor(names_in)
         # dσ/dcosθ = |M|² p_f / (32 π s p_i)
         dsig[k] = m2 * pf / (32 * math.pi * s * pi) / _identical_factor(names_out)
     sigma = float(np.sum(w * dsig)) * GEV2_TO_PB

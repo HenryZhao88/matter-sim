@@ -40,6 +40,7 @@ def _m2(names, rs=100.0, ct=0.3):
     return M2, s, t, u
 
 
+@pytest.mark.slow
 def test_gluon_self_interaction_gg_to_gg():
     gs = model().gs
     M2, s, t, u = _m2(["g", "g", "g", "g"])
@@ -67,3 +68,31 @@ def test_widths_and_charge_conservation():
     assert width_2body("W+", "e+", "nu_e") == pytest.approx(0.2265, rel=0.03)
     assert width_2body("W+", "e-", "nu_e~") == 0.0           # would violate charge
     assert width_2body("t", "b", "W+") == pytest.approx(1.46, rel=0.05)
+
+
+def test_muon_lifetime_emerges_from_w_exchange():
+    from engine.particles.decays import branching_ratios, lifetime_seconds
+    assert lifetime_seconds("mu-") == pytest.approx(2.197e-6, rel=0.03)
+    (products, br), = branching_ratios("mu-")
+    assert set(products) == {"e-", "nu_e~", "nu_mu"}      # lepton flavour conserved, never imposed
+
+
+def test_z_invisible_width_counts_three_neutrino_families():
+    from engine.particles.decays import branching_ratios
+    invisible = sum(b for p, b in branching_ratios("Z") if all(x.startswith("nu") for x in p))
+    assert invisible == pytest.approx(0.200, abs=0.01)
+
+
+def test_top_decays_before_confinement_but_bottom_does_not():
+    from engine.particles.events import is_confined
+    assert not is_confined("t")
+    assert is_confined("b")
+
+
+@pytest.mark.slow
+def test_r_ratio_counts_quark_colours():
+    from engine.particles.events import outcomes
+    tab = outcomes("e-", "e+", 10.0)
+    had = sum(r[2] for r in tab if r[0].rstrip("~") in ("u", "d", "s", "c", "b"))
+    mumu = next(r[2] for r in tab if {r[0], r[1]} == {"mu-", "mu+"})
+    assert had / mumu == pytest.approx(3.58, abs=0.08)     # 11/3 with the b-quark threshold
