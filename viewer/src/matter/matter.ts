@@ -219,6 +219,8 @@ export class Matter {
       ...line("Melts at", `${num(b.T_melt, 0)} K`, `${num(ref.T_melt, 0)}`),
       ...line("Heat to melt it", `${num(b.heat_to_melt_J / 1000, 2)} kJ`),
       ...line("Bulk modulus", `${num(b.B_GPa, 0)} GPa`, `${num(ref.B_GPa, 0)}`),
+      ...line("Elastic constants C₁₁, C₁₂, C₄₄", `${num(b.C11, 0)}, ${num(b.C12, 0)}, ${num(b.C44, 0)} GPa`,
+        `${num(ref.C11, 0)}, ${num(ref.C12, 0)}, ${num(ref.C44, 0)}`),
       ...line("Young's modulus ⟨100⟩", `${num(b.young_GPa, 0)} GPa`, `${num(ref.young_GPa, 0)}`),
       ...line("Sound, lengthwise", `${num(b.sound_long, 0)} m/s`, `${num(ref.sound_long, 0)}`),
       ...line("Sound, shear", `${num(b.sound_trans, 0)} m/s`, `${num(ref.sound_trans, 0)}`),

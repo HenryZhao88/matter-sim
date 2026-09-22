@@ -134,7 +134,8 @@ class Block:
             "density": self.density(), "alpha_per_K": self.linear_expansion_per_K(),
             "c_J_per_gK": self.specific_heat_J_per_gK(), "T_melt": self.p.T_melt,
             "heat_to_melt_J": self.heat_to_melt_J(), "latent_J_per_g": self.p.latent_eV * EV_J / (AL_MASS_AMU * AMU_KG * 1e3),
-            "B_GPa": self.p.B_GPa, "young_GPa": self.stretch(0)["young_GPa"], "shear_GPa": self.shear_GPa(),
+            "B_GPa": self.p.B_GPa, "C11": self.p.C11, "C12": self.p.C12, "C44": self.p.C44,
+            "young_GPa": self.stretch(0)["young_GPa"], "shear_GPa": self.shear_GPa(),
             "poisson": self.stretch(0)["poisson"], "sound_long": s["longitudinal"], "sound_trans": s["transverse"],
             "cohesive_J": self.cohesive_energy_J(),
         }
