@@ -1,6 +1,6 @@
 import { el } from "../format";
 
-export type Workspace = "particles" | "atoms";
+export type Workspace = "particles" | "atoms" | "matter";
 
 // The scales of matter this project climbs. The two lit rungs open their workspace.
 const RUNGS: { name: string; size: string; workspace?: Workspace; note: string }[] = [
@@ -8,8 +8,10 @@ const RUNGS: { name: string; size: string; workspace?: Workspace; note: string }
     note: "The Standard Model: collide particles and see what the Lagrangian makes." },
   { name: "Electrons and nuclei", size: "10⁻¹⁰ m", workspace: "atoms",
     note: "Quantum electrons and moving nuclei: atoms and molecules." },
-  { name: "Materials", size: "10⁻⁸ m", note: "Next: forces learned from the rung below drive many-atom simulations." },
-  { name: "Everyday matter", size: "10⁻² m", note: "The long goal: a cubic centimetre of aluminium." },
+  { name: "Materials", size: "10⁻⁸ m", workspace: "matter",
+    note: "Hundreds of atoms moving on forces learned from the rung below: melting, expansion, heat." },
+  { name: "Everyday matter", size: "10⁻² m", workspace: "matter",
+    note: "A cubic centimetre of aluminium, from the properties the atoms produced." },
 ];
 
 export function renderLadder(root: HTMLElement, current: Workspace, onPick: (w: Workspace) => void): void {

@@ -66,7 +66,8 @@ def free_atom_energy(Z: int) -> float:
     ne = int(round(pp.Z_val))
     for spin in range(ne % 2, ne + 1, 2):
         try:
-            e = RadialAtom(Z, spin=spin, grid=pp.grid, v_external=pp.v_ion, n_valence=pp.Z_val).solve().energy
+            e = RadialAtom(Z, spin=spin, grid=pp.grid, v_external=pp.v_ion, n_valence=pp.Z_val,
+                           rho_core=pp.rho_core).solve().energy
         except ValueError:
             continue
         best = e if best is None else min(best, e)

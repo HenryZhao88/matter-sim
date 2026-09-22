@@ -25,6 +25,24 @@ def ensure_viewer_built() -> None:
     subprocess.run([npm, "run", "build", "--silent"], cwd=VIEWER, check=True)
 
 
+def _build_pseudos(up_to: int) -> None:
+    import concurrent.futures as cf
+    import os
+    import warnings
+    warnings.filterwarnings("ignore")
+    from engine.atoms import species
+    from engine.core.elements import ELEMENTS
+    todo = [Z for Z in range(3, up_to + 1) if Z in ELEMENTS]
+    with cf.ProcessPoolExecutor(max_workers=max(1, (os.cpu_count() or 2) - 2)) as pool:
+        list(pool.map(species.pseudopotential, todo))
+    rec = species.checks()
+    for Z in todo:
+        r = rec.get(str(Z), {})
+        mark = "ok  " if r.get("ok") else "FAIL"
+        print(f"{mark} {ELEMENTS[Z].symbol:>2}  Z_val={r.get('Z_val')}  ghost-free={r.get('ghost_free')}  "
+              f"transferability {1000 * r.get('transfer_eV', float('nan')):.0f} meV")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(prog="matter-sim", description="First-principles matter simulator")
     sub = ap.add_subparsers(dest="cmd")
@@ -33,7 +51,13 @@ def main() -> None:
     v = sub.add_parser("validate", help="run the experiment-vs-simulation checks")
     v.add_argument("--quick", action="store_true", help="coarser grids, fewer checks")
     v.add_argument("--part", choices=["all", "particles", "atoms"], default="all")
+    ps = sub.add_parser("pseudos", help="build and check the pseudopotentials for every element (slow, once)")
+    ps.add_argument("--up-to", type=int, default=36)
     args = ap.parse_args()
+
+    if args.cmd == "pseudos":
+        _build_pseudos(args.up_to)
+        return
 
     if args.cmd == "validate":
         from validation.run import main as validate

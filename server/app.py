@@ -11,6 +11,7 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 from .lattice import LatticeWorker
+from .materials import MaterialsWorker
 from .particles import ColliderWorker
 from .session import Session
 
@@ -51,15 +52,19 @@ def create_app(start_engine: bool = True) -> web.Application:
         app_["collider"] = collider
         lattice = LatticeWorker(pub_json)
         app_["lattice"] = lattice
+        materials = MaterialsWorker(pub_json)
+        app_["materials"] = materials
         if start_engine:
             session.start()
             collider.start()
             lattice.start()
+            materials.start()
 
     async def on_cleanup(app_):
         app_["session"].stop()
         app_["collider"].stop()
         app_["lattice"].stop()
+        app_["materials"].stop()
 
     async def ws_handler(request):
         ws = web.WebSocketResponse(max_msg_size=0, heartbeat=20)
@@ -80,6 +85,8 @@ def create_app(start_engine: bool = True) -> web.Application:
                         request.app["collider"].submit(cmd)
                     elif kind.startswith(("lattice.", "qcd.")):
                         request.app["lattice"].submit(cmd)
+                    elif kind.startswith("matter."):
+                        request.app["materials"].submit(cmd)
                     else:
                         session.submit(cmd)
                 except json.JSONDecodeError:

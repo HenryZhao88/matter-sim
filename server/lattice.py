@@ -89,11 +89,37 @@ class LatticeWorker:
             }))
         self._pub({"type": "lattice.done", "seconds": time.perf_counter() - t0})
 
+    # ---------------------------------------------------------------- hadron masses
+    def _run_hadrons(self, cmd: dict) -> None:
+        import pickle
+        from pathlib import Path
+        from engine.lattice.hadrons import effective_mass, spectrum
+        cache = Path(__file__).resolve().parents[1] / ".cache" / "hadron_spectrum.pkl"
+        if cache.exists() and not cmd.get("fresh"):
+            r = pickle.loads(cache.read_bytes())
+        else:
+            t0 = time.perf_counter()
+            self._pub({"type": "qcd.hadron_progress", "done": 0, "total": 6, "seconds": 0})
+            r = spectrum(beta=5.7, L=6, T=16, kappas=(0.155, 0.160, 0.163, 0.1655), n_configs=6, therm=80,
+                         progress=lambda i, n: self._pub({"type": "qcd.hadron_progress", "done": i, "total": n,
+                                                          "seconds": time.perf_counter() - t0}))
+            cache.write_bytes(pickle.dumps(r))
+        self._pub(sanitize({
+            "type": "qcd.hadrons", "beta": r["beta"], "L": r["L"], "T": r["T"], "kappas": r["kappas"],
+            "pion": r["pion"], "rho": r["rho"], "kappa_c": r["kappa_c"], "rho_chiral": r["rho_chiral"],
+            "meff_pion": [effective_mass(r["correlators"][k]["pion"]).tolist() for k in r["kappas"]],
+            "meff_rho": [effective_mass(r["correlators"][k]["rho"]).tolist() for k in r["kappas"]],
+        }))
+        self._pub({"type": "qcd.done"})
+
     # ---------------------------------------------------------------- lattice QCD
     def _run_qcd(self, cmd: dict) -> None:
         from engine.lattice.qcd import polyakov_scan, run_measurement
         mode = cmd.get("mode", "confinement")
         L = int(cmd.get("L", 8))
+        if mode == "hadrons":
+            self._run_hadrons(cmd)
+            return
         if mode == "confinement":
             for msg in run_measurement(float(cmd.get("beta", 5.7)), L, L, int(cmd.get("sweeps", 90)),
                                        cancelled=self._cancelled):

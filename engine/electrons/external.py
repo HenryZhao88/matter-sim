@@ -23,7 +23,7 @@ from __future__ import annotations
 import numpy as np
 
 from ..atoms import species
-from ..atoms.pseudo import R_GAUSS
+from ..atoms.pseudo import R_GAUSS, real_harmonics_k
 from ..core.grid import Grid
 
 
@@ -55,6 +55,7 @@ class NuclearField:
         self.kk = kk
         self.kernel = kern * self.filter
         self._form: dict[int, np.ndarray] = {}
+        self._core_form: dict = {}
         # Padded-grid index 0 sits at x0 = -N/2 * h (same as the real grid).
         self.x0 = -(N // 2) * h
         # rfft half-spectrum weights for Parseval sums.
@@ -93,8 +94,10 @@ class NuclearField:
         v = np.fft.irfftn(acc, s=(self.M,) * 3, axes=(0, 1, 2))
         return v[:N, :N, :N]
 
-    def forces(self, charges, positions, rho: np.ndarray) -> np.ndarray:
-        """F_I = −∂/∂R_I ∫ ρ V_I  for fixed electron density ρ."""
+    def forces(self, charges, positions, rho: np.ndarray, hat=None) -> np.ndarray:
+        """F_I = −∂/∂R_I ∫ ρ V_I  for fixed electron density ρ (or, with ``hat``, of ∫ ρ f_I for
+        any other per-ion field f, such as the partial core density)."""
+        hat = hat or self._vhat
         N, M = self.grid.N, self.M
         padded = np.zeros((M,) * 3)
         padded[:N, :N, :N] = rho
@@ -102,11 +105,41 @@ class NuclearField:
         out = np.zeros((len(charges), 3))
         for i, (Z, R) in enumerate(zip(charges, positions)):
             # ∂V̂/∂R = −ik V̂;  E = dV/M³ Σ_k w Re[conj(ρ̂) V̂]
-            prod = self.weights * np.conj(rhat) * self._vhat(Z, R)
+            prod = self.weights * np.conj(rhat) * hat(Z, R)
             for a, ka in enumerate((self.kx, self.ky, self.kz)):
                 dE = np.real(np.sum(prod * (-1j * ka))) * self.grid.dV / M ** 3
                 out[i, a] = -dE
         return out
+
+
+    # ------------------------------------------------------------ core correction
+    def _core_hat(self, Z, R):
+        if Z not in self._core_form:
+            pp = species.pseudopotential(Z) if species.is_pseudized(Z) else None
+            if pp is None or pp.rho_core is None:
+                self._core_form[Z] = None
+            else:
+                q = np.linspace(0.0, float(self.kk.max()) * 1.001, 2048)
+                self._core_form[Z] = np.interp(self.kk, q, pp.core_density_q(q)) * self.filter
+        f = self._core_form[Z]
+        return 0 * self.kk if f is None else f * self._phase(R) / self.grid.dV
+
+    def core_density(self, charges, positions) -> np.ndarray | None:
+        """Sum of the ions' partial core densities on the grid (None if no ion has one)."""
+        acc, any_core = np.zeros(self.kernel.shape, dtype=complex), False
+        for Z, R in zip(charges, positions):
+            h = self._core_hat(Z, R)
+            if self._core_form.get(Z) is not None:
+                acc += h
+                any_core = True
+        if not any_core:
+            return None
+        N = self.grid.N
+        return np.fft.irfftn(acc, s=(self.M,) * 3, axes=(0, 1, 2))[:N, :N, :N]
+
+    def core_forces(self, charges, positions, v_xc_mean: np.ndarray) -> np.ndarray:
+        """F_I = −∫ v̄_xc ∂ρ_core,I/∂R_I : the core correction's share of the force."""
+        return self.forces(charges, positions, v_xc_mean, hat=self._core_hat)
 
 
 class NonlocalProjectors:
@@ -143,10 +176,7 @@ class NonlocalProjectors:
                 radial = tables[(Z, l)]
                 with np.errstate(invalid="ignore", divide="ignore"):
                     kn = np.where(KK > 0, 1.0 / KK, 0.0)
-                if l == 0:
-                    angular = [np.full(KK.shape, 1 / np.sqrt(4 * np.pi))]
-                else:  # real p harmonics √(3/4π) k_a/|k|, with the (−i)^l factor
-                    angular = [-1j * np.sqrt(3 / (4 * np.pi)) * Ka * kn for Ka in (KX, KY, KZ)]
+                angular = real_harmonics_k(l, [KX * kn, KY * kn, KZ * kn])   # Y_lm(k̂) · (−i)^l
                 for ang in angular:
                     F = radial * ang * phase / grid.dV
                     rows.append(np.real(np.fft.ifftn(F)))

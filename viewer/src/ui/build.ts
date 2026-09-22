@@ -8,6 +8,8 @@ export class BuildRail {
   private presetList = el("ul", { class: "presets" });
   private blurb = el("p", { class: "blurb" });
   private table = el("div", { class: "ptable", role: "group", "aria-label": "Elements" });
+  private dblock = el("div", { class: "ptable dblock", role: "group", "aria-label": "Transition metals" });
+  private dcaption = el("p", { class: "dcaption" }, "Transition metals, Sc to Zn, fill between Ca and Ga");
   private charge = el("output", { class: "stepper-value" });
   private spin = el("div", { class: "segmented small", role: "radiogroup", "aria-label": "Unpaired spins" });
   private selection = el("section", { class: "selection" });
@@ -32,8 +34,10 @@ export class BuildRail {
       el("section", {},
         el("h2", {}, "Add a nucleus"),
         this.table,
+        this.dcaption,
+        this.dblock,
         el("p", { class: "hint" },
-          "Hydrogen and helium are bare nuclei. Lithium to argon carry pseudopotentials the engine derived from its own all-electron atoms.")),
+          "Hydrogen and helium are bare nuclei. Lithium to krypton carry pseudopotentials the engine derived from its own all-electron atoms. Dimmed elements have not passed that check yet.")),
       el("section", {},
         el("h2", {}, "Electrons"),
         el("div", { class: "field" },
@@ -79,7 +83,14 @@ export class BuildRail {
     if (byZ.get(2)) cells.push(cell(byZ.get(2)!, 8, 1));
     for (let z = 3; z <= 10; z++) if (byZ.get(z)) cells.push(cell(byZ.get(z)!, z - 2, 2));
     for (let z = 11; z <= 18; z++) if (byZ.get(z)) cells.push(cell(byZ.get(z)!, z - 10, 3));
+    for (const z of [19, 20]) if (byZ.get(z)) cells.push(cell(byZ.get(z)!, z - 18, 4));
+    for (let z = 31; z <= 36; z++) if (byZ.get(z)) cells.push(cell(byZ.get(z)!, z - 28, 4));
     this.table.replaceChildren(...cells);
+    // The 3d metals (Sc–Zn) sit between Ca and Ga; set out on their own strip, as the f-block usually is.
+    const dcells: HTMLElement[] = [];
+    for (let z = 21; z <= 30; z++) if (byZ.get(z)) dcells.push(cell(byZ.get(z)!, z - 20, 1));
+    this.dblock.replaceChildren(...dcells);
+    this.dcaption.hidden = dcells.length === 0;
   }
 
   update(status: Status | null, snap: Snapshot | null): void {

@@ -28,10 +28,14 @@ QUALITY_H = {"draft": 0.30, "standard": 0.20, "fine": 0.13}
 def supported_elements() -> set[int]:
     """Elements available in 3D.
 
-    H and He are all-electron; Li–Ar use pseudopotentials generated from the
-    engine's own all-electron atoms (engine/atoms/pseudo.py).
+    H and He are all-electron; Li–Kr use pseudopotentials generated from the
+    engine's own all-electron atoms (engine/atoms/pseudo.py). Beyond argon an element is
+    offered once its pseudopotential has passed the ghost-state and transferability checks
+    (``matter-sim pseudos`` builds and checks them all).
     """
-    return set(range(1, 19))
+    from .atoms.species import passes_checks
+    from .core.elements import MAX_Z
+    return {Z for Z in range(1, MAX_Z + 1) if passes_checks(Z)}
 
 
 @dataclass

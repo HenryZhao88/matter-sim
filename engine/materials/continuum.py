@@ -138,3 +138,33 @@ class Block:
             "poisson": self.stretch(0)["poisson"], "sound_long": s["longitudinal"], "sound_trans": s["transverse"],
             "cohesive_J": self.cohesive_energy_J(),
         }
+
+
+# ------------------------------------------------------------------ assembling the chain
+from pathlib import Path as _Path
+import json as _json
+
+_CACHE = _Path(__file__).resolve().parents[2] / ".cache" / "materials"
+
+# Measured values, used only to show how close the derived ones come. Nothing reads them.
+REFERENCE = {
+    "a0_A": (4.046, "lattice constant at 293 K"), "B_GPa": (76.0, "bulk modulus"),
+    "C11": (107.0, ""), "C12": (61.0, ""), "C44": (28.0, ""), "E_coh_eV": (3.39, "cohesive energy"),
+    "T_melt": (933.5, "melting point, K"), "latent_eV": (0.111, "latent heat of fusion, eV/atom"),
+    "density": (2699.0, "kg/m³ at 293 K"), "young_GPa": (70.0, "Young's modulus"), "alpha_per_K": (23.1e-6, "linear expansion, 1/K"),
+    "c_J_per_gK": (0.897, "specific heat at 298 K"), "sound_long": (6420.0, "m/s"), "sound_trans": (3040.0, "m/s"),
+}
+
+
+def derived_aluminium() -> Derived | None:
+    """Everything the block needs, read from what the lower rungs computed (None until they have)."""
+    try:
+        crys = _json.loads((_CACHE / "al_crystal.json").read_text())
+        md = _json.loads((_CACHE / "al_results.json").read_text())
+    except (OSError, ValueError):
+        return None
+    th = md["thermal"]
+    return Derived(a_of_T=[(r["T"], r["a_A"]) for r in th], H_of_T=[(r["T"], r["H_eV"]) for r in th],
+                   T_melt=md["melting"]["T_melt"], latent_eV=md["latent"]["latent_eV"],
+                   B_GPa=crys["B_GPa"], C11=crys["C11"], C12=crys["C12"], C44=crys["C44"],
+                   E_coh_eV=crys["E_coh_eV"])

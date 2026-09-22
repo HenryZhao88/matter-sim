@@ -14,6 +14,7 @@ import { BuildRail } from "./ui/build";
 import { Collider } from "./particles/collider";
 import { LatticeQCD } from "./particles/qcd";
 import { Universe } from "./particles/universe";
+import { Matter } from "./matter/matter";
 import type { ColliderEvent } from "./particles/types";
 import { renderLadder, type Workspace } from "./ui/ladder";
 import { MeasureRail } from "./ui/measure";
@@ -28,6 +29,7 @@ let snap: Snapshot | null = null;
 const link = new Link(onEvent, onSnapshot, (up) => {
   $("offline").hidden = up;
   if (up && document.body.dataset.workspace === "particles") { collider.activate(); universe.activate(); }
+  if (up && document.body.dataset.workspace === "matter") matter.activate();
 });
 const send = (cmd: Record<string, unknown>) => link.send(cmd);
 
@@ -55,6 +57,7 @@ const collider = new Collider(toolBoxes.collider.left, toolBoxes.collider.right,
 const universe = new Universe(toolBoxes.universe.left, toolBoxes.universe.stage, toolBoxes.universe.right,
   toolBoxes.universe.bar, send);
 const qcd = new LatticeQCD(toolBoxes.qcd.left, toolBoxes.qcd.stage, toolBoxes.qcd.right, toolBoxes.qcd.bar, send);
+const matter = new Matter($("m-left"), $("m-stage"), $("m-right"), $("m-bar"), send);
 const TOOL_NAMES: Record<Tool, string> = { collider: "Collider", universe: "1D world", qcd: "Lattice QCD" };
 let tool: Tool = "collider";
 function setTool(t: Tool): void {
@@ -77,9 +80,13 @@ function setWorkspace(w: Workspace): void {
   renderLadder($("ladder"), w, setWorkspace);
   try { localStorage.setItem("workspace", w); } catch { /* storage may be unavailable */ }
   if (w === "particles") setTool(tool);
+  if (w === "matter") matter.activate();
 }
 let savedWorkspace: Workspace = "atoms";
-try { if (localStorage.getItem("workspace") === "particles") savedWorkspace = "particles"; } catch { /* ignore */ }
+try {
+  const saved = localStorage.getItem("workspace");
+  if (saved === "particles" || saved === "matter") savedWorkspace = saved;
+} catch { /* ignore */ }
 setWorkspace(savedWorkspace);
 
 viewport.onSelect = (i) => build.setSelected(i);
@@ -97,6 +104,10 @@ function onEvent(e: ServerEvent | ColliderEvent): void {
   }
   if (e.type.startsWith("lattice.")) {
     universe.onEvent(e as never);
+    return;
+  }
+  if (e.type.startsWith("matter.")) {
+    matter.onEvent(e as never);
     return;
   }
   if (e.type.startsWith("qcd.")) {

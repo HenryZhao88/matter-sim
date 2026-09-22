@@ -9,13 +9,15 @@ on disk so later launches are instant.
 from __future__ import annotations
 
 import functools
+import json
 import pickle
 from pathlib import Path
 
-from .pseudo import Pseudopotential, generate
+from .pseudo import GHOST_TOL, Pseudopotential, generate, ghost_check, verify
 
 CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "pseudo"
-CACHE_VERSION = 3
+CACHE_VERSION = 4
+TRANSFER_TOL_EV = 0.15      # largest allowed AE–PS difference in excitation energies
 
 
 def is_pseudized(Z: int) -> bool:
@@ -35,7 +37,43 @@ def pseudopotential(Z: int) -> Pseudopotential:
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as f:
         pickle.dump(pp, f)
+    _record_checks(pp)
     return pp
+
+
+def _checks_path(Z: int) -> Path:
+    return CACHE_DIR / f"v{CACHE_VERSION}_Z{Z}_checks.json"
+
+
+def _record_checks(pp: Pseudopotential) -> dict:
+    """Ghost states and transferability of a freshly generated pseudopotential, kept on disk."""
+    ghosts = ghost_check(pp)
+    rows = verify(pp)
+    worst = max(abs(r["dE_ps"] - r["dE_ae"]) for r in rows) * 27.211386
+    rec = {"ghost_free": bool(all(abs(a - b) < GHOST_TOL for a, b in ghosts.values())),
+           "transfer_eV": float(worst), "l_local": int(pp.l_local), "Z_val": float(pp.Z_val)}
+    rec["ok"] = bool(rec["ghost_free"] and worst < TRANSFER_TOL_EV)
+    _checks_path(pp.Z).write_text(json.dumps(rec))
+    return rec
+
+
+def checks() -> dict:
+    out = {}
+    for f in CACHE_DIR.glob(f"v{CACHE_VERSION}_Z*_checks.json"):
+        try:
+            out[f.name.split("_")[1][1:]] = json.loads(f.read_text())
+        except (OSError, ValueError):
+            pass
+    return out
+
+
+def passes_checks(Z: int) -> bool:
+    """Li–Ar were validated against molecules; beyond that, an element is offered once its
+    generated pseudopotential has passed the ghost and transferability checks."""
+    if Z <= 18:
+        return True
+    rec = checks().get(str(Z))
+    return bool(rec and rec["ok"])
 
 
 def valence_charge(Z: int) -> float:

@@ -28,7 +28,7 @@ import numpy as np
 from scipy.special import erfc
 
 from ..atoms import species
-from ..atoms.pseudo import R_GAUSS
+from ..atoms.pseudo import R_GAUSS, real_harmonics_k
 from ..core.grid import fft_friendly
 from ..electrons.xc import lda_xc
 
@@ -158,6 +158,7 @@ class PeriodicDFT:
         self.pp = {Z: species.pseudopotential(Z) for Z in set(c.charges)}
         self.vloc_q: dict = {}
         self.proj_tab: dict = {}
+        self.core_q: dict = {}
         for Z, pp in self.pp.items():
             short = np.interp(q, qtab, pp.local_short_range_q(qtab))
             with np.errstate(divide="ignore", invalid="ignore"):
@@ -167,6 +168,8 @@ class PeriodicDFT:
             self.vloc_q[Z] = v
             for l in pp.nonlocal_channels:
                 self.proj_tab[(Z, l)] = (qtab, pp.projector_q(l, qtab))
+            if pp.rho_core is not None:
+                self.core_q[Z] = np.interp(q, qtab, pp.core_density_q(qtab))
         self._set_local()
 
     def _set_local(self) -> None:
@@ -177,6 +180,13 @@ class PeriodicDFT:
         Vg *= self.filter / c.volume
         self.Vloc_g = Vg
         self.Vloc = np.real(np.fft.ifftn(Vg) * self.Ntot)
+        self.rho_core = 0.0
+        if self.core_q:
+            Cg = np.zeros(self.N, complex)
+            for Z, R in zip(c.charges, c.positions):
+                if Z in self.core_q:
+                    Cg += self.core_q[Z] * np.exp(-1j * (self.G @ R))
+            self.rho_core = np.real(np.fft.ifftn(Cg * self.filter / c.volume) * self.Ntot)
         self.E_ewald, self.F_ewald = ewald(c)
 
     def _projectors(self, k):
@@ -193,8 +203,7 @@ class PeriodicDFT:
             for l in pp.nonlocal_channels:
                 qt, ft = self.proj_tab[(Z, l)]
                 radial = np.interp(q, qt, ft) * self.filter
-                angs = [np.full(q.shape, 1 / math.sqrt(4 * math.pi))] if l == 0 else \
-                    [-1j * math.sqrt(3 / (4 * math.pi)) * n[..., a] for a in range(3)]
+                angs = real_harmonics_k(l, [n[..., 0], n[..., 1], n[..., 2]])
                 for ang in angs:
                     F = radial * ang * phase / c.volume
                     rows.append(np.fft.ifftn(F) * self.Ntot)
@@ -246,7 +255,8 @@ class PeriodicDFT:
         converged = False
         for it in range(1, max_iter + 1):
             vh = self._hartree(rho)
-            _, vxc, _ = lda_xc(rho / 2, rho / 2)
+            rx = rho + self.rho_core                         # + partial core (nonlinear core correction)
+            _, vxc, _ = lda_xc(rx / 2, rx / 2)
             Veff = self.Vloc + vh + vxc
             evals = []
             for ik, k in enumerate(self.kpts):
@@ -346,7 +356,8 @@ class PeriodicDFT:
         rg = np.fft.fftn(rho) / self.Ntot
         with np.errstate(divide="ignore", invalid="ignore"):
             eh = 0.5 * c.volume * float(np.sum(np.where(self.G2 > 0, 4 * np.pi * np.abs(rg) ** 2 / self.G2, 0)))
-        exc = float(np.sum(lda_xc(rho / 2, rho / 2)[0]) * self.dV)
+        rx = rho + self.rho_core
+        exc = float(np.sum(lda_xc(rx / 2, rx / 2)[0]) * self.dV)
         eloc = float(np.sum(self.Vloc * rho) * self.dV)
         return {"kinetic": kin, "electron_ion": eloc + enl, "hartree": eh, "exchange_correlation": exc,
                 "ion_ion": self.E_ewald}
@@ -361,6 +372,14 @@ class PeriodicDFT:
             # E_loc = Σ_G conj(ρ_G) v_I(G): dE/dR = Σ conj(ρ_G)(−iG) v_I
             dE = np.real(np.sum(np.conj(rg)[..., None] * (-1j * self.G) * vI[..., None], axis=(0, 1, 2)))
             F[i] -= dE
+        if self.core_q:
+            rx = rho + self.rho_core
+            _, vxc, _ = lda_xc(rx / 2, rx / 2)
+            vg = np.fft.fftn(vxc) / self.Ntot
+            for i, (Z, R) in enumerate(zip(c.charges, c.positions)):
+                if Z in self.core_q:
+                    cI = self.core_q[Z] * np.exp(-1j * (self.G @ R)) * self.filter
+                    F[i] -= np.real(np.sum(np.conj(vg)[..., None] * (-1j * self.G) * cI[..., None], axis=(0, 1, 2)))
         for ik, k in enumerate(self.kpts):
             B, Fs, E, atom = projs[ik]
             if not len(E):

@@ -8,6 +8,9 @@ type QcdEvent =
       fit: { A: number; alpha: number; sigma: number }; measurements: number; seconds: number }
   | { type: "qcd.scan_start"; betas: number[]; L: number; Nt: number }
   | { type: "qcd.scan_row"; beta: number; polyakov: number; error: number }
+  | { type: "qcd.hadrons"; beta: number; L: number; T: number; kappas: number[]; pion: number[]; rho: number[];
+      kappa_c: number; rho_chiral: number; meff_pion: number[][]; meff_rho: number[][] }
+  | { type: "qcd.hadron_progress"; done: number; total: number; seconds: number }
   | { type: "qcd.done"; cancelled?: boolean };
 
 const PUBLISHED_PLAQUETTE: Record<number, number> = { 5.7: 0.54934, 5.8: 0.56771, 5.9: 0.58184, 6.0: 0.59368 };
@@ -16,7 +19,8 @@ const HBARC = 197.327;
 
 // Gluons on a 4D grid of spacetime, from the QCD Lagrangian alone.
 export class LatticeQCD {
-  private mode: "confinement" | "deconfinement" = "confinement";
+  private mode: "confinement" | "deconfinement" | "hadrons" = "confinement";
+  private hadrons: Extract<QcdEvent, { type: "qcd.hadrons" }> | null = null;
   private beta = 5.7;
   private L = 8;
   private plaq: number[] = [];
@@ -84,6 +88,15 @@ export class LatticeQCD {
         this.renderMain();
         this.renderFacts();
         break;
+      case "qcd.hadrons":
+        this.hadrons = e;
+        this.readout.textContent = `Lattice ${e.L}³×${e.T} at β = ${e.beta}.`;
+        this.renderMain();
+        this.renderFacts();
+        break;
+      case "qcd.hadron_progress":
+        this.readout.textContent = `Gluon configuration ${e.done} of ${e.total}, ${num(e.seconds / 60, 0)} min so far.`;
+        break;
       case "qcd.done":
         this.runBtn.textContent = "Run";
         if (this.mode === "deconfinement" && !e.cancelled) this.readout.textContent = "Scan complete.";
@@ -95,6 +108,7 @@ export class LatticeQCD {
     const opts: [typeof this.mode, string, string][] = [
       ["confinement", "Confinement", "Pull a quark and an antiquark apart and measure the energy it costs. If it keeps rising with distance, they can never be separated."],
       ["deconfinement", "Melting protons", "Heat the gluon field (a short time direction is a high temperature) and watch confinement switch off: a quark–gluon plasma."],
+      ["hadrons", "Hadron masses", "Send quarks through the gluon field and time how their correlations fade. The rate is a mass: pions and rho mesons, from nothing but quarks and gluons."],
     ];
     this.modes.replaceChildren(...opts.map(([id, name]) => {
       const b = el("button", { class: "preset single", role: "radio", "aria-checked": String(id === this.mode) }, el("span", { class: "preset-name" }, name));
@@ -103,6 +117,7 @@ export class LatticeQCD {
     }));
     this.blurb.textContent = opts.find((o) => o[0] === this.mode)![2];
     this.betaSection.hidden = this.mode !== "confinement";
+    this.sizeChips.parentElement!.hidden = this.mode === "hadrons";
     this.betaChips.replaceChildren(...[5.7, 5.8, 5.9, 6.0].map((b) => {
       const c = el("button", { role: "radio", "aria-checked": String(b === this.beta) }, b.toFixed(1));
       c.onclick = () => { this.beta = b; this.renderControls(); };
@@ -122,6 +137,8 @@ export class LatticeQCD {
     if (this.mode === "confinement") {
       this.result = null;
       this.send({ type: "qcd.run", mode: "confinement", beta: this.beta, L: this.L, sweeps: 90 });
+    } else if (this.mode === "hadrons") {
+      this.send({ type: "qcd.run", mode: "hadrons", fresh: this.hadrons !== null });
     } else {
       this.send({ type: "qcd.run", mode: "deconfinement", L: this.L, sweeps: 120 });
     }
@@ -170,6 +187,34 @@ export class LatticeQCD {
       this.caption.textContent = r
         ? "Dots: measured energy of a static quark–antiquark pair. Solid: Coulomb pull plus a straight rising line. Dashed: the straight part alone."
         : "Run the experiment to measure the energy between two quarks.";
+    } else if (this.mode === "hadrons") {
+      const h = this.hadrons;
+      // x: bare quark mass a·m_q = 1/(2κ) − 1/(2κ_c); y: masses squared
+      const kc = h?.kappa_c ?? 0.1695;
+      const mq = (k: number) => 0.5 / k - 0.5 / kc;
+      const xmax = 0.3;
+      const ymax = 1.0;
+      const x = (m: number) => L + (m / xmax) * (W - L - R);
+      const y = (v: number) => H - B - (v / ymax) * (H - B - T);
+      add("line", { x1: L, x2: W - R, y1: H - B, y2: H - B, class: "axis" });
+      add("line", { x1: L, x2: L, y1: T, y2: H - B, class: "axis" });
+      add("text", { x: (L + W - R) / 2, y: H - 10, class: "q-label", "text-anchor": "middle" }, "Quark mass (lattice units; zero where the pion becomes massless)");
+      add("text", { x: 14, y: (T + H - B) / 2, class: "q-label", "text-anchor": "middle", transform: `rotate(-90 14 ${(T + H - B) / 2})` }, "Mass squared (lattice units)");
+      for (const m of [0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]) add("text", { x: x(m), y: H - B + 16, class: "tick", "text-anchor": "middle" }, m.toFixed(2));
+      if (h) {
+        const P = h.kappas.map((k, i) => [mq(k), h.pion[i] ** 2]);
+        const Rr = h.kappas.map((k, i) => [mq(k), h.rho[i] ** 2]);
+        add("polyline", { points: [[0, 0], ...P].map(([a, b]) => `${x(a)},${y(b)}`).join(" "), class: "q-linear" });
+        add("polyline", { points: [[0, h.rho_chiral ** 2], ...Rr].map(([a, b]) => `${x(a)},${y(b)}`).join(" "), class: "q-linear" });
+        for (const [a, b] of P) add("circle", { cx: x(a), cy: y(b), r: 5, class: "q-dot" });
+        for (const [a, b] of Rr) add("rect", { x: x(a) - 4.5, y: y(b) - 4.5, width: 9, height: 9, class: "q-dot" });
+        const last = P[P.length - 1], lastR = Rr[Rr.length - 1];
+        add("text", { x: x(last[0]) + 10, y: y(last[1]) + 4, class: "q-label" }, "pion");
+        add("text", { x: x(lastR[0]) + 10, y: y(lastR[1]) + 4, class: "q-label" }, "rho");
+      }
+      this.caption.textContent = h
+        ? "Circles: pion. Squares: rho meson. As the quarks get lighter the pion's mass squared falls in a straight line to zero, while the rho stays heavy: the pion is the Goldstone boson of broken chiral symmetry."
+        : "Run it to measure hadron masses. A stored result from a longer run loads first; running again computes a fresh, smaller one (about a quarter of an hour).";
     } else {
       const x = (b: number) => L + ((b - 5.4) / (6.25 - 5.4)) * (W - L - R);
       const pmax = Math.max(0.2, ...this.scan.map((p) => p.p + p.e)) * 1.1;
@@ -221,6 +266,17 @@ export class LatticeQCD {
       );
       this.note.textContent =
         `A string tension above zero means the energy grows without limit as the quarks separate: confinement. The spacing in femtometres uses one measured number, √σ ≈ ${SQRT_SIGMA_MEV} MeV. Small lattices and few measurements make σ read low by about a quarter.`;
+    } else if (this.mode === "hadrons") {
+      const h = this.hadrons;
+      if (!h) { this.facts.replaceChildren(); this.note.textContent = ""; return; }
+      this.facts.replaceChildren(
+        ...h.kappas.flatMap((k, i) => [el("dt", {}, `κ = ${k}`),
+          el("dd", {}, `π ${num(h.pion[i], 3)}  ρ ${num(h.rho[i], 3)}  ratio ${num(h.pion[i] / h.rho[i], 2)}`)]),
+        el("dt", {}, "Pion massless at κ"), el("dd", {}, num(h.kappa_c, 4), el("span", { class: "ref" }, " published 0.1694")),
+        el("dt", {}, "Rho there, m·a"), el("dd", {}, num(h.rho_chiral, 3), el("span", { class: "ref" }, " published ≈ 0.56")),
+      );
+      this.note.textContent =
+        "Masses in units of the lattice spacing, quenched Wilson quarks. In nature the pion is 0.18 of the rho; reaching that needs lighter quarks, bigger lattices and quark loops, which is a question of computer time.";
     } else {
       const pts = [...this.scan].sort((a, b) => a.beta - b.beta);
       this.facts.replaceChildren(...pts.flatMap((p) => [el("dt", {}, `β = ${p.beta}`), el("dd", {}, `${num(p.p, 3)} ± ${num(p.e, 3)}`)]));

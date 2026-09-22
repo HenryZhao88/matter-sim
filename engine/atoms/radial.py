@@ -255,6 +255,15 @@ def hartree_potential(grid: RadialGrid, rho: np.ndarray) -> np.ndarray:
     return q_in / r + (outer[-1] - outer)
 
 
+def _thomas_fermi(Z: int, r: np.ndarray) -> np.ndarray:
+    """Screened potential of the Thomas–Fermi atom (Tietz's fit to the universal function),
+    never shallower than −1/r: what one electron sees far outside the other Z − 1."""
+    x = r / (0.8853 * Z ** (-1 / 3))
+    phi = 1 / (1 + 0.02747 * x ** 0.5 + 1.243 * x - 0.1486 * x ** 1.5 + 0.2302 * x ** 2
+               + 0.007298 * x ** 2.5 + 0.006944 * x ** 3)
+    return np.minimum(-Z * phi / r, -1 / r)
+
+
 def _fill(levels: list[tuple[int, int, float]], n_electrons: float, T: float) -> np.ndarray:
     """Occupations for levels (l, index, ε) with degeneracy 2l+1 each (one spin)."""
     if n_electrons <= 0 or not levels:
@@ -281,7 +290,7 @@ def _fill(levels: list[tuple[int, int, float]], n_electrons: float, T: float) ->
 class RadialAtom:
     def __init__(self, Z: int, charge: int = 0, spin: float = 0.0, grid: RadialGrid | None = None,
                  T_e: float = 1e-4, v_external=None, n_valence: float | None = None,
-                 occupations: dict | None = None) -> None:
+                 occupations: dict | None = None, rho_core: np.ndarray | None = None) -> None:
         """``spin`` = N↑ − N↓.
 
         ``v_external`` replaces −Z/r: an array, or a dict {l: array} of
@@ -309,6 +318,8 @@ class RadialAtom:
         self.v_ext = self.v_l[0]
         self.z0 = {l: float(-v[0] * r[0]) for l, v in self.v_l.items()}  # Coulomb strength at 0
         self.fixed_occ = occupations
+        # partial core density seen only by exchange–correlation (pseudo-atoms with core correction)
+        self.rc_half = 0.0 if rho_core is None else 0.5 * np.asarray(rho_core)
 
     def solve(self, max_iter: int = 400, tol: float = 1e-9) -> AtomResult:
         g, r = self.grid, self.grid.r
@@ -323,10 +334,16 @@ class RadialAtom:
         converged = False
         n_per_l = int(math.ceil(max(ne, 1) / 2)) + 3
 
+        bare = self.z0[0] > 1e-6 and self.charge == 0 and self.Z > 2
         for it in range(1, max_iter + 1):
-            vH = hartree_potential(g, rho[0] + rho[1])
-            _, vxu, vxd = lda_xc(rho[0], rho[1])
-            vs = (vH + vxu, vH + vxd)
+            if it == 1 and bare:
+                # first pass: the Thomas–Fermi atom with Latter's −1/r tail, so every occupied
+                # level is bound from the start (a compact guess leaves heavy atoms' outer shells unbound)
+                vs = (_thomas_fermi(self.Z, r) - self.v_ext,) * 2
+            else:
+                vH = hartree_potential(g, rho[0] + rho[1])
+                _, vxu, vxd = lda_xc(rho[0] + self.rc_half, rho[1] + self.rc_half)
+                vs = (vH + vxu, vH + vxd)
             new_rho, levels_all = [np.zeros_like(r), np.zeros_like(r)], []
             band = e_ext = pot = 0.0
             for s, nel in ((0, self.n_up), (1, self.n_dn)):
@@ -336,6 +353,14 @@ class RadialAtom:
                     for k, (eps, u) in enumerate(zip(w, U)):
                         if eps < 0:
                             cands.append((l, k, eps, u))
+                if self.fixed_occ is None and sum(2 * c[0] + 1 for c in cands) < nel:
+                    # an intermediate density over-screened the nucleus and the outer shell came
+                    # unbound; for this iteration only, give the potential its physical −1/r tail
+                    cands = []
+                    for l in range(L_MAX + 1):
+                        vt = np.minimum(self.v_l[l] + vs[s], -1.0 / r) if r[-1] > 0 else self.v_l[l] + vs[s]
+                        w, U = radial_eigenstates(g, vt, l, n_per_l, self.z0[l])
+                        cands += [(l, k, e, u) for k, (e, u) in enumerate(zip(w, U)) if e < 0]
                 if self.fixed_occ is not None:
                     occ = np.array([self.fixed_occ.get((s, c[0], c[1]), 0.0) for c in cands])
                 else:
@@ -355,11 +380,14 @@ class RadialAtom:
                 converged = True
                 break
             E_prev = E
+            if it == 1 and bare:
+                rho = new_rho
+                continue
             x = mixer.mix(np.concatenate(rho), np.concatenate(new_rho))
             x = np.maximum(x, 0.0)
             rho = [x[: g.n], x[g.n:]]
         vH = hartree_potential(g, rho[0] + rho[1])
-        _, vxu, vxd = lda_xc(rho[0], rho[1])
+        _, vxu, vxd = lda_xc(rho[0] + self.rc_half, rho[1] + self.rc_half)
         return AtomResult(self.Z, self.charge, self.n_up, self.n_dn, E, comps, levels_all,
                           rho[0], rho[1], self.v_ext + vH + vxu, self.v_ext + vH + vxd,
                           g, converged, it)
@@ -369,7 +397,7 @@ class RadialAtom:
         rt = rho[0] + rho[1]
         w = 4 * np.pi * r * r
         vH = hartree_potential(g, rt)
-        e_xc, _, _ = lda_xc(rho[0], rho[1])
+        e_xc, _, _ = lda_xc(rho[0] + self.rc_half, rho[1] + self.rc_half)
         # kinetic = Σ f ε − Σ f ⟨u|V_eff|u⟩ (V_eff that produced the orbitals)
         return {
             "kinetic": kinetic,

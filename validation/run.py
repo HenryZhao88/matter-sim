@@ -33,7 +33,7 @@ OUT = Path(__file__).resolve().parent / "results.json"
 EXP_IE = {1: 13.598, 2: 24.587, 3: 5.392, 4: 9.323, 5: 8.298, 6: 11.260, 7: 14.534, 8: 13.618,
           9: 17.423, 10: 21.565, 11: 5.139, 12: 7.646, 13: 5.986, 14: 8.152, 15: 10.487,
           16: 10.360, 17: 12.968, 18: 15.760}
-SYMBOL = "H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar".split()
+SYMBOL = "H He Li Be B C N O F Ne Na Mg Al Si P S Cl Ar K Ca Sc Ti V Cr Mn Fe Co Ni Cu Zn Ga Ge As Se Br Kr".split()
 
 rows: list[dict] = []
 
@@ -115,6 +115,12 @@ def particles_section(quick: bool) -> None:
     s3000 = cross_section("e-", "e+", "W+", "W-", 3000.0, n_cos=48)[0]
     record("particles", "σ(e⁺e⁻ → W⁺W⁻) at 200 GeV", s200, 17.0, "pb", "LEP2, tree level", 15 < s200 < 22)
     record("particles", "…and falls at 3 TeV (gauge cancellation)", s3000, "< σ(200)", "pb", ok=s3000 < s200)
+    from engine.particles.shower import alpha_s, group_constants
+    gc = group_constants()
+    record("particles", "Colour factors C_F, C_A (from the generators)", f"{gc['CF']:.4f}, {gc['CA']:.4f}", "4/3, 3", "",
+           ok=abs(gc["CF"] - 4 / 3) < 1e-9 and abs(gc["CA"] - 3) < 1e-9)
+    record("particles", "Running α_s(10 GeV) from α_s(m_Z)", alpha_s(10.0), 0.178, "", "one loop, β₀ from the group",
+           abs(alpha_s(10.0) - 0.178) < 0.012)
 
     from engine.particles.hadron import CACHE as HCACHE, HadronCollider
     probe = HadronCollider.__new__(HadronCollider)
@@ -141,6 +147,10 @@ def particles_section(quick: bool) -> None:
     drift = max(f[1]["energy"] for f in frames) - min(f[1]["energy"] for f in frames)
     record("lattice", "Pairs created from empty space by a field", created, "> 0", "particles", ok=created > 1)
     record("lattice", "Energy conservation", drift, 0.0, "", "exact evolution", drift < 1e-9)
+    model_j, it = run_scenario("jet", N=14, mass=0.25, t_max=6.0, frames=7, strength=0.6)
+    sep = [o["charge"][: model_j.N // 2].sum() for _, o in it]
+    record("lattice", "Hadronisation: flying charges end up screened", f"{sep[0]:.2f} → {min(sep[3:]):.2f}", "1 → ≈0",
+           "string breaks into mesons", min(sep[3:]) < 0.5 * sep[0])
 
     section("Lattice QCD, pure gauge (quenched)")
     g = GaugeField(6, 6, 6.0, seed=4)
@@ -157,6 +167,27 @@ def particles_section(quick: bool) -> None:
         (b1, p1, _), (b2, p2, _) = polyakov_scan([5.45, 6.1], L=8, Nt=4, sweeps=100)
         record("lattice", "Polyakov loop: cold vs hot", f"{p1:.3f} → {p2:.3f}", "≈0 → >0", "", "deconfinement near β = 5.69",
                p2 > 3 * p1)
+    import pickle
+    hc = Path(__file__).resolve().parents[1] / ".cache" / "hadron_spectrum.pkl"
+    if hc.exists():
+        h = pickle.loads(hc.read_bytes())
+        section(f"Hadron masses from quark propagators (β = {h['beta']}, {h['L']}³×{h['T']}, quenched Wilson)")
+        record("lattice", "Pion lighter than rho at every quark mass", all(p < r for p, r in zip(h["pion"], h["rho"])),
+               True, "", "", all(p < r for p, r in zip(h["pion"], h["rho"])))
+        record("lattice", "κ where the pion becomes massless", h["kappa_c"], 0.1694, "", "Goldstone boson; published",
+               abs(h["kappa_c"] - 0.1694) < 0.003)
+        record("lattice", "Rho mass there, m·a", h["rho_chiral"], 0.56, "", "published ≈ 0.55–0.58", 0.45 < h["rho_chiral"] < 0.68)
+    else:
+        print("\n(Hadron masses skipped: run the Lattice QCD › Hadron masses experiment once.)")
+
+    if not quick:
+        section("Truth mode: neural-network wavefunction, exact Hamiltonian (variational Monte Carlo)")
+        from engine.truth.vmc import VMC, Molecule
+        v = VMC(Molecule([2.0], np.zeros((1, 3)), 1, 1), walkers=512, hidden=24, layers=2, dets=2)
+        v.train(iters=300)
+        E, err = v.evaluate(10, 5)
+        record("truth", "Helium ground-state energy", E, -2.90372, "Ha", f"±{err:.3f}; Hartree–Fock −2.8617",
+               abs(E + 2.90372) < 0.01)
 
 
 def atoms_section(quick: bool, q: str) -> None:
@@ -195,6 +226,20 @@ def atoms_section(quick: bool, q: str) -> None:
         worst = max(abs(r["dE_ps"] - r["dE_ae"]) for r in verify(pseudopotential(Z))[1:]) * HARTREE_EV
         record("pseudo", f"{SYMBOL[Z - 1]}: worst excitation-energy error", worst, 0.0, "eV",
                "ionised and promoted configurations", worst < 0.06)
+
+    if not quick:
+        section("Fourth row (K–Kr): configurations and pseudopotentials")
+        from engine.atoms.radial import RadialAtom
+        cu = RadialAtom(29, grid=RadialGrid(r_min=2e-6 / math.sqrt(29), r_max=60.0, dx=0.004)).solve()
+        cfg = cu.configuration()
+        record("periodic", "Copper fills 3d before its second 4s electron", cfg.split()[-2:], "4s¹ 3d¹⁰", "",
+               "the textbook exception, unprompted", cfg.endswith("4s¹ 3d¹⁰"))
+        from engine.atoms.species import checks
+        for Z in (19, 20, 29, 30, 31, 32, 35):
+            pseudopotential(Z)
+            r = checks().get(str(Z), {})
+            record("pseudo", f"{SYMBOL[Z - 1]}: ghost-free, worst excitation error", r.get("transfer_eV", float("nan")), 0.0,
+                   "eV", f"local channel l={r.get('l_local')}", bool(r.get("ok")))
 
     section(f"Molecules in 3D ({q} grid): shapes found by relaxing from wrong starts")
     # H2 bond and binding energy

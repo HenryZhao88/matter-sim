@@ -117,47 +117,55 @@ def energy_forces(model: EAM, cell, positions):
 
 # ------------------------------------------------------------------ fitting (MLX autodiff)
 def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=None) -> EAM:
-    """configs: list of dicts {cell, positions, energy, forces} (Hartree, bohr)."""
+    """configs: list of dicts {cell, positions, energy, forces} (Hartree, bohr).
+
+    All configurations are packed into one graph (atoms numbered globally, energies summed
+    per configuration), so each training step is a handful of GPU kernels."""
     import mlx.core as mx
     import mlx.optimizers as optim
 
-    data = []
-    for c in configs:
+    I_all, J_all, B_all, dB_all, U_all, cfg_of_atom, E_ref, F_ref, n_at = [], [], [], [], [], [], [], [], []
+    off = 0
+    for k, c in enumerate(configs):
         I, J, D = pairs_with_images(c["cell"], c["positions"])
         r = np.linalg.norm(D, axis=1)
-        data.append({
-            "n": len(c["positions"]), "I": mx.array(I), "J": mx.array(J),
-            "B": mx.array(basis(r).astype(np.float32)), "dB": mx.array(basis_deriv(r).astype(np.float32)),
-            "unit": mx.array((D / r[:, None]).astype(np.float32)),
-            "E": float(c["energy"]) / len(c["positions"]),
-            "F": mx.array(np.asarray(c["forces"], np.float32)),
-        })
-    e_mean = float(np.mean([d["E"] for d in data]))
+        n = len(c["positions"])
+        I_all.append(I + off); J_all.append(J + off)
+        B_all.append(basis(r)); dB_all.append(basis_deriv(r)); U_all.append(D / r[:, None])
+        cfg_of_atom.append(np.full(n, k)); n_at.append(n)
+        E_ref.append(float(c["energy"]) / n); F_ref.append(np.asarray(c["forces"]))
+        off += n
+    f32 = lambda x: mx.array(np.concatenate(x).astype(np.float32))
+    I, J = mx.array(np.concatenate(I_all)), mx.array(np.concatenate(J_all))
+    B, dB, U = f32(B_all), f32(dB_all), f32(U_all)
+    cfg = mx.array(np.concatenate(cfg_of_atom))
+    n_at = mx.array(np.array(n_at, np.float32))
+    e_mean = float(np.mean(E_ref))
+    E_t = mx.array((np.array(E_ref) - e_mean).astype(np.float32))
+    F_t = f32(F_ref)
+    n_atoms, n_cfg = off, len(configs)
+
     rng = np.random.default_rng(seed)
     params = {"a": mx.array(rng.normal(0, 1e-3, N_BASIS).astype(np.float32)),
               "b": mx.array(np.abs(rng.normal(0.05, 0.01, N_BASIS)).astype(np.float32)),
               "c": mx.array(np.array([-0.2, 0.0, 0.0, 0.0], np.float32)),
               "e0": mx.array(np.array([0.0], np.float32))}
 
-    def predict(p, d):
-        rho_pair = d["B"] @ p["b"]
-        rho = mx.zeros((d["n"],)).at[d["I"]].add(rho_pair)
-        rho = mx.maximum(rho, 1e-8)
+    def predict(p):
+        rho = mx.maximum(mx.zeros((n_atoms,)).at[I].add(B @ p["b"]), 1e-8)
         c = p["c"]
         Femb = c[0] * mx.sqrt(rho) + c[1] * rho + c[2] * rho ** 2 + c[3] * rho ** 3
         dF = 0.5 * c[0] / mx.sqrt(rho) + c[1] + 2 * c[2] * rho + 3 * c[3] * rho ** 2
-        E = (mx.sum(Femb) + 0.5 * mx.sum(d["B"] @ p["a"])) / d["n"] + p["e0"][0]
-        dEdr = 0.5 * (d["dB"] @ p["a"]) + 0.5 * (dF[d["I"]] + dF[d["J"]]) * (d["dB"] @ p["b"])
-        vec = dEdr[:, None] * d["unit"]
-        F = mx.zeros((d["n"], 3)).at[d["I"]].add(vec).at[d["J"]].add(-vec)
+        pair_atom = mx.zeros((n_atoms,)).at[I].add(0.5 * (B @ p["a"]))
+        E = mx.zeros((n_cfg,)).at[cfg].add(Femb + pair_atom) / n_at + p["e0"][0]
+        dEdr = 0.5 * (dB @ p["a"]) + 0.5 * (dF[I] + dF[J]) * (dB @ p["b"])
+        vec = dEdr[:, None] * U
+        F = mx.zeros((n_atoms, 3)).at[I].add(vec).at[J].add(-vec)
         return E, F
 
     def loss_fn(p):
-        tot = 0.0
-        for d in data:
-            E, F = predict(p, d)
-            tot = tot + (E - (d["E"] - e_mean)) ** 2 * 1e4 + w_force * mx.mean((F - d["F"]) ** 2) * 1e2
-        return tot / len(data)
+        E, F = predict(p)
+        return mx.mean((E - E_t) ** 2) * 1e4 + w_force * mx.mean((F - F_t) ** 2) * 1e2
 
     opt = optim.Adam(learning_rate=3e-3)
     step = mx.value_and_grad(loss_fn)
@@ -165,9 +173,11 @@ def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=No
         loss, g = step(params)
         opt.update(params, g)
         mx.eval(params, opt.state)
-        if log and it % 250 == 0:
+        if log and it % 500 == 0:
             log(it, float(loss))
         if it == iters // 2:
             opt.learning_rate = 1e-3
+        if it == (3 * iters) // 4:
+            opt.learning_rate = 3e-4
     to_np = lambda x: np.array(x, dtype=np.float64)
     return EAM(to_np(params["a"]), to_np(params["b"]), to_np(params["c"]), float(to_np(params["e0"])[0]) + e_mean)

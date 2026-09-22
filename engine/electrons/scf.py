@@ -79,6 +79,7 @@ class SCFSolver:
     def set_positions(self, positions) -> None:
         self.system.positions = np.asarray(positions, dtype=float).reshape(-1, 3)
         self.v_nuc = self.nuclear.potential(self.system.charges, self.system.positions)
+        self.rho_core = self.nuclear.core_density(self.system.charges, self.system.positions)
         nl = NonlocalProjectors(self.grid, self.system.charges, self.system.positions)
         self.projectors = nl if nl.count else None
         self.mixer.reset()
@@ -175,7 +176,7 @@ class SCFSolver:
             else:
                 v_h = self.b.to_numpy(g.hartree(self.b.asarray(rho_tot)))
                 if self.functional == "lda":
-                    _, vu, vd = lda_xc(*rho_in)
+                    _, vu, vd = lda_xc(*self._with_core(rho_in))
                     v_xc = (vu, vd)
                 else:
                     v_xc = (np.zeros(g.shape), np.zeros(g.shape))
@@ -270,11 +271,18 @@ class SCFSolver:
             v_h = self.b.to_numpy(g.hartree(self.b.asarray(rho)))
             comps["hartree"] = 0.5 * float(np.sum(v_h * rho) * g.dV)
         if self.functional == "lda":
-            e_xc, _, _ = lda_xc(*rho_out)
+            e_xc, _, _ = lda_xc(*self._with_core(rho_out))
             comps["exchange_correlation"] = float(np.sum(e_xc) * g.dV)
         elif self.functional == "hf":
             comps["exchange_correlation"] = exchange_hf
         return comps
+
+    def _with_core(self, rho_pair):
+        """Spin densities as the exchange–correlation functional sees them: plus half the ions'
+        partial core density each (nonlinear core correction)."""
+        if self.rho_core is None:
+            return rho_pair
+        return rho_pair[0] + 0.5 * self.rho_core, rho_pair[1] + 0.5 * self.rho_core
 
     def _boundary_leak(self, rho: np.ndarray) -> float:
         """Fraction of electrons within L/8 of any box face (should be ~0)."""
@@ -293,6 +301,9 @@ class SCFSolver:
         F_e = self.nuclear.forces(sysm.charges, sysm.positions, self.last.rho)
         _, F_nn = ion_ion(sysm.charges, sysm.positions)
         F = F_e + F_nn
+        if self.rho_core is not None and self.functional == "lda":
+            _, vu, vd = lda_xc(*self._with_core((self.last.rho_up, self.last.rho_dn)))
+            F += self.nuclear.core_forces(sysm.charges, sysm.positions, 0.5 * (vu + vd))
         if self.projectors is not None:
             for s in range(2):
                 if self.orbitals[s] is not None:

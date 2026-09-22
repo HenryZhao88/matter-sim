@@ -117,6 +117,18 @@ class WilsonDiracGPU:
     def apply_dag(self, X):
         return self.g5 @ self.apply(self.g5 @ X)
 
+    def smear(self, X, kappa_w: float = 0.25, steps: int = 40):
+        """Wuppertal smearing: a gauge-covariant diffusion of the source over space, which makes
+        it overlap mostly with the lowest hadron state instead of every excitation."""
+        mx = self.mx
+        for _ in range(steps):
+            hop = 0
+            for mu in (1, 2, 3):
+                hop = hop + self._colour(self.fwd[mu], mx.roll(X, -1, axis=mu)) \
+                          + self._colour(self.bwd[mu], mx.roll(X, 1, axis=mu))
+            X = (X + kappa_w * hop) / (1 + 6 * kappa_w)
+        return X
+
     def solve(self, B, tol=1e-6, maxiter=5000):
         """Conjugate gradient on D†D, one independent CG per column."""
         mx = self.mx
@@ -142,13 +154,17 @@ class WilsonDiracGPU:
         return x, maxiter
 
 
-def point_propagator_gpu(D: WilsonDiracGPU):
-    """S[t, x, y, z, s, c, s0, c0] from a point source at the origin, all 12 columns in one solve."""
+def point_propagator_gpu(D: WilsonDiracGPU, smeared: bool = False):
+    """S[t, x, y, z, s, c, s0, c0] from a source at the origin (point, or Wuppertal-smeared),
+    all 12 columns in one solve."""
     B = np.zeros(D.shape + (3, 4, 12), np.complex64)
     for s0 in range(4):
         for c0 in range(3):
             B[0, 0, 0, 0, c0, s0, s0 * 3 + c0] = 1.0
-    X, iters = D.solve(D.mx.array(B))
+    B = D.mx.array(B)
+    if smeared:
+        B = D.smear(B)
+    X, iters = D.solve(B)
     X = np.array(X).astype(complex).reshape(D.shape + (3, 4, 4, 3))       # (…, c, s, s0, c0)
     return X.transpose(0, 1, 2, 3, 5, 4, 6, 7), iters
 
@@ -193,10 +209,10 @@ def effective_mass(C: np.ndarray) -> np.ndarray:
     return m
 
 
-def plateau(m: np.ndarray, t_min: int = 2) -> float:
-    vals = m[t_min - 1:]
-    vals = vals[np.isfinite(vals)]
-    return float(np.mean(vals[: max(2, len(vals) // 2)])) if len(vals) else float("nan")
+def plateau(m: np.ndarray, width: int = 3) -> float:
+    """Mass from the last ``width`` time slices before T/2, where excited states have died away."""
+    vals = m[np.isfinite(m)][-width:]
+    return float(np.mean(vals)) if len(vals) else float("nan")
 
 
 def spectrum(beta: float = 5.7, L: int = 6, T: int = 12, kappas=(0.150, 0.155, 0.160), n_configs: int = 6,
@@ -210,7 +226,7 @@ def spectrum(beta: float = 5.7, L: int = 6, T: int = 12, kappas=(0.150, 0.155, 0
         for _ in range(spacing):
             g.sweep()
         for k in kappas:
-            S, _ = point_propagator_gpu(WilsonDiracGPU(g, k))
+            S, _ = point_propagator_gpu(WilsonDiracGPU(g, k), smeared=True)
             C = correlators(S)
             acc[k]["pion"] += C["pion"] / n_configs
             acc[k]["rho"] += C["rho"] / n_configs

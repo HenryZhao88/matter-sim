@@ -166,6 +166,9 @@ button.quiet.small { padding: 3px 10px; font-size: 12px; }
   grid-template-columns: repeat(8, 1fr);
   gap: 3px;
 }
+.ptable.dblock { grid-template-columns: repeat(10, 1fr); margin-top: 3px; }
+.ptable.dblock .el-sym { font-size: 12px; }
+.dcaption { margin: var(--s2) 0 2px; font-size: 11px; color: var(--muted); }
 .element {
   aspect-ratio: 1;
   display: grid;
@@ -393,7 +396,24 @@ input[type="range"] { accent-color: var(--amber); width: 96px; }
 }
 
 /* ------------------------------------------------------- workspaces */
-body[data-workspace="atoms"] .particles-only { display: none; }
+body[data-workspace="atoms"] .particles-only,
+body[data-workspace="atoms"] .matter-only,
+body[data-workspace="particles"] .matter-only,
+body[data-workspace="matter"] .particles-only { display: none; }
+body[data-workspace="matter"] #build,
+body[data-workspace="matter"] #stage,
+body[data-workspace="matter"] #measure,
+body[data-workspace="matter"] #runbar { display: none; }
+#m-stage { position: relative; }
+.m-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.m-legend { left: var(--s4); bottom: var(--s4); display: flex; align-items: center; gap: var(--s2); color: var(--muted); font-size: 12px; }
+.m-swatch { width: 10px; height: 10px; border-radius: 50%; display: inline-block; margin-left: var(--s2); }
+.m-swatch.crystal { background: #7fd8ff; }
+.m-swatch.liquid { background: #f0b455; }
+.m-chain { margin: var(--s3) 0 0; padding-left: 1.3em; display: grid; gap: var(--s3); }
+.m-chain li::marker { color: var(--faint); font: 400 13px var(--serif); }
+.m-step { display: block; color: var(--paper); font: 500 15px/1.3 var(--serif); }
+.m-body { display: block; color: var(--muted); font-size: 12.5px; line-height: 1.45; margin-top: 2px; }
 body[data-workspace="particles"] #build,
 body[data-workspace="particles"] #stage,
 body[data-workspace="particles"] #measure,
