@@ -22,6 +22,8 @@ const STRENGTH: Record<string, { label: string; values: number[]; initial: numbe
     hint: "The electric field switched on at the start, in units of one charge's field." },
   string_breaking: { label: "Charge on each end", values: [0.5, 1, 1.5], initial: 1,
     hint: "The two fixed charges holding the string, in units of the particle's charge." },
+  jet: { label: "Launch speed", values: [0.3, 0.6, 0.9], initial: 0.6,
+    hint: "Momentum of the outgoing particle and antiparticle, as a fraction of the fastest this lattice allows." },
   collision: { label: "Collision speed", values: [0.6, 0.8, 1, 1.15], initial: 1,
     hint: "Momentum of each incoming meson, as a fraction of the fastest this lattice allows." },
 };

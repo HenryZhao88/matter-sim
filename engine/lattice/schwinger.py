@@ -119,6 +119,32 @@ class SchwingerModel:
                 out += amp * (self._pair_operator(n) @ psi)
         return out / np.linalg.norm(out)
 
+    def _flip(self, psi: np.ndarray, sites: tuple[int, ...], want: tuple[int, ...]) -> np.ndarray:
+        """Flip the given sites where they currently hold the bit values ``want`` (else zero)."""
+        ok = np.ones(self.dim, bool)
+        mask = 0
+        for n, w in zip(sites, want):
+            ok &= ((self.states >> n) & 1) == w
+            mask |= 1 << n
+        idx = np.nonzero(ok & (np.abs(psi) > 0))[0]
+        out = np.zeros_like(psi)
+        new = self.states[idx] ^ mask
+        out[[self.index[int(x)] for x in new]] = psi[idx]
+        return out
+
+    def jet_pair(self, psi: np.ndarray, k: float, spread: float = 1.5) -> np.ndarray:
+        """A particle and an antiparticle created at the centre, flying apart with momenta ∓k,
+        joined by the electric field line that Gauss's law requires between them."""
+        c = (self.N // 2 - 1) & ~1                      # an even site near the centre
+        out = np.zeros_like(psi)
+        for u in range(0, self.N):
+            i, j = c - 2 * u, c + 1 + 2 * u             # particle (even site), antiparticle (odd site)
+            if i < 0 or j >= self.N:
+                break
+            amp = math.exp(-(u * u) / (2 * spread * spread)) * np.exp(-1j * k * (j - i))
+            out += amp * self._flip(psi, (i, j), (0, 1))
+        return out / np.linalg.norm(out)
+
     # ------------------------------------------------------------ observables
     def measure(self, psi: np.ndarray) -> dict:
         p = np.abs(psi) ** 2
@@ -152,6 +178,10 @@ SCENARIOS = {
         "name": "String breaking",
         "blurb": "Two fixed charges joined by a string of electric field. Past a certain length the string snaps and new particles appear to end it.",
     },
+    "jet": {
+        "name": "Hadronisation",
+        "blurb": "A particle and antiparticle fly apart from one point. The field string between them stores energy as it stretches, then snaps into new particle–antiparticle pairs: the outgoing charges end up dressed as mesons.",
+    },
     "collision": {
         "name": "Particle collision",
         "blurb": "Two mesons (bound particle–antiparticle pairs) fired at each other. Watch for new particles in the wreckage.",
@@ -174,6 +204,10 @@ def run_scenario(kind: str, N: int = 18, mass: float = 0.25, t_max: float = 12.0
         model = SchwingerModel(N=N, mass=mass, a=a, static_charges={i: +strength, j: -strength})
         # start from the vacuum without the string, then add the charges (a sudden quench)
         _, psi = SchwingerModel(N=N, mass=mass, a=a).ground_state()
+    elif kind == "jet":
+        model = SchwingerModel(N=N, mass=mass, a=a)
+        _, vac = model.ground_state()
+        psi = model.jet_pair(vac, k=strength * 2.0)
     elif kind == "collision":
         model = SchwingerModel(N=N, mass=mass, a=a)
         _, vac = model.ground_state()

@@ -112,3 +112,12 @@ def test_pion_is_lighter_than_rho():
     r = spectrum(beta=5.7, L=4, T=8, kappas=(0.150, 0.155, 0.158), n_configs=2, therm=20, spacing=5)
     assert all(p < q for p, q in zip(r["pion"], r["rho"]))
     assert r["pion"][0] > r["pion"][-1]                      # lighter quarks → lighter pion
+
+
+def test_flying_pair_string_breaks_into_neutral_mesons():
+    """Hadronisation in 1D: the charges flying apart are screened by pairs from the vacuum."""
+    model, it = run_scenario("jet", N=14, mass=0.25, t_max=6.0, frames=7, strength=0.6)
+    rows = [obs for _, obs in it]
+    sep = [obs["charge"][: model.N // 2].sum() for obs in rows]
+    assert sep[0] > 0.9                           # one unit of charge on each side at the start
+    assert min(sep[3:]) < 0.5 * sep[0]           # string broke: each half is now nearly neutral
