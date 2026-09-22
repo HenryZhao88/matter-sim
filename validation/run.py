@@ -66,11 +66,82 @@ def angle(P, c, a, b) -> float:
     return math.degrees(math.acos(float(u @ v / np.linalg.norm(u) / np.linalg.norm(v))))
 
 
-def main(quick: bool = False) -> None:
+def main(quick: bool = False, part: str = "all") -> None:
     t0 = time.time()
     q = "draft" if quick else "standard"
-    print(f"matter-sim validation ({'quick' if quick else 'full'}; 3D grid: {q})")
+    print(f"matter-sim validation ({'quick' if quick else 'full'}; 3D grid: {q}; part: {part})")
+    if part in ("all", "particles"):
+        particles_section(quick)
+    if part in ("all", "atoms"):
+        atoms_section(quick, q)
+    ok = [r["ok"] for r in rows if r["ok"] is not None]
+    print(f"\n{sum(ok)}/{len(ok)} checks pass  ({time.time() - t0:.0f} s)")
+    OUT.write_text(json.dumps({"quick": quick, "part": part, "rows": rows}, indent=2, default=float))
+    print(f"Wrote {OUT}")
 
+
+def particles_section(quick: bool) -> None:
+    from engine.lattice.qcd import GaugeField, polyakov_scan, run_measurement
+    from engine.lattice.schwinger import run_scenario
+    from engine.particles.decays import branching_ratios, lifetime_seconds, total_width
+    from engine.particles.events import is_confined, lambda_qcd, outcomes
+    from engine.particles.process import cross_section, model
+
+    section("Standard Model: symmetry breaking (input: gauge group, representations, α, G_F, m_Z)")
+    m = model()
+    record("particles", "Photon mass", m.vector("photon").mass, 0.0, "GeV", "massless: emerges", abs(m.vector("photon").mass) < 1e-9)
+    record("particles", "W mass (tree-level prediction)", m.vector("W1").mass, 80.37, "GeV", "loop corrections +0.7%",
+           abs(m.vector("W1").mass - 80.37) / 80.37 < 0.01)
+    charges = {n: round(m.fermion(n).charge, 4) for n in ("u", "d", "e", "nu_e")}
+    record("particles", "Charges u, d, e, ν (from isospin + hypercharge)",
+           ", ".join(f"{v:+g}" for v in charges.values()), "+⅔, −⅓, −1, 0",
+           ok=charges == {"u": 0.6667, "d": -0.3333, "e": -1.0, "nu_e": 0.0})
+
+    section("Standard Model: decays and collisions (tree level)")
+    tau_mu = lifetime_seconds("mu-")
+    record("particles", "Muon lifetime", tau_mu * 1e6, 2.1970, "μs", "via W exchange", abs(tau_mu * 1e6 - 2.197) < 0.05)
+    inv = sum(b for p, b in branching_ratios("Z") if all(x.startswith("nu") for x in p))
+    record("particles", "Z → invisible (counts ν families)", inv * 100, 20.0, "%", "3 families", abs(inv - 0.200) < 0.01)
+    record("particles", "Z width", total_width("Z"), 2.4952, "GeV", "no QCD corrections", abs(total_width("Z") - 2.4952) < 0.12)
+    record("particles", "Top escapes confinement, bottom does not",
+           f"{not is_confined('t')}, {is_confined('b')}", "True, True", "", f"Λ_QCD = {lambda_qcd():.3f} GeV",
+           (not is_confined("t")) and is_confined("b"))
+    tab = outcomes("e-", "e+", 10.0)
+    had = sum(r[2] for r in tab if r[0].rstrip("~") in ("u", "d", "s", "c", "b"))
+    mumu = next(r[2] for r in tab if {r[0], r[1]} == {"mu-", "mu+"})
+    record("particles", "R = σ(hadrons)/σ(μμ) at 10 GeV", had / mumu, 3.58, "", "11/3 from three colours, b threshold",
+           abs(had / mumu - 3.58) < 0.1)
+    s200 = cross_section("e-", "e+", "W+", "W-", 200.0, n_cos=48)[0]
+    s3000 = cross_section("e-", "e+", "W+", "W-", 3000.0, n_cos=48)[0]
+    record("particles", "σ(e⁺e⁻ → W⁺W⁻) at 200 GeV", s200, 17.0, "pb", "LEP2, tree level", 15 < s200 < 22)
+    record("particles", "…and falls at 3 TeV (gauge cancellation)", s3000, "< σ(200)", "pb", ok=s3000 < s200)
+
+    section("Real-time QED in one space dimension (exact)")
+    _, it = run_scenario("pair_creation", N=14, mass=0.3, t_max=4.0, frames=21, strength=1.0)
+    frames = list(it)
+    created = max(f[1]["particles"] for f in frames)
+    drift = max(f[1]["energy"] for f in frames) - min(f[1]["energy"] for f in frames)
+    record("lattice", "Pairs created from empty space by a field", created, "> 0", "particles", ok=created > 1)
+    record("lattice", "Energy conservation", drift, 0.0, "", "exact evolution", drift < 1e-9)
+
+    section("Lattice QCD, pure gauge (quenched)")
+    g = GaugeField(6, 6, 6.0, seed=4)
+    vals = []
+    for s in range(80):
+        g.sweep()
+        if s >= 30:
+            vals.append(g.plaquette())
+    record("lattice", "Plaquette at β = 6.0", float(np.mean(vals)), 0.5937, "", "published", abs(np.mean(vals) - 0.5937) < 0.004)
+    res = [x for x in run_measurement(5.7, L=8, T=8, sweeps=90) if x["type"] == "qcd.result"][0]
+    record("lattice", "String tension σa² at β = 5.7", res["fit"]["sigma"], 0.16, "", "confinement; 8⁴ reads low",
+           0.08 < res["fit"]["sigma"] < 0.25)
+    if not quick:
+        (b1, p1, _), (b2, p2, _) = polyakov_scan([5.45, 6.1], L=8, Nt=4, sweeps=100)
+        record("lattice", "Polyakov loop: cold vs hot", f"{p1:.3f} → {p2:.3f}", "≈0 → >0", "", "deconfinement near β = 5.69",
+               p2 > 3 * p1)
+
+
+def atoms_section(quick: bool, q: str) -> None:
     section("Hydrogen: one electron, exact Hamiltonian")
     g = RadialGrid(r_max=200.0)
     e_s, _ = radial_eigenstates(g, -1 / g.r, 0, 3, 1.0)
@@ -166,10 +237,6 @@ def main(quick: bool = False) -> None:
         best = min(scan, key=lambda r: r["energy"])["multiplicity"] - 1
         record("magnetism", label, best, expect, "", "lowest-energy spin", best == expect)
 
-    ok = [r["ok"] for r in rows if r["ok"] is not None]
-    print(f"\n{sum(ok)}/{len(ok)} checks pass  ({time.time() - t0:.0f} s)")
-    OUT.write_text(json.dumps({"quick": quick, "rows": rows}, indent=2, default=float))
-    print(f"Wrote {OUT}")
 
 
 if __name__ == "__main__":

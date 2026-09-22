@@ -32,11 +32,12 @@ def main() -> None:
     ap.add_argument("--no-browser", action="store_true")
     v = sub.add_parser("validate", help="run the experiment-vs-simulation checks")
     v.add_argument("--quick", action="store_true", help="coarser grids, fewer checks")
+    v.add_argument("--part", choices=["all", "particles", "atoms"], default="all")
     args = ap.parse_args()
 
     if args.cmd == "validate":
         from validation.run import main as validate
-        validate(quick=args.quick)
+        validate(quick=args.quick, part=args.part)
         return
 
     ensure_viewer_built()
