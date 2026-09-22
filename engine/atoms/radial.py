@@ -206,6 +206,31 @@ def _find_level(r, h, V, l, nodes_target, z0, tol):
     return e, phi
 
 
+@njit(cache=True)
+def _outward(r, h, V, l, eps, z0):
+    n = r.shape[0]
+    F = 2.0 * r * r * (V - eps) + (l + 0.5) ** 2
+    w = 1.0 - h * h * F / 12.0
+    phi = np.zeros(n)
+    phi[0] = r[0] ** (l + 0.5) * (1.0 - z0 * r[0] / (l + 1.0))
+    phi[1] = r[1] ** (l + 0.5) * (1.0 - z0 * r[1] / (l + 1.0))
+    for i in range(1, n - 1):
+        phi[i + 1] = ((12.0 - 10.0 * w[i]) * phi[i] - w[i - 1] * phi[i - 1]) / w[i + 1]
+        if abs(phi[i + 1]) > 1e150:
+            break
+    return phi
+
+
+def scattering_state(grid: RadialGrid, V: np.ndarray, l: int, eps: float, z0: float = 0.0) -> np.ndarray:
+    """Regular solution u(r) at any energy (bound or not), integrated outward from the nucleus.
+
+    Used for channels with no bound state in the atom (e.g. d in aluminium); only its shape
+    inside the core radius matters for building a pseudopotential.
+    """
+    phi = _outward(grid.r, grid.dx, V, l, eps, z0)
+    return phi * np.sqrt(grid.r)
+
+
 def radial_eigenstates(grid: RadialGrid, V: np.ndarray, l: int, count: int, z0: float = 0.0):
     """Lowest ``count`` bound eigenpairs (ε, u normalised) for angular momentum l."""
     r = grid.r
@@ -289,7 +314,8 @@ class RadialAtom:
         g, r = self.grid, self.grid.r
         ne = self.n_up + self.n_dn
         # Start from a hydrogen-like cloud; converged result does not depend on it.
-        zeff = max(self.Z, 1) ** (1 / 3)
+        # a compact core-sized cloud for bare nuclei, a diffuse valence-sized one for pseudo-atoms
+        zeff = 0.7 if self.z0[0] < 1e-6 else max(self.Z, 1) ** (1 / 3)
         rho0 = ne * zeff ** 3 * np.exp(-2 * zeff * r) / np.pi
         rho = [rho0 * self.n_up / max(ne, 1e-12), rho0 * self.n_dn / max(ne, 1e-12)]
         mixer = PulayMixer(beta=0.3, history=8)

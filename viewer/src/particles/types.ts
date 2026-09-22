@@ -11,7 +11,7 @@ export interface CParticle {
   p: [number, number, number, number];
   origin: [number, number, number];
   parent: number | null;
-  status: "final" | "decayed" | "confined" | "invisible";
+  status: "final" | "decayed" | "confined" | "invisible" | "showered";
   decay_point: [number, number, number] | null;
   children: number[];
 }

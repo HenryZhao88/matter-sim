@@ -309,7 +309,7 @@ export class Collider {
       const sw = el("span", { class: "swatch" });
       sw.style.background = FAMILY_COLOUR[meta?.family ?? "other"];
       const status = p.status === "decayed" ? "decayed" : p.status === "confined" ? "confined" :
-        p.status === "invisible" ? "unseen" : "seen";
+        p.status === "showered" ? "radiated" : p.status === "invisible" ? "unseen" : "seen";
       const btn = el("button", { class: "tree-node", title: "Show this particle's decays" },
         sw, el("span", { class: "tree-sym" }, rich(this.sym(p.name))),
         el("span", { class: "tree-energy" }, `${num(p.p[0], 1)} GeV`),
@@ -317,7 +317,9 @@ export class Collider {
       btn.onclick = () => this.send({ type: "collider.particle", name: p.name });
       const li = el("li", {}, btn);
       const kids = byParent.get(i);
-      if (kids?.length) li.append(el("ol", {}, ...kids.map(node)));
+      if (kids?.length && p.status === "showered") {
+        li.append(el("p", { class: "tree-shower hint" }, `radiated into ${kids.length} quarks and gluons (parton shower)`));
+      } else if (kids?.length) li.append(el("ol", {}, ...kids.map(node)));
       return li;
     };
     this.tree.replaceChildren(...(byParent.get(null) ?? []).map(node));

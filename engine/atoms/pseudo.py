@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.special import erf
 
-from .radial import AtomResult, RadialAtom, RadialGrid, hartree_potential
+from .radial import AtomResult, RadialAtom, RadialGrid, hartree_potential, scattering_state
 from ..electrons.xc import lda_xc
 
 # Core radii (bohr), close to Troullier & Martins' published choices.
@@ -189,7 +189,16 @@ def _tm_channel(grid: RadialGrid, u: np.ndarray, V: np.ndarray, eps: float, l: i
     return u_ps, v_scr, rc
 
 
-def generate(Z: int, rc: dict[int, float] | None = None, l_local: int = 1) -> Pseudopotential:
+def default_local_channel(Z: int) -> int:
+    """First row: p (no core p states, so V_p is the gentlest channel).
+    Third row: d, the channel with no core states to be orthogonal to, so the d-like
+    scattering electrons meet in solids and molecules is not pushed out by core repulsion."""
+    return 2 if Z >= 11 else 1
+
+
+def generate(Z: int, rc: dict[int, float] | None = None, l_local: int | None = None) -> Pseudopotential:
+    if l_local is None:
+        l_local = default_local_channel(Z)
     grid = RadialGrid(r_min=2e-6 / math.sqrt(Z), r_max=60.0, dx=0.004)
     ref: AtomResult = RadialAtom(Z, spin=0.0, grid=grid).solve()
     core, valence = _core_valence_split(ref.levels)
@@ -200,7 +209,7 @@ def generate(Z: int, rc: dict[int, float] | None = None, l_local: int = 1) -> Ps
     n_core = 2 * sum((2 * lv.l + 1) for lv in core)
     Z_val = Z - n_core
     V = ref.v_up  # spin-unpolarised reference: both spins identical
-    rc_all = rc or {0: DEFAULT_RC[Z], 1: DEFAULT_RC[Z]}
+    rc_all = rc or {0: DEFAULT_RC[Z], 1: DEFAULT_RC[Z], 2: DEFAULT_RC[Z]}
 
     u_ps, v_scr, eps, occ, rcs, valence_n = {}, {}, {}, {}, {}, {}
     for l in (0, 1):
@@ -212,6 +221,13 @@ def generate(Z: int, rc: dict[int, float] | None = None, l_local: int = 1) -> Ps
         eps[l] = lv.energy
         occ[l] = 2 * lv.occupation  # both spins
         valence_n[l] = lv.n
+    if l_local == 2:
+        # d is unbound in these atoms: use the scattering state at the highest valence energy
+        e_ref = max(eps.values())
+        u_d = scattering_state(grid, V, 2, e_ref)
+        u_ps[2], v_scr[2], rcs[2] = _tm_channel(grid, u_d, V, e_ref, 2, rc_all[2])
+        eps[2] = e_ref
+        occ[2] = 0.0
 
     r = grid.r
     rho_v = sum(occ[l] * u_ps[l] ** 2 for l in u_ps) / (4 * np.pi * r * r)

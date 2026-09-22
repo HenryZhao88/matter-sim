@@ -188,6 +188,17 @@ def _add(parts, name, p, origin, parent, rng, depth=0):
     parts.append(Particle(name, [float(x) for x in p], [float(x) for x in origin], parent, status))
     if parent is not None:
         parts[parent].children.append(idx)
+    if status == "confined" and p[0] > 5.0:
+        # QCD radiation before confinement: the parton shower (leading-log, from the QCD vertices)
+        from .shower import shower
+        fins = shower(name, np.asarray(p, float), rng)
+        if len(fins) > 1:
+            parts[idx].status = "showered"
+            for fname, fp in fins:
+                cidx = len(parts)
+                parts.append(Particle(fname, [float(x) for x in fp], [float(x) for x in origin], idx, "confined"))
+                parts[idx].children.append(cidx)
+        return
     if name not in UNSTABLE or depth > 6 or status == "confined":
         return
     # flight distance from the computed lifetime: L = βγ cτ, exponential

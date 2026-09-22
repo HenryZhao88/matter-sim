@@ -92,7 +92,16 @@ export class EventDisplay {
     this.tracks = [];
     for (const p of ev.particles) {
       if (p.status === "decayed" && !this.flewVisibly(p)) continue;
-      this.addParticle(p, ev);
+      if (p.status === "showered") {
+        // label the jet once, at the end of the parton that started it
+        const dir = new THREE.Vector3(p.p[1], p.p[2], p.p[3]).normalize();
+        const len = Math.min(CALO_R, 0.6 + 0.35 * Math.log1p(p.p[0]));
+        this.tracks.push({ line: new THREE.Line(), points: [], label: `${this.meta[p.name]?.symbol ?? p.name} jet (confined)`,
+          end: new THREE.Vector3(...p.origin).addScaledVector(dir, len * 1.05) });
+        continue;
+      }
+      const showered = p.parent !== null && ev.particles[p.parent]?.status === "showered";
+      this.addParticle(p, ev, showered);
     }
     const miss = this.missingMomentum(ev);
     if (miss) this.addMissing(miss);
@@ -112,7 +121,7 @@ export class EventDisplay {
     return d > 0.002;
   }
 
-  private addParticle(p: CParticle, ev: CEvent): void {
+  private addParticle(p: CParticle, ev: CEvent, inShower = false): void {
     const meta = this.meta[p.name];
     const colour = new THREE.Color(FAMILY_COLOUR[meta?.family ?? "other"]);
     const origin = new THREE.Vector3(...p.origin);
@@ -120,6 +129,21 @@ export class EventDisplay {
     const pvec = new THREE.Vector3(px, py, pz);
     const pmag = pvec.length();
     const label = meta?.symbol ?? p.name;
+    if (p.status === "confined" && inShower) {
+      // one parton of a shower: a thin line and a narrow cone, no label (the jet carries it)
+      const dir = pvec.clone().normalize();
+      const len = Math.min(CALO_R, 0.35 + 0.3 * Math.log1p(E));
+      const cone = new THREE.Mesh(
+        new THREE.ConeGeometry(len * 0.06, len, 12, 1, true),
+        new THREE.MeshBasicMaterial({ color: colour, transparent: true, opacity: 0.18, side: THREE.DoubleSide, depthWrite: false }),
+      );
+      cone.position.copy(origin.clone().addScaledVector(dir, len / 2));
+      cone.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().negate());
+      this.event.add(cone);
+      const axis = this.straight(origin, dir, len, colour, 0.75);
+      this.tracks.push({ ...axis, label: "", end: origin.clone().addScaledVector(dir, len) });
+      return;
+    }
     if (p.status === "confined") {
       // A jet would form here; draw the cone its hadrons would fill, and say so.
       const len = Math.min(CALO_R, 0.6 + 0.35 * Math.log1p(E));
@@ -234,7 +258,7 @@ export class EventDisplay {
   private placeLabels(progress: number): void {
     if (!this.canvas.clientWidth) return;
     const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
-    const nodes = this.tracks.slice(0, 14).map((t) => {
+    const nodes = this.tracks.filter((t) => t.label).slice(0, 14).map((t) => {
       const v = t.end.clone().project(this.camera);
       const div = rich(t.label);
       div.className = "p-label";

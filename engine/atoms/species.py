@@ -15,7 +15,7 @@ from pathlib import Path
 from .pseudo import Pseudopotential, generate
 
 CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "pseudo"
-CACHE_VERSION = 2
+CACHE_VERSION = 3
 
 
 def is_pseudized(Z: int) -> bool:
