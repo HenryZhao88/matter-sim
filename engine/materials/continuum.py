@@ -151,7 +151,7 @@ REFERENCE = {
     "a0_A": (4.046, "lattice constant at 293 K"), "B_GPa": (76.0, "bulk modulus"),
     "C11": (107.0, ""), "C12": (61.0, ""), "C44": (28.0, ""), "E_coh_eV": (3.39, "cohesive energy"),
     "T_melt": (933.5, "melting point, K"), "latent_eV": (0.111, "latent heat of fusion, eV/atom"),
-    "density": (2699.0, "kg/m³ at 293 K"), "young_GPa": (70.0, "Young's modulus"), "alpha_per_K": (23.1e-6, "linear expansion, 1/K"),
+    "density": (2699.0, "kg/m³ at 293 K"), "young_GPa": (63.0, "Young's modulus along a cube axis (polycrystals average 70)"), "alpha_per_K": (23.1e-6, "linear expansion, 1/K"),
     "c_J_per_gK": (0.897, "specific heat at 298 K"), "sound_long": (6420.0, "m/s"), "sound_trans": (3040.0, "m/s"),
 }
 
