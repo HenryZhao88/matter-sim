@@ -84,15 +84,19 @@ def initial_configurations(Z: int, a0: float, seed: int = 0) -> list[dict]:
         v_atom = a0 ** 3 / 4 * rng.uniform(1.02, 1.12)
         n = 8
         L = (v_atom * n) ** (1 / 3)
-        pos = _random_packing(rng, n, L, 4.6)
+        pos = _random_packing(rng, n, L, 4.0)
         confs.append({"cell": np.array([L, L, L]), "charges": [Z] * n, "positions": pos, "tag": "disordered"})
     return confs
 
 
 def _random_packing(rng, n, L, dmin):
-    pos = []
-    while len(pos) < n:
-        p = rng.uniform(0, L, 3)
-        if all(np.linalg.norm(((p - q) + L / 2) % L - L / 2) > dmin for q in pos):
-            pos.append(p)
-    return np.array(pos)
+    """Random positions at least dmin apart (restarts if random placement jams)."""
+    while True:
+        pos, tries = [], 0
+        while len(pos) < n and tries < 20000:
+            tries += 1
+            p = rng.uniform(0, L, 3)
+            if all(np.linalg.norm(((p - q) + L / 2) % L - L / 2) > dmin for q in pos):
+                pos.append(p)
+        if len(pos) == n:
+            return np.array(pos)

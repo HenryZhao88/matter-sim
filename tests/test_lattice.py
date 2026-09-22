@@ -64,3 +64,51 @@ def test_quark_potential_rises_linearly_confinement():
 def test_deconfinement_at_high_temperature():
     (b1, p1, _), (b2, p2, _) = polyakov_scan([5.4, 6.1], L=6, Nt=4, sweeps=80)
     assert p2 > 3 * p1
+
+
+def test_wilson_dirac_is_gamma5_hermitian_and_gpu_matches_cpu():
+    from engine.lattice.hadrons import GAMMA5, WilsonDirac, WilsonDiracGPU
+    g = GaugeField(2, 4, 5.7, seed=3, hot=True)
+    D = WilsonDirac(g, 0.15)
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=D.shape + (4, 3)) + 1j * rng.normal(size=D.shape + (4, 3))
+    b = rng.normal(size=D.shape + (4, 3)) + 1j * rng.normal(size=D.shape + (4, 3))
+    # <a, D b> = <D† a, b> with D† = γ5 D γ5
+    assert abs(np.vdot(a, D.apply(b)) - np.vdot(D.apply_dag(a), b)) < 1e-10 * np.abs(a).sum()
+    G = WilsonDiracGPU(g, 0.15)
+    x = np.zeros(D.shape + (3, 4, 1), np.complex64)
+    x[..., 0] = np.swapaxes(b, -1, -2)
+    y = np.array(G.apply(G.mx.array(x)))[..., 0]
+    assert np.abs(np.swapaxes(y, -1, -2) - D.apply(b)).max() < 1e-4
+
+
+@pytest.mark.slow
+def test_pion_is_lighter_than_rho():
+    from engine.lattice.hadrons import spectrum
+    r = spectrum(beta=5.7, L=4, T=8, kappas=(0.150, 0.155, 0.158), n_configs=2, therm=20, spacing=5)
+    assert all(p < q for p, q in zip(r["pion"], r["rho"]))
+    assert r["pion"][0] > r["pion"][-1]                      # lighter quarks → lighter pion
+
+
+def test_wilson_dirac_is_gamma5_hermitian_and_gpu_matches_cpu():
+    from engine.lattice.hadrons import WilsonDirac, WilsonDiracGPU
+    g = GaugeField(2, 4, 5.7, seed=3, hot=True)
+    D = WilsonDirac(g, 0.15)
+    rng = np.random.default_rng(0)
+    a = rng.normal(size=D.shape + (4, 3)) + 1j * rng.normal(size=D.shape + (4, 3))
+    b = rng.normal(size=D.shape + (4, 3)) + 1j * rng.normal(size=D.shape + (4, 3))
+    # <a, D b> = <D† a, b> with D† = γ5 D γ5
+    assert abs(np.vdot(a, D.apply(b)) - np.vdot(D.apply_dag(a), b)) < 1e-10 * np.abs(a).sum()
+    G = WilsonDiracGPU(g, 0.15)
+    x = np.zeros(D.shape + (3, 4, 1), np.complex64)
+    x[..., 0] = np.swapaxes(b, -1, -2)
+    y = np.array(G.apply(G.mx.array(x)))[..., 0]
+    assert np.abs(np.swapaxes(y, -1, -2) - D.apply(b)).max() < 1e-4
+
+
+@pytest.mark.slow
+def test_pion_is_lighter_than_rho():
+    from engine.lattice.hadrons import spectrum
+    r = spectrum(beta=5.7, L=4, T=8, kappas=(0.150, 0.155, 0.158), n_configs=2, therm=20, spacing=5)
+    assert all(p < q for p, q in zip(r["pion"], r["rho"]))
+    assert r["pion"][0] > r["pion"][-1]                      # lighter quarks → lighter pion
