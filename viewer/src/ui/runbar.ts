@@ -24,6 +24,7 @@ export class RunBar {
   private temp = el("input", { type: "number", min: "0", max: "5000", step: "50", value: "0", "aria-label": "Temperature in kelvin" });
   private tempField = el("label", { class: "inline-field" }, "Heat bath ", this.temp, " K");
   private verify = el("button", { class: "quiet" }, "Check precision");
+  private truth = el("button", { class: "quiet" }, "Truth mode");
   private readout = el("div", { class: "readout" });
   private status: Status | null = null;
 
@@ -35,6 +36,8 @@ export class RunBar {
     this.temp.onchange = () => this.send({ type: "set_params", params: { temperature_K: Number(this.temp.value) || 0 } });
     this.verify.onclick = () => this.send({ type: "verify" });
     this.verify.title = "Re-solve this state in 64-bit on the CPU and compare with the 32-bit GPU result";
+    this.truth.onclick = () => this.send({ type: "truth" });
+    this.truth.title = "Solve the exact many-electron Schrödinger equation with a neural-network wavefunction (small systems, about a minute)";
     root.append(
       el("div", { class: "run-group" }, this.play, this.stepBtn),
       this.modes,
@@ -42,7 +45,7 @@ export class RunBar {
         el("label", { class: "inline-field" }, "Resolution ", this.quality),
         el("label", { class: "inline-field" }, "Electrons ", this.method),
         this.tempField),
-      el("div", { class: "run-group end" }, this.verify, this.readout),
+      el("div", { class: "run-group end" }, this.truth, this.verify, this.readout),
     );
   }
 

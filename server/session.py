@@ -196,6 +196,8 @@ class Session:
             self._step()
         elif t == "verify":
             self._verify()
+        elif t == "truth":
+            self._truth()
         elif t == "snapshot":
             if self.latest_snapshot:
                 self._pub_bytes(self.latest_snapshot)
@@ -225,6 +227,26 @@ class Session:
         charge = min(s.charge, sum(Z) - 1) if sum(Z) > 1 else 0
         self.preset_id = None
         self.sim.set_system(System(Z, P, charge=max(charge, 0)))
+
+    def _truth(self) -> None:
+        """Truth mode: every electron, the exact Hamiltonian, a neural-network wavefunction (VMC)."""
+        from engine.truth.vmc import VMC, Molecule
+        s = self.sim.system
+        if s.n_up > 3 or s.n_dn > 3:
+            raise ValueError("Truth mode handles up to three electrons of each spin for now (H₂, He, Li, LiH, Be…)")
+        mol = Molecule([float(z) for z in s.charges], np.asarray(s.positions, float),
+                       int(round(s.n_up)), int(round(s.n_dn)))
+        self._pub_json({"type": "log", "level": "info",
+                        "message": "Truth mode: training a neural-network wavefunction on the exact Hamiltonian…"})
+        t0 = time.perf_counter()
+        v = VMC(mol, walkers=512, hidden=24, layers=2, dets=2)
+        v.train(iters=400, log=lambda it, e, sec: self._pub_json(sanitize(
+            {"type": "truth_progress", "iter": it, "iters": 400, "energy": e})))
+        E, err = v.evaluate(12, 5)
+        all_electron = all(z <= 2 for z in s.charges)
+        dft = self.sim.result.free_energy if (self.sim.result is not None and all_electron) else None
+        self._pub_json(sanitize({"type": "truth_result", "energy": E, "error": err, "dft_energy": dft,
+                                 "functional": self.sim.params.functional, "seconds": time.perf_counter() - t0}))
 
     def _verify(self) -> None:
         """Re-solve the current geometry in float64 on the CPU and compare."""

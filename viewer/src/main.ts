@@ -146,6 +146,16 @@ function onEvent(e: ServerEvent | ColliderEvent): void {
       );
       break;
     }
+    case "truth_progress":
+      $("progress").hidden = false;
+      $("progress").textContent = `Truth mode: step ${e.iter} of ${e.iters}, energy ${num(e.energy, 4)} Ha`;
+      break;
+    case "truth_result": {
+      $("progress").hidden = true;
+      const gap = e.dft_energy !== null ? ` The ${e.functional.toUpperCase()} answer on the grid was ${num(e.dft_energy, 4)} Ha, ${num((e.dft_energy - e.energy) * 27.2114, 2)} eV away.` : "";
+      toast(`Exact Hamiltonian, neural-network wavefunction: ${num(e.energy, 4)} ± ${num(e.error, 4)} Ha (variational, so the true energy is at or below it).${gap}`, "info");
+      break;
+    }
     case "spin_scan": {
       const rows = [...e.rows].sort((a, b) => a.energy - b.energy);
       const low = rows[0].energy;

@@ -121,5 +121,7 @@ export type ServerEvent =
   | ScfProgress
   | VerifyResult
   | { type: "spin_scan"; best: number; rows: { multiplicity: number; energy: number; converged: boolean }[] }
+  | { type: "truth_progress"; iter: number; iters: number; energy: number }
+  | { type: "truth_result"; energy: number; error: number; dft_energy: number | null; functional: string; seconds: number }
   | { type: "log"; level: string; message: string }
   | { type: "error"; message: string };
