@@ -25,6 +25,15 @@ MODES = ("frozen", "relax", "dynamics")
 QUALITY_H = {"draft": 0.30, "standard": 0.20, "fine": 0.13}
 
 
+def supported_elements() -> set[int]:
+    """Elements the live grids resolve accurately.
+
+    Point nuclei need h ≲ 0.6/Z for the innermost electrons, so without
+    pseudopotentials only H and He are accurate at interactive resolutions.
+    """
+    return {1, 2}
+
+
 @dataclass
 class Params:
     functional: str = "lda"
@@ -53,6 +62,7 @@ class Simulation:
         self.result: SCFResult | None = None
         self.last_step_seconds = 0.0
         self.energy_trace: list[float] = []
+        self.on_scf_progress = None  # optional callback(row) per SCF iteration
         self._build()
 
     # ----------------------------------------------------------- building
@@ -109,7 +119,7 @@ class Simulation:
 
     # ---------------------------------------------------------- stepping
     def _solve(self) -> None:
-        self.result = self.solver.run()
+        self.result = self.solver.run(callback=self.on_scf_progress)
         self.forces = self.solver.forces()
 
     def step(self) -> None:
