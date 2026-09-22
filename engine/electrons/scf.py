@@ -26,7 +26,8 @@ import numpy as np
 from ..core.grid import Grid
 from ..system import System
 from .eigensolver import lobpcg, teter_preconditioner
-from .external import NuclearField, ion_ion
+from ..atoms import species
+from .external import NonlocalProjectors, NuclearField, ion_ion
 from .mixing import PulayMixer
 from .occupations import fermi
 from .xc import lda_xc
@@ -78,6 +79,8 @@ class SCFSolver:
     def set_positions(self, positions) -> None:
         self.system.positions = np.asarray(positions, dtype=float).reshape(-1, 3)
         self.v_nuc = self.nuclear.potential(self.system.charges, self.system.positions)
+        nl = NonlocalProjectors(self.grid, self.system.charges, self.system.positions)
+        self.projectors = nl if nl.count else None
         self.mixer.reset()
 
     def _envelope(self) -> np.ndarray:
@@ -97,7 +100,7 @@ class SCFSolver:
         """Superposition of simple exponentials: a numerical starting point only."""
         rho = np.zeros(self.grid.shape)
         for Z, R in zip(self.system.charges, self.system.positions):
-            rho += Z * np.exp(-2.0 * self.grid.r_from(R)) / np.pi
+            rho += species.valence_charge(Z) * np.exp(-2.0 * self.grid.r_from(R)) / np.pi
         ne = self.system.n_electrons
         total = rho.sum() * self.grid.dV
         rho *= ne / total if total > 0 else 0.0
@@ -125,8 +128,12 @@ class SCFSolver:
         g = self.grid
         V = self.b.asarray(v_local)
 
+        nl = self.projectors
+
         def H(X):
             out = g.kinetic(X) + V * X
+            if nl is not None:
+                out = out + nl.apply(X)
             if K is not None:
                 out = out + K(X)
             return out
@@ -241,17 +248,20 @@ class SCFSolver:
         rho = rho_out[0] + rho_out[1]
         kinetic = 0.0
         exchange_hf = 0.0
+        e_nl = 0.0
         for s in range(2):
             X = self.orbitals[s]
             if X is None:
                 continue
             kinetic += float(np.dot(occs[s], self._band_expect(X, g.kinetic)))
+            if self.projectors is not None:
+                e_nl += self.projectors.energy(X, occs[s])
             if self.functional == "hf":
                 K = self._exchange_op(X, occs[s])
                 exchange_hf += 0.5 * float(np.dot(occs[s], self._band_expect(X, K)))
         comps = {
             "kinetic": kinetic,
-            "electron_nuclear": float(np.sum(self.v_nuc * rho) * g.dV),
+            "electron_nuclear": float(np.sum(self.v_nuc * rho) * g.dV) + e_nl,
             "hartree": 0.0,
             "exchange_correlation": 0.0,
             "nuclear_nuclear": E_nn,
@@ -282,7 +292,12 @@ class SCFSolver:
         sysm = self.system
         F_e = self.nuclear.forces(sysm.charges, sysm.positions, self.last.rho)
         _, F_nn = ion_ion(sysm.charges, sysm.positions)
-        return F_e + F_nn
+        F = F_e + F_nn
+        if self.projectors is not None:
+            for s in range(2):
+                if self.orbitals[s] is not None:
+                    F += self.projectors.forces(self.orbitals[s], self.last.occ[s], len(sysm.charges))
+        return F
 
     def eigenstates(self, n: int, spin: int = 0, v_extra=None):
         """Lowest n eigenstates of the current effective one-electron Hamiltonian."""

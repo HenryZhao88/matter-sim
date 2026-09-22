@@ -26,12 +26,12 @@ QUALITY_H = {"draft": 0.30, "standard": 0.20, "fine": 0.13}
 
 
 def supported_elements() -> set[int]:
-    """Elements the live grids resolve accurately.
+    """Elements available in 3D.
 
-    Point nuclei need h ≲ 0.6/Z for the innermost electrons, so without
-    pseudopotentials only H and He are accurate at interactive resolutions.
+    H and He are all-electron; Li–Ne use pseudopotentials generated from the
+    engine's own all-electron atoms (engine/atoms/pseudo.py).
     """
-    return {1, 2}
+    return set(range(1, 11))
 
 
 @dataclass

@@ -255,8 +255,15 @@ def _fill(levels: list[tuple[int, int, float]], n_electrons: float, T: float) ->
 
 class RadialAtom:
     def __init__(self, Z: int, charge: int = 0, spin: float = 0.0, grid: RadialGrid | None = None,
-                 T_e: float = 1e-4, v_external=None, n_valence: float | None = None) -> None:
-        """``spin`` = N↑ − N↓. ``v_external`` replaces −Z/r (used for pseudo-atoms)."""
+                 T_e: float = 1e-4, v_external=None, n_valence: float | None = None,
+                 occupations: dict | None = None) -> None:
+        """``spin`` = N↑ − N↓.
+
+        ``v_external`` replaces −Z/r: an array, or a dict {l: array} of
+        angular-momentum-dependent (semilocal) potentials for pseudo-atoms.
+        ``occupations`` optionally fixes {(spin, l, index): electrons} instead
+        of filling by energy (used to test excited configurations).
+        """
         self.Z = Z
         self.charge = charge
         self.grid = grid or RadialGrid(r_min=2e-6 / max(Z, 1) ** 0.5)
@@ -265,8 +272,18 @@ class RadialAtom:
         self.n_dn = 0.5 * (ne - spin)
         self.T_e = T_e
         r = self.grid.r
-        self.v_ext = -Z / r if v_external is None else np.asarray(v_external)
-        self.z0 = float(-self.v_ext[0] * r[0])  # Coulomb strength at the origin
+        if v_external is None:
+            v_external = -Z / r
+        if isinstance(v_external, dict):
+            self.v_l = {l: np.asarray(v) for l, v in v_external.items()}
+        else:
+            self.v_l = {l: np.asarray(v_external) for l in range(L_MAX + 1)}
+        top = max(self.v_l)
+        for l in range(L_MAX + 1):
+            self.v_l.setdefault(l, self.v_l[top])
+        self.v_ext = self.v_l[0]
+        self.z0 = {l: float(-v[0] * r[0]) for l, v in self.v_l.items()}  # Coulomb strength at 0
+        self.fixed_occ = occupations
 
     def solve(self, max_iter: int = 400, tol: float = 1e-9) -> AtomResult:
         g, r = self.grid, self.grid.r
@@ -283,22 +300,28 @@ class RadialAtom:
         for it in range(1, max_iter + 1):
             vH = hartree_potential(g, rho[0] + rho[1])
             _, vxu, vxd = lda_xc(rho[0], rho[1])
-            V = [self.v_ext + vH + vxu, self.v_ext + vH + vxd]
-            new_rho, levels_all, band = [np.zeros_like(r), np.zeros_like(r)], [], 0.0
+            vs = (vH + vxu, vH + vxd)
+            new_rho, levels_all = [np.zeros_like(r), np.zeros_like(r)], []
+            band = e_ext = pot = 0.0
             for s, nel in ((0, self.n_up), (1, self.n_dn)):
                 cands = []
                 for l in range(L_MAX + 1):
-                    w, U = radial_eigenstates(g, V[s], l, n_per_l, self.z0)
+                    w, U = radial_eigenstates(g, self.v_l[l] + vs[s], l, n_per_l, self.z0[l])
                     for k, (eps, u) in enumerate(zip(w, U)):
                         if eps < 0:
                             cands.append((l, k, eps, u))
-                occ = _fill([(c[0], c[1], c[2]) for c in cands], nel, self.T_e)
+                if self.fixed_occ is not None:
+                    occ = np.array([self.fixed_occ.get((s, c[0], c[1]), 0.0) for c in cands])
+                else:
+                    occ = _fill([(c[0], c[1], c[2]) for c in cands], nel, self.T_e)
                 for (l, k, eps, u), f in zip(cands, occ):
                     levels_all.append(Level(k + l + 1, l, s, float(eps), float(f), u))
                     if f > 0:
                         new_rho[s] += f * u * u / (4 * np.pi * r * r)
                         band += f * eps
-            comps = self._energy(new_rho, V, band)
+                        e_ext += f * g.integrate(u * u * self.v_l[l])
+                        pot += f * g.integrate(u * u * (self.v_l[l] + vs[s]))
+            comps = self._energy(new_rho, band - pot, e_ext)
             E = sum(comps.values())
             drho = g.integrate(4 * np.pi * r * r * (np.abs(new_rho[0] - rho[0]) + np.abs(new_rho[1] - rho[1])))
             if abs(E - E_prev) < tol and drho < 1e-6:
@@ -315,17 +338,16 @@ class RadialAtom:
                           rho[0], rho[1], self.v_ext + vH + vxu, self.v_ext + vH + vxd,
                           g, converged, it)
 
-    def _energy(self, rho, V, band) -> dict[str, float]:
+    def _energy(self, rho, kinetic, e_ext) -> dict[str, float]:
         g, r = self.grid, self.grid.r
         rt = rho[0] + rho[1]
         w = 4 * np.pi * r * r
         vH = hartree_potential(g, rt)
         e_xc, _, _ = lda_xc(rho[0], rho[1])
-        # Kinetic from the band energy: T = Σ f ε − ∫ V_σ ρ_σ (V used to make the orbitals)
-        kinetic = band - g.integrate(w * (V[0] * rho[0] + V[1] * rho[1]))
+        # kinetic = Σ f ε − Σ f ⟨u|V_eff|u⟩ (V_eff that produced the orbitals)
         return {
             "kinetic": kinetic,
-            "electron_nuclear": g.integrate(w * self.v_ext * rt),
+            "electron_nuclear": e_ext,
             "hartree": 0.5 * g.integrate(w * vH * rt),
             "exchange_correlation": g.integrate(w * e_xc),
         }

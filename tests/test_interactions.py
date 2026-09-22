@@ -48,13 +48,13 @@ def test_ion_ion_forces_are_minus_gradient():
 def test_point_nucleus_potential_is_coulomb_away_from_nucleus():
     g = Grid(L=16.0, h=0.2, backend=get_backend("numpy"))
     R = (0.13, -0.07, 0.05)  # deliberately off-grid
-    v = NuclearField(g).potential([3], [R])
+    v = NuclearField(g).potential([2], [R])  # He: a bare point nucleus
     r = g.r_from(R)
     # Pointwise the band-limited potential rings near the grid cutoff; its
     # average over a shell must still be exactly Coulomb.
     for lo, hi in [(1.0, 2.0), (2.0, 4.0)]:
         shell = (r > lo) & (r < hi)
-        assert abs(np.mean(v[shell] + 3 / r[shell])) < 4e-3
+        assert abs(np.mean(v[shell] + 2 / r[shell])) < 3e-3
 
 
 def test_nuclear_force_matches_finite_difference_of_energy():

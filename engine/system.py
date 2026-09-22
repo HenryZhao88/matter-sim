@@ -39,7 +39,9 @@ class System:
 
     @property
     def n_electrons(self) -> int:
-        return int(sum(self.charges)) - self.charge
+        """Electrons the solver treats explicitly (valence only for pseudo-ions)."""
+        from .atoms.species import valence_charge
+        return int(round(sum(valence_charge(Z) for Z in self.charges))) - self.charge
 
     @property
     def n_up(self) -> int:

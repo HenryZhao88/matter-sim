@@ -19,3 +19,5 @@ docs
 
 # Generated
 validation/results.json
+
+.cache/

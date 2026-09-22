@@ -14,8 +14,8 @@ def test_fermi_fills_degenerate_levels_evenly():
 
 
 def test_system_spin_counts():
-    s = System([8], [[0, 0, 0]], multiplicity=3)
-    assert (s.n_up, s.n_dn) == (5, 3)
+    s = System([8], [[0, 0, 0]], multiplicity=3)  # O: 6 valence electrons (1s² is in the pseudopotential)
+    assert (s.n_up, s.n_dn) == (4, 2)
     with pytest.raises(ValueError):
         System([8], [[0, 0, 0]], multiplicity=2)
 
