@@ -32,7 +32,7 @@ from .process import antiparticle, species, two_body
 SQRT_SHAT_MIN = 50.0
 PARTONS = ["g", "u", "d", "s", "c", "u~", "d~", "s~", "c~"]
 COARSE = [50, 80, 130, 220, 380, 650, 1100, 2000, 3600, 6500]
-CACHE = Path(__file__).resolve().parents[2] / ".cache" / "collider" / "hadron"
+CACHE = Path(__file__).resolve().parents[2] / ".cache" / "collider" / "hadron-running"
 
 
 def canonical(a: str, b: str) -> tuple[tuple[str, str], bool, bool]:

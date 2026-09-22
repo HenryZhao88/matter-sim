@@ -40,11 +40,33 @@ def group_constants() -> dict:
     return {"CF": CF, "CA": CA, "TR": TR}
 
 
-def alpha_s(q: float, nf: int = 5) -> float:
-    """One-loop running coupling, β₀ from the group constants."""
+@functools.lru_cache(maxsize=1)
+def _thresholds() -> list[float]:
+    """Masses of the heavy quarks (c, b, t), read from the model: each is a place where one more
+    flavour starts to screen the colour charge."""
+    from .process import species
+    return [species(q).mass for q in ("c", "b", "t")]
+
+
+def _run(a0: float, q0: float, q: float, nf: int) -> float:
     g = group_constants()
     b0 = (11 * g["CA"] - 4 * g["TR"] * nf) / (12 * math.pi)
-    return ALPHA_S / (1 + ALPHA_S * b0 * math.log(q * q / (M_Z_INPUT * M_Z_INPUT)))
+    return a0 / (1 + a0 * b0 * math.log(q * q / (q0 * q0)))
+
+
+def alpha_s(q: float) -> float:
+    """One-loop running strong coupling from its value at m_Z. β₀ = (11 C_A − 4 T_R n_f)/12π comes
+    from the group constants; n_f counts the quarks lighter than q, and the coupling is kept
+    continuous as each heavy quark threshold is crossed."""
+    mc, mb, mt = _thresholds()
+    a, q0, nf = ALPHA_S, M_Z_INPUT, 5
+    if q > mt:
+        a, q0, nf = _run(a, q0, mt, 5), mt, 6
+    elif q < mb:
+        a, q0, nf = _run(a, q0, mb, 5), mb, 4
+        if q < mc:
+            a, q0, nf = _run(a, q0, mc, 4), mc, 3
+    return _run(a, q0, q, nf)
 
 
 def splitting(kind: str, z: float) -> float:

@@ -163,7 +163,7 @@ class Model:
         return np.array([v.mass for v in self.vectors])
 
 
-def build() -> Model:
+def build(alpha_s: float = ALPHA_S) -> Model:
     # --- couplings from three measurements (tree level): e, G_F, m_Z
     e = math.sqrt(4 * math.pi * ALPHA_MZ)
     v = (math.sqrt(2) * G_FERMI) ** -0.5
@@ -173,7 +173,7 @@ def build() -> Model:
     disc = math.sqrt(gsum2 * gsum2 - 4 * prod)
     g = math.sqrt((gsum2 + disc) / 2)
     gp = math.sqrt((gsum2 - disc) / 2)
-    gs = math.sqrt(4 * math.pi * ALPHA_S)
+    gs = math.sqrt(4 * math.pi * alpha_s)
 
     # --- electroweak gauge-boson masses from |D_μ⟨H⟩|² (real fields W¹, W², W³, B)
     H0 = np.array([0, v / math.sqrt(2)], complex)

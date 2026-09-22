@@ -36,9 +36,20 @@ class Species:
     confined: bool = False
 
 
-@functools.lru_cache(maxsize=1)
-def model() -> sm.Model:
-    return sm.build()
+@functools.lru_cache(maxsize=64)
+def _model(alpha_s: float) -> sm.Model:
+    return sm.build(alpha_s)
+
+
+def model(alpha_s: float | None = None) -> sm.Model:
+    """The Standard Model; with ``alpha_s`` the strong coupling is set to that value."""
+    return _model(sm.ALPHA_S if alpha_s is None else round(alpha_s, 4))
+
+
+def running_model(q: float) -> sm.Model:
+    """The model with the strong coupling evaluated at the scale q (renormalisation-group running)."""
+    from .shower import alpha_s
+    return model(alpha_s(max(q, 2.0)))
 
 
 def _fermion_names(f: sm.Fermion) -> tuple[str, str]:
@@ -163,7 +174,7 @@ def cross_section(a: str, b: str, c: str, d: str, sqrt_s: float, widths=None, n_
     ma, mb, mc, md = (species(x).mass for x in (a, b, c, d))
     if sqrt_s <= mc + md or sqrt_s <= ma + mb:
         return 0.0, np.zeros(0), np.zeros(0)
-    amp = Amplitude(model(), [leg(a, True), leg(b, True), leg(c, False), leg(d, False)], widths)
+    amp = Amplitude(running_model(sqrt_s), [leg(a, True), leg(b, True), leg(c, False), leg(d, False)], widths)
     amp.max_configs = max_configs
     p1, p2, pi = beams(sqrt_s, ma, mb)
     x, w = np.polynomial.legendre.leggauss(n_cos)
