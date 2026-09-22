@@ -44,7 +44,7 @@ class Params:
     temperature_K: float = 0.0   # heat-bath temperature for dynamics
     dt: float = 10.0             # MD time step, a.u. (~0.24 fs)
     margin: float = 6.5          # vacuum around nuclei, bohr
-    fmax_relaxed: float = 2e-3   # Ha/bohr — relax stops below this
+    fmax_relaxed: float = 5e-4   # Ha/bohr (≈ 0.026 eV/Å); soft bends need this
 
     @property
     def h(self) -> float:
@@ -158,8 +158,9 @@ class Simulation:
             fmax = float(np.max(np.linalg.norm(self.forces, axis=1)))
             # Converged when forces vanish, or when the energy has stopped falling and only
             # the grid's small egg-box ripple in the forces remains.
-            recent = self.energy_trace[-8:]
-            plateau = len(recent) == 8 and (max(recent) - min(recent)) < 2e-5 and fmax < 5 * self.params.fmax_relaxed
+            # Soft modes (like a bond angle) move little energy, so the plateau test is strict.
+            recent = self.energy_trace[-10:]
+            plateau = len(recent) == 10 and (max(recent) - min(recent)) < 3e-6 and fmax < 2.5 * self.params.fmax_relaxed
             if fmax < self.params.fmax_relaxed or plateau:
                 self.relaxed = True
         elif mode == "dynamics":

@@ -24,7 +24,7 @@ from engine.system import System
 
 from .protocol import encode_snapshot, sanitize
 
-DEFAULT_PRESET = "h2_form"
+DEFAULT_PRESET = "water"
 
 
 class Session:

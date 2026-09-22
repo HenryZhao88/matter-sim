@@ -3,8 +3,26 @@
 from __future__ import annotations
 
 import argparse
+import shutil
+import subprocess
 import threading
 import webbrowser
+from pathlib import Path
+
+VIEWER = Path(__file__).resolve().parent.parent / "viewer"
+
+
+def ensure_viewer_built() -> None:
+    """Build the browser viewer on first launch (needs Node.js)."""
+    if (VIEWER / "dist" / "index.html").exists():
+        return
+    npm = shutil.which("npm")
+    if npm is None:
+        raise SystemExit("The viewer needs Node.js to build once. Install it (brew install node) and rerun.")
+    print("Building the viewer (first launch only)…")
+    if not (VIEWER / "node_modules").exists():
+        subprocess.run([npm, "install", "--silent"], cwd=VIEWER, check=True)
+    subprocess.run([npm, "run", "build", "--silent"], cwd=VIEWER, check=True)
 
 
 def main() -> None:
@@ -21,6 +39,7 @@ def main() -> None:
         validate(quick=args.quick)
         return
 
+    ensure_viewer_built()
     from server.app import serve
     url = f"http://127.0.0.1:{args.port}/"
     print(f"matter-sim  →  {url}   (Ctrl+C to quit)")

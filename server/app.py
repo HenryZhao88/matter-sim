@@ -10,9 +10,9 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
-log = logging.getLogger("matter_sim.server")
-
 from .session import Session
+
+log = logging.getLogger("matter_sim.server")
 
 VIEWER_DIST = Path(__file__).resolve().parent.parent / "viewer" / "dist"
 

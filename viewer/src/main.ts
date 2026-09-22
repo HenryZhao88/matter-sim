@@ -148,4 +148,4 @@ function buildViewControls(root: HTMLElement): void {
     el("label", { class: "check" }, forces, el("span", {}, "Show forces")),
   );
 }
-(window as unknown as Record<string, unknown>).__viewport = viewport;
+if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__viewport = viewport;
