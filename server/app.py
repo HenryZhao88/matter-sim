@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import weakref
 from pathlib import Path
 
 from aiohttp import WSMsgType, web
+
+log = logging.getLogger("matter_sim.server")
 
 from .session import Session
 
@@ -58,6 +61,7 @@ def create_app(start_engine: bool = True) -> web.Application:
         if session.latest_snapshot:
             await ws.send_bytes(session.latest_snapshot)
         async for msg in ws:
+            log.debug("ws message %s %s", msg.type, str(msg.data)[:120])
             if msg.type == WSMsgType.TEXT:
                 try:
                     session.submit(json.loads(msg.data))
