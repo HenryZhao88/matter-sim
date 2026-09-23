@@ -49,7 +49,10 @@ def label(conf: dict) -> dict:
 
 def label_all(confs, workers: int | None = None, progress=None) -> list[dict]:
     out = []
-    with cf.ProcessPoolExecutor(max_workers=workers or max(1, (os.cpu_count() or 2) - 2)) as pool:
+    # each worker holds the projectors for every k-point (~1.5 GB at this mesh density), so the
+    # worker count is bounded by memory, not cores; recycling children keeps that from creeping up
+    n = workers or max(1, min((os.cpu_count() or 2) - 2, 5))
+    with cf.ProcessPoolExecutor(max_workers=n, max_tasks_per_child=4) as pool:
         for i, res in enumerate(pool.map(label, confs)):
             out.append(res)
             if progress:

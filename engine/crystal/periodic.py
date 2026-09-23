@@ -190,8 +190,10 @@ class PeriodicDFT:
             self.rho_core = np.real(np.fft.ifftn(Cg * self.filter / c.volume) * self.Ntot)
         self.E_ewald, self.F_ewald = ewald(c)
 
-    def _projectors(self, k):
-        """Bloch-periodic projector parts b(r) for crystal momentum k, plus their G-space forms."""
+    def _projectors(self, k, keep_g: bool = False):
+        """Bloch-periodic projector parts b(r) for crystal momentum k (single precision: they
+        multiply a small energy), and their G-space forms only when forces will need them —
+        together these dominate memory once the k-mesh is dense."""
         c = self.c
         kG = self.G + k
         q = np.linalg.norm(kG, axis=-1)
@@ -207,11 +209,12 @@ class PeriodicDFT:
                 angs = real_harmonics_k(l, [n[..., 0], n[..., 1], n[..., 2]])
                 for ang in angs:
                     F = radial * ang * phase / c.volume
-                    rows.append(np.fft.ifftn(F) * self.Ntot)
-                    Fs.append(F)
+                    rows.append((np.fft.ifftn(F) * self.Ntot).astype(np.complex64))
+                    if keep_g:
+                        Fs.append(F)
                     E.append(pp.kb_energy[l])
                     atom.append(i)
-        B = np.array(rows).reshape(len(rows), -1) if rows else np.zeros((0, self.Ntot), complex)
+        B = np.array(rows).reshape(len(rows), -1) if rows else np.zeros((0, self.Ntot), np.complex64)
         return B, Fs, np.array(E), atom
 
     # -------------------------------------------------------------- Hamiltonian
@@ -382,7 +385,8 @@ class PeriodicDFT:
                     cI = self.core_q[Z] * np.exp(-1j * (self.G @ R)) * self.filter
                     F[i] -= np.real(np.sum(np.conj(vg)[..., None] * (-1j * self.G) * cI[..., None], axis=(0, 1, 2)))
         for ik, k in enumerate(self.kpts):
-            B, Fs, E, atom = projs[ik]
+            # the G-space projector forms are needed only here, so rebuild them one k at a time
+            B, Fs, E, atom = self._projectors(k, keep_g=True)
             if not len(E):
                 continue
             cc = (U[ik] @ B.conj().T) * math.sqrt(self.dV)                   # (nb, P)
