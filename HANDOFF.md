@@ -62,14 +62,18 @@ still a condensed metal.
   not, so there the ± understates how far another run could land. For a claim about the method
   rather than one wavefunction, run several seeds. (The previous estimate, from 12 correlated
   block means, was unstable: 1.5 mHa on a run whose walker spread says 4.0.)
-- **Truth-mode energies can land below the exact answer, and that is a bias, not luck.** A
-  variational energy cannot fall below the true ground state, so when it does, the estimator is
-  biased. Measured on the Mac (three seeds, He): MLX seed 1 gives −2.9091 against the exact
-  −2.90372, 5.4 mHa too low. The cause is the outlier clipping in `train`/`evaluate`, which
-  trims both tails of the local-energy distribution although that distribution is not symmetric.
-  Short runs hide it inside the noise; it does not vanish with longer sampling. Whoever next
-  touches truth mode should either clip only the tail that needs it, or report the unclipped
-  mean alongside. Until then, a below-exact number is a warning sign, not a triumph.
+- **A short truth-mode run can land below the exact energy, and that is noise, not bias.** It
+  looks alarming — a variational energy cannot be below the true ground state — but the estimate
+  is a mean over a finite sample, and the local-energy distribution has a long low tail (the
+  network has no electron–nucleus cusp), so short runs scatter downward more often than a
+  Gaussian would. The check is a long re-evaluation of the same wavefunction, not an argument.
+  He seed 1 on MLX: `evaluate(12, 5)` gives −2.9091 ± 0.0053 (1.0σ below exact) and
+  `evaluate(200, 20)` on that same wavefunction gives −2.9018 ± 0.0010, 1.9σ above. On CUDA, ten
+  wavefunctions re-evaluated 400× longer averaged +1.4 mHa (He) and +1.3 mHa (H₂), none below by
+  more than 0.9σ. Training-time clipping cannot cause it either: `evaluate` never clips, and
+  clipping in `train` only changes *which* wavefunction you end up with — every wavefunction's
+  true energy is at or above exact. Quote a truth-mode number from a long evaluation, or from
+  several seeds; a single short run below exact means the run was short.
 
 ## Cross-platform (Mac + Windows/NVIDIA)
 
