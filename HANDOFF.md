@@ -9,36 +9,37 @@ A snapshot for whoever (or whatever) picks this up next, on either machine.
 | Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, proton collisions |
 | Lattice QCD | working: confinement, deconfinement, and hadron masses (pion as a Goldstone boson) |
 | Electrons and nuclei | working: H–Kr, molecules, truth mode (neural-network wavefunction) |
-| Materials | **in progress**: the learned potential is being refitted on converged DFT labels |
-| Everyday matter | waiting on the rung above: the code is written, the numbers are not in |
+| Materials | working: melting, expansion, heat capacity from learned forces |
+| Everyday matter | working: the 1 cm³ block, built from the per-atom properties above |
 
-## The one unfinished thread: aluminium
+## Aluminium: done, and what it cost
 
-The chain is DFT on small cells → a learned interatomic potential → molecular dynamics of a few
-hundred atoms → a continuum 1 cm³ block. Everything is implemented. What is missing is a good
-potential, for a reason worth remembering:
+The chain runs end to end: DFT on small cells → a learned interatomic potential → molecular
+dynamics of a few hundred atoms → a continuum 1 cm³ block. Results are in `results/`
+(`al_results.json`, `al_crystal.json`, `al_eam_errors.json`, `al_eam_aluminium.npz`) and in the
+README table. Melting 852 K against 933.5 measured; latent heat 70 meV/atom against 111, which
+fails its validation check and is reported failing.
 
-**The first training labels were not converged in k-points.** They used a mesh that varied with
-cell size, which left errors of ~30 meV/atom that differed between configurations. No potential
-can fit numbers that disagree with each other, and the symptom was a bulk modulus of 44 GPa
-against DFT's 86, with the fit getting *worse* as more data arrived. Fitted to the fcc data
-alone (internally consistent) the same model reaches ~2 meV/atom and 92 GPa, which is how the
-data were convicted rather than the method.
+Four faults had to be fixed first, and every one of them produced plausible-looking numbers
+before it was found:
 
-The labels are now computed at a uniform 45 bohr k-spacing with 0.01 Ha smearing (converged to
-<1 meV/atom), and the superseded ones are parked in `.cache/materials/dft_coarse_k/` — do not mix
-them in; every new label records its own `kspacing` and `T_e`.
+1. **Training labels not converged in k-points**, with a mesh that varied by cell size: ~30
+   meV/atom of inconsistency between configurations. No potential can fit numbers that disagree
+   with each other; the bulk modulus came out 44 GPa against DFT's 86. Labels now use a uniform
+   45 bohr spacing with 0.01 Ha smearing and record their own settings; superseded ones are in
+   `.cache/materials/dft_coarse_k/` and must never be mixed in.
+2. **A fitted density that crossed zero.** Where neighbours summed to ρ≈0 the embedding
+   energy's √ρ slope reached −114,000 eV and threw atoms across the box at ordinary geometries.
+   Density coefficients are now non-negative by construction, and the slope is floored.
+3. **No short-range repulsion**: the basis vanishes below 3.6 bohr, which training never
+   sampled. Screened nuclear (ZBL) repulsion is spliced in below 3.4 bohr.
+4. **A barostat that boiled the metal into vacuum** while reporting a melting point of 961 K
+   that looked convincing. Limited to 0.02% volume per step; runs abort if the cell runs away;
+   coexistence is done at fixed volume.
 
-To finish:
-
-1. Let `.cache/materials/dft/` reach 89 labels (a scratch script drives
-   `engine.materials.dataset.label_all`; it skips whatever is already cached).
-2. Fit: `fit()` then `refine()` from `engine/materials/eam.py`, weighted by `e_scale_eV=0.3`.
-   Check against DFT: a₀ 3.955 Å, B 84.5 GPa, C11 124, C12 65, bcc−fcc 108 meV.
-3. Measure: `engine.materials.experiments.run_all` writes `.cache/materials/al_results.json`
-   (thermal expansion, heat capacity, melting point by solid–liquid coexistence, latent heat).
-4. That file plus `al_crystal.json` is what the Materials workspace and
-   `matter-sim validate --part materials` read.
+The lesson worth keeping: in this rung a wrong answer arrives looking like a right one. Check
+the state, not just the number — volume per atom, minimum separation, whether the thing is
+still a condensed metal.
 
 ## Watch out for
 
@@ -54,13 +55,15 @@ To finish:
 
 ## Cross-platform (Mac + Windows/NVIDIA)
 
-`mlx` is Apple-only and is still listed as a hard dependency, so `uv sync` fails on Windows.
-Four places use it: `engine/core/backend.py` (already falls back to NumPy),
-`engine/lattice/hadrons.py` (GPU Wilson–Dirac solver), `engine/materials/eam.py` (fitting) and
-`engine/truth/vmc.py` (neural-network wavefunction). The plan is one backend covering MLX on
-Apple, CUDA (PyTorch) on the NVIDIA machine, and NumPy everywhere as the fallback. The periodic
-DFT in `engine/crystal/periodic.py` is plain NumPy on the CPU and is the real bottleneck — it is
-the piece with the most to gain from a CUDA port.
+`engine/core/accel.py` answers what a machine can compute on: MLX on Apple silicon, CUDA (or
+MPS) through PyTorch, NumPy always as the reference. `mlx` installs only on Apple silicon and
+`torch` is the optional `gpu` extra, so the project installs everywhere. Truth mode and the
+lattice Wilson–Dirac solver each have MLX and PyTorch implementations that agree within their
+error bars. Still to do: the periodic DFT in `engine/crystal/periodic.py` is plain NumPy on the
+CPU and is the real bottleneck — labelling 89 configurations took about five hours. It is the
+piece with the most to gain from a CUDA port, and the open question is whether single precision
+holds energies to ~1 meV/atom, since a consumer NVIDIA card runs double precision at 1/64 speed
+and Metal has no double precision at all.
 
 ## Conventions
 
