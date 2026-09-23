@@ -24,6 +24,9 @@ import numpy as np
 R_CUT = 10.0        # bohr (≈ 5.3 Å): first three neighbour shells of fcc aluminium
 R_MIN = 3.6
 N_BASIS = 12
+Z_NUC = 13.0        # aluminium: the nuclear charge the cores repel with at short range
+RHO_FLOOR = 0.02    # the embedding energy's √ρ slope is capped below this density
+CORE_IN, CORE_OUT = 2.2, 3.4     # bohr: pure nuclear repulsion below, pure learned fit above
 
 
 def cutoff(r):
@@ -42,6 +45,60 @@ def basis_deriv(r, eps=1e-5):
     return (basis(r + eps) - basis(r - eps)) / (2 * eps)
 
 
+def _zbl(r):
+    """Ziegler–Biersack–Littmark screened nuclear repulsion (Hartree, bohr).
+
+    Two nuclei of charge Z pushed close together repel as Z²/r, screened by the electrons that
+    remain between them. The screening function is universal — no parameters to choose — and it
+    is what keeps atoms from passing through each other at high temperature. The training
+    configurations never sample distances this short, so nothing here is fitted: it is the part
+    of the physics the data could not teach."""
+    a = 0.8853 / (2 * Z_NUC ** 0.23)
+    x = r / a
+    c, d = (0.18175, 0.50986, 0.28022, 0.02817), (3.19980, 0.94229, 0.40290, 0.20162)
+    phi = sum(ci * np.exp(-di * x) for ci, di in zip(c, d))
+    dphi = sum(-ci * di / a * np.exp(-di * x) for ci, di in zip(c, d))
+    return Z_NUC ** 2 / r * phi, Z_NUC ** 2 * (dphi / r - phi / r ** 2)
+
+
+def _blend(r):
+    """0 below CORE_IN (all nuclear repulsion), 1 above CORE_OUT (all learned), smooth between."""
+    t = np.clip((np.asarray(r, float) - CORE_IN) / (CORE_OUT - CORE_IN), 0.0, 1.0)
+    w = t * t * (3 - 2 * t)
+    dw = np.where((t > 0) & (t < 1), 6 * t * (1 - t) / (CORE_OUT - CORE_IN), 0.0)
+    return w, dw
+
+
+def dens_with_core(r, b):
+    """The background density an atom sits in, held flat below the shortest distance the training
+    data sampled.
+
+    Left to the fitted basis alone the density would fall back to zero as two atoms approach,
+    and the embedding energy's √ρ would then pull them together without limit. Holding it at its
+    value at CORE_OUT removes that, and leaves the short-range repulsion where it belongs: in
+    the screened nuclear term, which is what actually keeps nuclei apart. Letting the density
+    instead grow inward (as a real electron density does) is defensible physics but ruins the
+    dynamics here — through a cubic embedding function it produced forces a thousand times
+    stiffer than the nuclear repulsion itself."""
+    r = np.atleast_1d(np.asarray(r, float))
+    f = basis(r) @ b
+    df = basis_deriv(r) @ b
+    f0 = float((basis(np.array([CORE_OUT])) @ b)[0])
+    inner = r < CORE_OUT
+    f = np.where(inner, f0, f)
+    df = np.where(inner, 0.0, df)
+    return np.maximum(f, 0.0), np.where(f > 0, df, 0.0)
+
+
+def core_pair(r):
+    """The short-range part of the pair term, and its derivative: nuclear repulsion faded out
+    before the first distance the training data ever sampled."""
+    r = np.atleast_1d(np.asarray(r, float))
+    z, dz = _zbl(np.maximum(r, 1e-6))
+    w, dw = _blend(r)
+    return (1 - w) * z, (1 - w) * dz - dw * z
+
+
 @dataclass
 class EAM:
     a: np.ndarray          # pair coefficients
@@ -51,26 +108,31 @@ class EAM:
 
     # ------------------------------------------------------------ functions
     def phi(self, r):
-        return basis(np.atleast_1d(r)) @ self.a
+        r = np.atleast_1d(r)
+        return basis(r) @ self.a + core_pair(r)[0]
 
     def dens(self, r):
-        return basis(np.atleast_1d(r)) @ self.b
+        return dens_with_core(r, self.b)[0]
 
     def F(self, rho):
-        rho = np.maximum(rho, 1e-12)
+        rho = np.maximum(rho, RHO_FLOOR)
         c = self.c
         return c[0] * np.sqrt(rho) + c[1] * rho + c[2] * rho ** 2 + c[3] * rho ** 3
 
     def dF(self, rho):
-        rho = np.maximum(rho, 1e-12)
+        # √ρ has an infinite slope at the origin: an atom whose neighbours happen to sum to
+        # almost nothing would otherwise feel a force of 10⁵ eV/bohr from a perfectly ordinary
+        # arrangement. Below RHO_FLOOR the embedding term is flat.
+        rho = np.maximum(rho, RHO_FLOOR)
         c = self.c
         return 0.5 * c[0] / np.sqrt(rho) + c[1] + 2 * c[2] * rho + 3 * c[3] * rho ** 2
 
     def tabulate(self, n: int = 4000):
         """Dense tables for fast molecular dynamics."""
         r = np.linspace(0.5, R_CUT, n)
-        return {"r": r, "phi": self.phi(r), "dphi": basis_deriv(r) @ self.a,
-                "f": self.dens(r), "df": basis_deriv(r) @ self.b}
+        f, df = dens_with_core(r, self.b)
+        return {"r": r, "phi": self.phi(r), "dphi": basis_deriv(r) @ self.a + core_pair(r)[1],
+                "f": f, "df": df}
 
     def save(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -104,9 +166,11 @@ def energy_forces(model: EAM, cell, positions):
     n = len(positions)
     B = basis(r)
     dB = basis_deriv(r)
-    rho = np.bincount(I, weights=B @ model.b, minlength=n)
-    E = float(np.sum(model.F(rho)) + 0.5 * np.sum(B @ model.a)) + model.e0 * n
-    dE_dr = 0.5 * (dB @ model.a) * 2 / 2 + (model.dF(rho)[I] + model.dF(rho)[J]) * (dB @ model.b) / 2
+    f_pair, df_pair = dens_with_core(r, model.b)
+    rho = np.bincount(I, weights=f_pair, minlength=n)
+    core, dcore = core_pair(r)
+    E = float(np.sum(model.F(rho)) + 0.5 * np.sum(B @ model.a + core)) + model.e0 * n
+    dE_dr = 0.5 * (dB @ model.a + dcore) + (model.dF(rho)[I] + model.dF(rho)[J]) * df_pair / 2
     # each unordered pair appears twice (i→j and j→i); dE/dr_ij per ordered entry:
     F = np.zeros((n, 3))
     unit = D / r[:, None]
@@ -171,13 +235,13 @@ def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=No
               "e0": mx.array(np.array([0.0], np.float32))}
 
     def predict(p):
-        rho = mx.maximum(mx.zeros((n_atoms,)).at[I].add(B @ p["b"]), 1e-8)
+        rho = mx.maximum(mx.zeros((n_atoms,)).at[I].add(B @ mx.abs(p["b"])), 1e-8)
         c = p["c"]
         Femb = c[0] * mx.sqrt(rho) + c[1] * rho + c[2] * rho ** 2 + c[3] * rho ** 3
         dF = 0.5 * c[0] / mx.sqrt(rho) + c[1] + 2 * c[2] * rho + 3 * c[3] * rho ** 2
         pair_atom = mx.zeros((n_atoms,)).at[I].add(0.5 * (B @ p["a"]))
         E = mx.zeros((n_cfg,)).at[cfg].add(Femb + pair_atom) / n_at + p["e0"][0]
-        dEdr = 0.5 * (dB @ p["a"]) + 0.5 * (dF[I] + dF[J]) * (dB @ p["b"])
+        dEdr = 0.5 * (dB @ p["a"]) + 0.5 * (dF[I] + dF[J]) * (dB @ mx.abs(p["b"]))
         vec = dEdr[:, None] * U
         F = mx.zeros((n_atoms, 3)).at[I].add(vec).at[J].add(-vec)
         return E, F
@@ -199,7 +263,8 @@ def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=No
         if it == (3 * iters) // 4:
             opt.learning_rate = 3e-4
     to_np = lambda x: np.array(x, dtype=np.float64)
-    return EAM(to_np(params["a"]), to_np(params["b"]), to_np(params["c"]), float(to_np(params["e0"])[0]) + e_mean)
+    return EAM(to_np(params["a"]), np.abs(to_np(params["b"])), to_np(params["c"]),
+               float(to_np(params["e0"])[0]) + e_mean)
 
 
 def refine(model: EAM, configs, w_force: float = 30.0, e_scale_eV: float | None = 0.3, log=None) -> EAM:
@@ -225,9 +290,10 @@ def refine(model: EAM, configs, w_force: float = 30.0, e_scale_eV: float | None 
 
     def residuals(x):
         a, b, cc, e0 = unpack(x)
+        b = np.maximum(b, 0.0)
         out = []
         for k, (n, I, J, B, dB, U, Fr) in enumerate(pre):
-            rho = np.maximum(np.bincount(I, B @ b, n), 1e-10)
+            rho = np.maximum(np.bincount(I, B @ b, n), RHO_FLOOR)
             Femb = cc[0] * np.sqrt(rho) + cc[1] * rho + cc[2] * rho ** 2 + cc[3] * rho ** 3
             dF = 0.5 * cc[0] / np.sqrt(rho) + cc[1] + 2 * cc[2] * rho + 3 * cc[3] * rho ** 2
             E = (Femb.sum() + 0.5 * (B @ a).sum()) / n + e0
@@ -240,8 +306,13 @@ def refine(model: EAM, configs, w_force: float = 30.0, e_scale_eV: float | None 
             out.append(np.sqrt(w[k] * w_force / (3 * n)) * (F - Fr).ravel() * 10.0)
         return np.concatenate([np.ravel(o) for o in out])
 
-    x0 = np.concatenate([model.a, model.b, model.c, [model.e0]])
-    res = least_squares(residuals, x0, method="lm", max_nfev=4000, x_scale="jac")
+    x0 = np.concatenate([model.a, np.abs(model.b), model.c, [model.e0]])
+    lo = np.concatenate([np.full(na, -np.inf), np.zeros(nb), np.full(5, -np.inf)])
+    hi = np.full(len(x0), np.inf)
+    # the density coefficients stay non-negative: a negative electron density is not a thing,
+    # and where the fitted density crossed zero the embedding term's slope blew up
+    res = least_squares(residuals, np.clip(x0, lo + 1e-12, None), bounds=(lo, hi),
+                        method="trf", max_nfev=4000, x_scale="jac")
     if log:
         log(f"least squares: cost {res.cost:.4g} after {res.nfev} evaluations ({res.message})")
     a, b, cc, e0 = unpack(res.x)

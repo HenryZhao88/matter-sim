@@ -18,6 +18,7 @@ from .md import MD, al_state, coexistence, npt_lattice_constant
 
 HA_EV = 27.211386245988
 BOHR_A = 0.529177210903
+MELT_T = 1800.0     # K: hot enough to melt quickly, not so hot that atoms slam into their cores
 RESULTS = Path(__file__).resolve().parents[2] / ".cache" / "materials" / "al_results.json"
 
 
@@ -54,9 +55,9 @@ def latent_heat(model: EAM, T: float, a_T: float, n=(4, 4, 4), steps: int = 5000
     solid = npt_lattice_constant(model, a_T / BOHR_A, T, n=n, steps=steps)
     state = al_state(model, a_T / BOHR_A, n)
     md = MD(model, state, seed=3)
-    md.thermalise(2500.0)
-    md.run(2000, T=2500.0, P_GPa=0.0, sample_every=100)       # melt it
-    md.run(1500, T=T, P_GPa=0.0, sample_every=100)            # cool the liquid to T
+    md.thermalise(MELT_T)
+    md.run(2000, T=MELT_T, sample_every=100)                  # melt it at fixed volume
+    md.run(1500, T=T, P_GPa=0.0, sample_every=100)            # cool the liquid to T, then let it relax
     rows = md.run(steps, T=T, P_GPa=0.0, sample_every=10)
     tail = rows[len(rows) // 2:]
     N = len(state.pos)

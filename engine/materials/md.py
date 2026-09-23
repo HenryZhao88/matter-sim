@@ -26,6 +26,8 @@ from .eam import EAM, R_CUT
 
 HA_PER_BOHR3_GPA = 29421.02648438959
 SKIN = 1.0
+MAX_BOX_STEP = 2e-4      # largest fractional change of the box per step under the barostat
+RUNAWAY = 2.0            # volume ratio at which a run is declared lost rather than reported
 
 
 @dataclass
@@ -118,10 +120,12 @@ class MD:
             s.vel[frozen] = 0.0
         s.pos += dt * s.vel
         if P_GPa is not None:
-            # Berendsen: scale the box toward the target pressure (compressibility of a metal ~1/70 GPa)
+            # Berendsen: scale the box toward the target pressure (compressibility of a metal ~1/76 GPa).
+            # The per-step limit is deliberately tiny: at 0.5% a run that never reaches equilibrium
+            # inflates the cell without bound, and the metal boils off into vacuum.
             P = pressure(s, self.W) * HA_PER_BOHR3_GPA
-            mu = 1 - dt / (tau_P_fs / AU_TIME_FS) * (P_GPa - P) / 70.0 / 3
-            mu = float(np.clip(mu, 0.995, 1.005))
+            mu = 1 + dt / (tau_P_fs / AU_TIME_FS) * (P - P_GPa) / 76.0 / 3
+            mu = float(np.clip(mu, 1 - MAX_BOX_STEP, 1 + MAX_BOX_STEP))
             s.pos *= mu
             s.box *= mu
         s.pos %= s.box
@@ -149,8 +153,14 @@ class MD:
 
     def run(self, steps: int, T=None, P_GPa=None, sample_every: int = 10, frozen=None, callback=None):
         rows = []
+        V0 = float(np.prod(self.s.box))
         for k in range(steps):
             self.step(T, P_GPa, frozen=frozen)
+            V = float(np.prod(self.s.box))
+            if V > RUNAWAY * V0 or V < V0 / RUNAWAY:
+                raise RuntimeError(f"the cell ran away under the barostat (volume ×{V / V0:.2g} after "
+                                   f"{k} steps): the state is not a condensed metal, so nothing measured "
+                                   f"from it would mean anything")
             if k % sample_every == 0:
                 row = {"step": k, "E": self.E + kinetic(self.s), "U": self.E, "T": temperature(self.s),
                        "P": pressure(self.s, self.W) * HA_PER_BOHR3_GPA, "V": float(np.prod(self.s.box))}
@@ -180,17 +190,24 @@ def npt_lattice_constant(model: EAM, a0: float, T: float, n=(6, 6, 6), steps=300
 
 
 def coexistence(model: EAM, a_T: float, T: float, n=(5, 5, 12), steps=6000, seed=0) -> dict:
-    """Half crystal, half liquid at temperature T. Returns the trend of potential energy:
-    negative (crystal growing) below the melting point, positive (melting) above it."""
+    """Half crystal, half liquid at temperature T, at fixed volume.
+
+    The solid and the liquid share a box whose density is the solid's at T, opened by the few
+    per cent that melting costs. Which phase grows is then decided by the energy: below the
+    melting point the crystal advances into the liquid and the potential energy falls; above it
+    the liquid eats the crystal and the energy rises. Fixed volume on purpose — a barostat on a
+    two-phase cell chases a pressure that neither phase alone defines."""
     state = al_state(model, a_T, n)
+    state.box = state.box * (1 + 0.02)                 # liquid is a few per cent less dense
+    state.pos = state.pos * (1 + 0.02)
     md = MD(model, state, seed=seed)
     N = len(state.pos)
     top = state.pos[:, 2] > state.box[2] / 2
     # melt the top half while holding the bottom half fixed, then release at T
-    md.thermalise(2500.0)
-    md.run(1500, T=2500.0, frozen=~top, sample_every=50)
+    md.thermalise(1800.0)
+    md.run(1500, T=1800.0, frozen=~top, sample_every=50)
     md.thermalise(T)
-    rows = md.run(steps, T=T, P_GPa=0.0, sample_every=20)
+    rows = md.run(steps, T=T, sample_every=20)
     t = np.array([r["step"] for r in rows]) * md.dt * AU_TIME_FS
     U = np.array([r["U"] for r in rows]) / N
     k = len(t) // 5
