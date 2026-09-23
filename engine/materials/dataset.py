@@ -9,9 +9,9 @@ learned potential itself produces in hot dynamics (active learning).
 
 from __future__ import annotations
 
-import concurrent.futures as cf
 import hashlib
 import math
+import multiprocessing as mp
 import os
 import pickle
 from pathlib import Path
@@ -48,12 +48,18 @@ def label(conf: dict) -> dict:
 
 
 def label_all(confs, workers: int | None = None, progress=None) -> list[dict]:
-    out = []
-    # each worker holds the projectors for every k-point (~1.5 GB at this mesh density), so the
-    # worker count is bounded by memory, not cores; recycling children keeps that from creeping up
+    """Label every configuration, in parallel, skipping whatever the cache already holds.
+
+    Each worker holds the projectors for every k-point (~1.5 GB at this mesh density), so the
+    worker count is bounded by memory rather than cores, and children are recycled so that does
+    not creep. multiprocessing.Pool rather than ProcessPoolExecutor: the latter's
+    ``max_tasks_per_child`` deadlocked here, parent waiting on a lock while the workers sat
+    blocked at startup."""
     n = workers or max(1, min((os.cpu_count() or 2) - 2, 5))
-    with cf.ProcessPoolExecutor(max_workers=n, max_tasks_per_child=4) as pool:
-        for i, res in enumerate(pool.map(label, confs)):
+    ctx = mp.get_context("spawn")
+    out: list[dict] = []
+    with ctx.Pool(processes=n, maxtasksperchild=4) as pool:
+        for i, res in enumerate(pool.imap(label, confs)):
             out.append(res)
             if progress:
                 progress(i + 1, len(confs))
