@@ -13,12 +13,22 @@ dependencies = [
 
 [project.optional-dependencies]
 # GPU acceleration where MLX cannot go (CUDA on Windows/Linux, MPS on a Mac). Never required:
-# every path it accelerates has a NumPy reference. Install the build for your machine, e.g.
-#   uv pip install "torch --index-url https://download.pytorch.org/whl/cu124"
+# every path it accelerates has a NumPy reference.
 gpu = ["torch>=2.4"]
 
 [project.scripts]
 matter-sim = "matter_sim.cli:main"
+
+# PyPI's Windows and Linux wheels for torch are CPU-only, so `uv sync --extra gpu` there would
+# quietly replace a CUDA build with one that cannot see the card. Those platforms take torch from
+# PyTorch's CUDA index instead; macOS keeps the PyPI wheel, which carries Metal (MPS) support.
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130", marker = "sys_platform == 'win32' or sys_platform == 'linux'" }]
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-aiohttp>=1.0"]
