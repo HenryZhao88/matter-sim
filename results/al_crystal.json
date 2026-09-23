@@ -1,0 +1,3 @@
+{"source": "engine.crystal.eos: periodic LDA DFT, local-d Troullier-Martins pseudopotential (runs of 2026-09-22)",
+ "a0_A": 3.955, "B_GPa": 84.5, "E_coh_eV": 4.10, "bcc_minus_fcc_meV": 108,
+ "C11": 124.0, "C12": 64.8, "C44": 39.4}

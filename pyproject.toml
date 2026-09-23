@@ -11,6 +11,12 @@ dependencies = [
     "numba>=0.67.0",
 ]
 
+[project.optional-dependencies]
+# GPU acceleration where MLX cannot go (CUDA on Windows/Linux, MPS on a Mac). Never required:
+# every path it accelerates has a NumPy reference. Install the build for your machine, e.g.
+#   uv pip install "torch --index-url https://download.pytorch.org/whl/cu124"
+gpu = ["torch>=2.4"]
+
 [project.scripts]
 matter-sim = "matter_sim.cli:main"
 
