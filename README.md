@@ -41,7 +41,7 @@ The scale bar at the top of the viewer switches between the rungs.
 |---|---|---|
 | **Particles and forces** | collisions, decays, confinement | Standard Model amplitudes; lattice gauge theory |
 | **Electrons and nuclei** | atoms and molecules | quantum electrons (DFT/Hartree–Fock), moving nuclei |
-| **Materials** | hundreds of atoms in motion | forces learned from this project's own DFT, then molecular dynamics |
+| **Materials** | hundreds of atoms in motion, melting and expanding | forces learned from this project's own DFT, then molecular dynamics |
 | **Everyday matter** | a cubic centimetre of aluminium | a continuum built from the per-atom properties measured above |
 
 ## What emerges: particles and forces
@@ -145,6 +145,42 @@ before it is offered. Everything up to argon agrees to within 0.06 eV; the fourt
 looser (4 meV for zinc, 147 meV for titanium) and scandium currently fails its own check at
 212 meV, so it stays greyed out rather than quietly giving wrong answers. Relativity is not in
 the atom solver yet, which matters most for the heaviest of these.
+
+## What emerges: a piece of metal
+
+Aluminium, by the chain the ladder is for. Periodic DFT computes the crystal; a potential is
+fitted to nothing but that DFT (89 configurations: volumes, strains, thermal disorder, a
+supercell, bcc, and snapshots of hot liquid); a few hundred atoms then move on those forces;
+and the per-atom properties they produce define a block you could hold.
+
+| Result | Simulated | Experiment | Notes |
+|---|---|---|---|
+| Lattice constant (0 K) | 3.955 Å | 4.046 Å at 293 K | LDA under-estimates; this is the DFT value the potential reproduces to 0.4 mÅ |
+| Bulk modulus | 84.5 GPa | 76 GPa | from the DFT equation of state |
+| Elastic constants C₁₁, C₁₂, C₄₄ | 124, 65, 39 GPa | 107, 61, 28 | strained periodic cells |
+| bcc above fcc | 108 meV/atom | fcc is the stable one | the learned potential agrees to 1 meV |
+| Melting point | 852 K | 933.5 K | solid and liquid in one box; whichever grows, wins |
+| Volume change on melting | 3.2% | 6.5% | |
+| Latent heat of fusion | 70 meV/atom | 111 meV/atom | **the weakest number here** |
+| Thermal expansion | 27.3 ×10⁻⁶/K | 23.1 | classical nuclei |
+| Specific heat at 293 K | 0.97 J/g·K | 0.897 | classical nuclei: no quantum freeze-out |
+| Density at 293 K | 2828 kg/m³ | 2699 | from the lattice constant and the nuclear mass |
+| Speed of sound, longitudinal | 6815 m/s | 6420 | from the elastic constants |
+| 1 cm³ block | 6.3 × 10²² atoms, 2.83 g | 2.70 g | |
+| Energy to melt that block from room temperature | 2.29 kJ | ≈2.9 kJ | |
+
+The learned potential reproduces the DFT it was trained on to 6.5 meV per atom on configurations
+it never saw. The gaps above are mostly the gap between LDA and nature, which the atoms rung
+already has, carried upward — plus, in the latent heat, a real weakness of this potential.
+
+**What that took, and what it cost.** The training labels have to be converged in k-points to
+a few meV per atom, and *consistently* across cells: the first attempt used a mesh that varied
+with cell size, leaving ~30 meV/atom of inconsistency, and no potential can fit numbers that
+disagree with each other — the bulk modulus came out at 44 GPa against DFT's 86. Three further
+faults only showed up as dynamics that exploded: a fitted density that crossed zero (an electron
+density cannot), no repulsion at distances the training data never sampled, and a barostat that
+boiled the metal into vacuum while reporting a plausible-looking melting point. Each is fixed in
+the physics rather than papered over; `engine/materials/` says where.
 
 ## How it works
 
