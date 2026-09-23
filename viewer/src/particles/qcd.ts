@@ -201,6 +201,10 @@ export class LatticeQCD {
       add("text", { x: (L + W - R) / 2, y: H - 10, class: "q-label", "text-anchor": "middle" }, "Quark mass (lattice units; zero where the pion becomes massless)");
       add("text", { x: 14, y: (T + H - B) / 2, class: "q-label", "text-anchor": "middle", transform: `rotate(-90 14 ${(T + H - B) / 2})` }, "Mass squared (lattice units)");
       for (const m of [0, 0.05, 0.1, 0.15, 0.2, 0.25, 0.3]) add("text", { x: x(m), y: H - B + 16, class: "tick", "text-anchor": "middle" }, m.toFixed(2));
+      for (const v of [0.25, 0.5, 0.75, 1.0]) {
+        add("text", { x: L - 8, y: y(v) + 4, class: "tick", "text-anchor": "end" }, v.toFixed(2));
+        add("line", { x1: L, x2: L + 5, y1: y(v), y2: y(v), class: "axis" });
+      }
       if (h) {
         const P = h.kappas.map((k, i) => [mq(k), h.pion[i] ** 2]);
         const Rr = h.kappas.map((k, i) => [mq(k), h.rho[i] ** 2]);
