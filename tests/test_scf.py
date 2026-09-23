@@ -1,6 +1,7 @@
 import numpy as np
 import pytest
 
+from conftest import DEFAULT_BACKEND
 from engine.core.backend import get_backend
 from engine.core.grid import Grid
 from engine.electrons.occupations import fermi
@@ -20,7 +21,7 @@ def test_system_spin_counts():
         System([8], [[0, 0, 0]], multiplicity=2)
 
 
-def solve(Z, functional, backend="mlx", h=0.2, L=14.0, **kw):
+def solve(Z, functional, backend=DEFAULT_BACKEND, h=0.2, L=14.0, **kw):
     g = Grid(L, h, get_backend(backend))
     return SCFSolver(g, System([Z], [[0, 0, 0]], **kw), functional=functional).run()
 
@@ -54,12 +55,12 @@ def test_helium_lda_converges_to_reference_as_grid_refines():
 
 
 def test_float32_gpu_agrees_with_float64_cpu():
-    a = solve(2, "lda", backend="mlx", h=0.3, L=12.0)
+    a = solve(2, "lda", backend=DEFAULT_BACKEND, h=0.3, L=12.0)
     b = solve(2, "lda", backend="numpy", h=0.3, L=12.0)
     assert a.energy == pytest.approx(b.energy, abs=2e-4)
 
 
 def test_result_independent_of_starting_guess():
-    g = Grid(12.0, 0.3, get_backend("mlx"))
+    g = Grid(12.0, 0.3, get_backend(DEFAULT_BACKEND))
     e = [SCFSolver(g, System([2], [[0, 0, 0]]), seed=s).run().energy for s in (0, 7)]
     assert e[0] == pytest.approx(e[1], abs=2e-4)

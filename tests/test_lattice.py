@@ -67,6 +67,7 @@ def test_deconfinement_at_high_temperature():
 
 
 def test_wilson_dirac_is_gamma5_hermitian_and_gpu_matches_cpu():
+    from engine.core.accel import have_mlx
     from engine.lattice.hadrons import GAMMA5, WilsonDirac, WilsonDiracGPU
     g = GaugeField(2, 4, 5.7, seed=3, hot=True)
     D = WilsonDirac(g, 0.15)
@@ -75,6 +76,8 @@ def test_wilson_dirac_is_gamma5_hermitian_and_gpu_matches_cpu():
     b = rng.normal(size=D.shape + (4, 3)) + 1j * rng.normal(size=D.shape + (4, 3))
     # <a, D b> = <D† a, b> with D† = γ5 D γ5
     assert abs(np.vdot(a, D.apply(b)) - np.vdot(D.apply_dag(a), b)) < 1e-10 * np.abs(a).sum()
+    if not have_mlx():
+        return                      # the CPU operator is checked above; the GPU one needs MLX
     G = WilsonDiracGPU(g, 0.15)
     x = np.zeros(D.shape + (3, 4, 1), np.complex64)
     x[..., 0] = np.swapaxes(b, -1, -2)
@@ -91,6 +94,7 @@ def test_pion_is_lighter_than_rho():
 
 
 def test_wilson_dirac_is_gamma5_hermitian_and_gpu_matches_cpu():
+    from engine.core.accel import have_mlx
     from engine.lattice.hadrons import WilsonDirac, WilsonDiracGPU
     g = GaugeField(2, 4, 5.7, seed=3, hot=True)
     D = WilsonDirac(g, 0.15)
@@ -99,6 +103,8 @@ def test_wilson_dirac_is_gamma5_hermitian_and_gpu_matches_cpu():
     b = rng.normal(size=D.shape + (4, 3)) + 1j * rng.normal(size=D.shape + (4, 3))
     # <a, D b> = <D† a, b> with D† = γ5 D γ5
     assert abs(np.vdot(a, D.apply(b)) - np.vdot(D.apply_dag(a), b)) < 1e-10 * np.abs(a).sum()
+    if not have_mlx():
+        return                      # the CPU operator is checked above; the GPU one needs MLX
     G = WilsonDiracGPU(g, 0.15)
     x = np.zeros(D.shape + (3, 4, 1), np.complex64)
     x[..., 0] = np.swapaxes(b, -1, -2)

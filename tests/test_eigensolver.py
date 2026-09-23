@@ -1,12 +1,13 @@
 import numpy as np
 import pytest
 
+from conftest import BACKENDS
 from engine.core.backend import get_backend
 from engine.core.grid import Grid
 from engine.electrons.eigensolver import lobpcg, teter_preconditioner
 
 
-@pytest.mark.parametrize("backend,tol", [("numpy", 1e-4), ("mlx", 2e-3)])
+@pytest.mark.parametrize("backend,tol", [(b, 1e-4 if b == "numpy" else 2e-3) for b in BACKENDS])
 def test_harmonic_oscillator_levels(backend, tol):
     """V = r²/2 has exact levels 1.5, 2.5 (×3), 3.5 (×6)."""
     g = Grid(L=12.0, h=0.3, backend=get_backend(backend))

@@ -2,6 +2,7 @@ import numpy as np
 import pytest
 from scipy.special import erf
 
+from conftest import BACKENDS, requires_mlx
 from engine.core.backend import get_backend
 from engine.core.grid import Grid, fft_friendly
 
@@ -13,7 +14,7 @@ def test_fft_friendly_sizes():
     assert fft_friendly(97) == 100
 
 
-@pytest.mark.parametrize("backend", ["numpy", "mlx"])
+@pytest.mark.parametrize("backend", BACKENDS)
 def test_kinetic_of_plane_wave_is_half_k_squared(backend):
     g = Grid(L=10.0, h=0.25, backend=get_backend(backend))
     X, Y, Z = g.coords
@@ -24,7 +25,7 @@ def test_kinetic_of_plane_wave_is_half_k_squared(backend):
     assert np.max(np.abs(t - expected)) < 1e-4
 
 
-@pytest.mark.parametrize("backend", ["numpy", "mlx"])
+@pytest.mark.parametrize("backend", BACKENDS)
 def test_hartree_of_gaussian_matches_analytic_open_boundary(backend):
     g = Grid(L=16.0, h=0.2, backend=get_backend(backend))
     s = 0.8
@@ -40,6 +41,7 @@ def test_hartree_of_gaussian_matches_analytic_open_boundary(backend):
     assert np.max(np.abs(v - exact)[corner]) < 5e-3
 
 
+@requires_mlx
 def test_backends_agree():
     gn = Grid(L=8.0, h=0.25, backend=get_backend("numpy"))
     gm = Grid(L=8.0, h=0.25, backend=get_backend("mlx"))

@@ -6,6 +6,7 @@ import pytest
 from engine.atoms.pseudo import verify
 from engine.atoms.radial import RadialAtom
 from engine.atoms.species import pseudopotential
+from conftest import DEFAULT_BACKEND
 from engine.core.backend import get_backend
 from engine.core.grid import Grid
 from engine.electrons.scf import SCFSolver
@@ -38,7 +39,7 @@ def test_core_is_every_shell_below_the_outermost():
 def test_3d_pseudo_atom_matches_radial_pseudo_atom(Z, mult):
     pp = pseudopotential(Z)
     ref = RadialAtom(Z, spin=mult - 1, grid=pp.grid, v_external=pp.v_ion, n_valence=pp.Z_val).solve()
-    g = Grid(14.0, 0.3, get_backend("mlx"))
+    g = Grid(14.0, 0.3, get_backend(DEFAULT_BACKEND))
     res = SCFSolver(g, System([Z], [[0, 0, 0]], multiplicity=mult)).run()
     assert res.energy == pytest.approx(ref.energy, abs=5e-3)
 
