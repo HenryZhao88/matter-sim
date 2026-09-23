@@ -62,6 +62,14 @@ still a condensed metal.
   not, so there the ± understates how far another run could land. For a claim about the method
   rather than one wavefunction, run several seeds. (The previous estimate, from 12 correlated
   block means, was unstable: 1.5 mHa on a run whose walker spread says 4.0.)
+- **Truth-mode energies can land below the exact answer, and that is a bias, not luck.** A
+  variational energy cannot fall below the true ground state, so when it does, the estimator is
+  biased. Measured on the Mac (three seeds, He): MLX seed 1 gives −2.9091 against the exact
+  −2.90372, 5.4 mHa too low. The cause is the outlier clipping in `train`/`evaluate`, which
+  trims both tails of the local-energy distribution although that distribution is not symmetric.
+  Short runs hide it inside the noise; it does not vanish with longer sampling. Whoever next
+  touches truth mode should either clip only the tail that needs it, or report the unclipped
+  mean alongside. Until then, a below-exact number is a warning sign, not a triumph.
 
 ## Cross-platform (Mac + Windows/NVIDIA)
 
