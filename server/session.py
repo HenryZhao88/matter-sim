@@ -22,7 +22,7 @@ from engine.scenes.presets import catalog, preset, system_from_preset
 from engine.simulation import MODES, QUALITY_H, Params, Simulation, supported_elements
 from engine.system import System
 
-from engine.core.accel import describe, have_mlx
+from engine.core.accel import autodiff, describe, have_mlx
 from .protocol import encode_snapshot, sanitize
 
 DEFAULT_PRESET = "water"
@@ -232,9 +232,8 @@ class Session:
 
     def _truth(self) -> None:
         """Truth mode: every electron, the exact Hamiltonian, a neural-network wavefunction (VMC)."""
-        if not have_mlx():
-            raise RuntimeError("Truth mode needs the MLX GPU backend (Apple silicon); "
-                               "a CUDA version is not written yet")
+        if autodiff() is None:
+            raise RuntimeError("Truth mode needs MLX (Apple silicon) or PyTorch (the optional 'gpu' extra)")
         from engine.truth.vmc import VMC, Molecule
         s = self.sim.system
         if s.n_up > 3 or s.n_dn > 3:

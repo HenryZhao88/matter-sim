@@ -5,6 +5,7 @@ import pytest
 
 from engine.lattice.qcd import GaugeField, polyakov_scan, run_measurement
 from engine.lattice.schwinger import SchwingerModel, run_scenario, vacuum_profile
+from conftest import GPU_DIRAC
 
 
 def test_schwinger_hamiltonian_is_hermitian_and_gauss_law_holds():
@@ -66,9 +67,8 @@ def test_deconfinement_at_high_temperature():
     assert p2 > 3 * p1
 
 
-def test_wilson_dirac_is_gamma5_hermitian_and_gpu_matches_cpu():
-    from engine.core.accel import have_mlx
-    from engine.lattice.hadrons import GAMMA5, WilsonDirac, WilsonDiracGPU
+def test_wilson_dirac_is_gamma5_hermitian():
+    from engine.lattice.hadrons import WilsonDirac
     g = GaugeField(2, 4, 5.7, seed=3, hot=True)
     D = WilsonDirac(g, 0.15)
     rng = np.random.default_rng(0)
@@ -76,40 +76,39 @@ def test_wilson_dirac_is_gamma5_hermitian_and_gpu_matches_cpu():
     b = rng.normal(size=D.shape + (4, 3)) + 1j * rng.normal(size=D.shape + (4, 3))
     # <a, D b> = <D† a, b> with D† = γ5 D γ5
     assert abs(np.vdot(a, D.apply(b)) - np.vdot(D.apply_dag(a), b)) < 1e-10 * np.abs(a).sum()
-    if not have_mlx():
-        return                      # the CPU operator is checked above; the GPU one needs MLX
-    G = WilsonDiracGPU(g, 0.15)
-    x = np.zeros(D.shape + (3, 4, 1), np.complex64)
-    x[..., 0] = np.swapaxes(b, -1, -2)
-    y = np.array(G.apply(G.mx.array(x)))[..., 0]
-    assert np.abs(np.swapaxes(y, -1, -2) - D.apply(b)).max() < 1e-4
 
 
-@pytest.mark.slow
-def test_pion_is_lighter_than_rho():
-    from engine.lattice.hadrons import spectrum
-    r = spectrum(beta=5.7, L=4, T=8, kappas=(0.150, 0.155, 0.158), n_configs=2, therm=20, spacing=5)
-    assert all(p < q for p, q in zip(r["pion"], r["rho"]))
-    assert r["pion"][0] > r["pion"][-1]                      # lighter quarks → lighter pion
+def _gpu_dirac(which, g, kappa):
+    from engine.lattice.hadrons import WilsonDiracGPU, WilsonDiracTorch
+    return WilsonDiracGPU(g, kappa) if which == "mlx" else WilsonDiracTorch(g, kappa)
 
 
-def test_wilson_dirac_is_gamma5_hermitian_and_gpu_matches_cpu():
-    from engine.core.accel import have_mlx
-    from engine.lattice.hadrons import WilsonDirac, WilsonDiracGPU
+@pytest.mark.parametrize("which", GPU_DIRAC)
+def test_gpu_wilson_dirac_matches_cpu(which):
+    """The complex64 GPU operator (MLX or torch) against the NumPy reference."""
+    from engine.lattice.hadrons import WilsonDirac
     g = GaugeField(2, 4, 5.7, seed=3, hot=True)
     D = WilsonDirac(g, 0.15)
+    G = _gpu_dirac(which, g, 0.15)
     rng = np.random.default_rng(0)
-    a = rng.normal(size=D.shape + (4, 3)) + 1j * rng.normal(size=D.shape + (4, 3))
     b = rng.normal(size=D.shape + (4, 3)) + 1j * rng.normal(size=D.shape + (4, 3))
-    # <a, D b> = <D† a, b> with D† = γ5 D γ5
-    assert abs(np.vdot(a, D.apply(b)) - np.vdot(D.apply_dag(a), b)) < 1e-10 * np.abs(a).sum()
-    if not have_mlx():
-        return                      # the CPU operator is checked above; the GPU one needs MLX
-    G = WilsonDiracGPU(g, 0.15)
     x = np.zeros(D.shape + (3, 4, 1), np.complex64)
     x[..., 0] = np.swapaxes(b, -1, -2)
-    y = np.array(G.apply(G.mx.array(x)))[..., 0]
+    y = G.to_numpy(G.apply(G.asarray(x)))[..., 0]
     assert np.abs(np.swapaxes(y, -1, -2) - D.apply(b)).max() < 1e-4
+
+
+@pytest.mark.parametrize("which", GPU_DIRAC)
+def test_gpu_point_propagator_matches_cpu(which):
+    """Whole quark propagator (12 CG solves, unsmeared) on the GPU against the float64 CPU one."""
+    from engine.lattice.hadrons import WilsonDirac, correlators, point_propagator, point_propagator_gpu
+    g = GaugeField(2, 4, 5.7, seed=3, hot=True)
+    S_cpu, _ = point_propagator(WilsonDirac(g, 0.15))
+    S_gpu, _ = point_propagator_gpu(_gpu_dirac(which, g, 0.15), smeared=False)
+    assert np.abs(S_gpu - S_cpu).max() < 1e-4 * np.abs(S_cpu).max()
+    c_cpu, c_gpu = correlators(S_cpu), correlators(S_gpu)
+    for k in ("pion", "rho"):
+        assert np.allclose(c_gpu[k], c_cpu[k], rtol=1e-4)
 
 
 @pytest.mark.slow

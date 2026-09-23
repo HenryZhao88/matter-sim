@@ -101,6 +101,12 @@ class WilsonDiracGPU:
         self.kappa = kappa
         self.shape = g.U.shape[1:5]
 
+    def asarray(self, a: np.ndarray):
+        return self.mx.array(a)
+
+    def to_numpy(self, X) -> np.ndarray:
+        return np.array(X)
+
     def _colour(self, U, X):
         s = X.shape
         return (U @ X.reshape(s[:4] + (3, -1))).reshape(s)
@@ -154,18 +160,94 @@ class WilsonDiracGPU:
         return x, maxiter
 
 
-def point_propagator_gpu(D: WilsonDiracGPU, smeared: bool = False):
+class WilsonDiracTorch:
+    """WilsonDiracGPU on PyTorch (CUDA, or MPS on a Mac), complex64, same layout and the same
+    arithmetic in the same order: X[t, x, y, z, colour, spin, column]."""
+
+    def __init__(self, g: GaugeField, kappa: float, device: str | None = None) -> None:
+        import torch
+        from ..core.accel import torch_device
+        self.torch = torch
+        self.device = torch.device(device or torch_device())
+        T = g.U.shape[1]
+        Ut = g.U.copy()
+        Ut[0, T - 1] *= -1                                  # antiperiodic in time
+        c64 = lambda a: torch.tensor(np.ascontiguousarray(a).astype(np.complex64), device=self.device)
+        self.fwd = [c64(Ut[mu]) for mu in range(4)]
+        self.bwd = [c64(np.roll(np.conj(np.swapaxes(Ut[mu], -1, -2)), 1, axis=mu)) for mu in range(4)]
+        self.Pm = [c64(ONE4 - GAMMA[m]) for m in range(4)]
+        self.Pp = [c64(ONE4 + GAMMA[m]) for m in range(4)]
+        self.g5 = c64(GAMMA5)
+        self.kappa = kappa
+        self.shape = g.U.shape[1:5]
+
+    def asarray(self, a: np.ndarray):
+        return self.torch.tensor(np.ascontiguousarray(a), device=self.device)
+
+    def to_numpy(self, X) -> np.ndarray:
+        return X.cpu().numpy()
+
+    def _colour(self, U, X):
+        s = X.shape
+        return (U @ X.reshape(tuple(s[:4]) + (3, -1))).reshape(s)
+
+    def apply(self, X):
+        roll = self.torch.roll
+        out = X
+        for mu in range(4):
+            hf = self._colour(self.fwd[mu], roll(X, -1, dims=mu))
+            hb = self._colour(self.bwd[mu], roll(X, 1, dims=mu))
+            out = out - self.kappa * (self.Pm[mu] @ hf + self.Pp[mu] @ hb)
+        return out
+
+    def apply_dag(self, X):
+        return self.g5 @ self.apply(self.g5 @ X)
+
+    def smear(self, X, kappa_w: float = 0.25, steps: int = 40):
+        """Wuppertal smearing, as WilsonDiracGPU.smear."""
+        roll = self.torch.roll
+        for _ in range(steps):
+            hop = 0
+            for mu in (1, 2, 3):
+                hop = hop + self._colour(self.fwd[mu], roll(X, -1, dims=mu))                           + self._colour(self.bwd[mu], roll(X, 1, dims=mu))
+            X = (X + kappa_w * hop) / (1 + 6 * kappa_w)
+        return X
+
+    def solve(self, B, tol=1e-6, maxiter=5000):
+        """Conjugate gradient on D†D, one independent CG per column."""
+        torch = self.torch
+        axes = tuple(range(B.ndim - 1))
+        dot = lambda a, b: torch.real(torch.sum(torch.conj(a) * b, dim=axes))
+        rhs = self.apply_dag(B)
+        x = torch.zeros_like(rhs)
+        r, p = rhs, rhs
+        rr = dot(r, r)
+        stop = (tol ** 2) * rr
+        for it in range(maxiter):
+            Ap = self.apply_dag(self.apply(p))
+            alpha = rr / dot(p, Ap)
+            x = x + alpha * p
+            r = r - alpha * Ap
+            rr_new = dot(r, r)
+            p = r + (rr_new / rr) * p
+            rr = rr_new
+            if it % 10 == 0 and bool(torch.all(rr < stop)):
+                return x, it + 1
+        return x, maxiter
+
+
+def point_propagator_gpu(D, smeared: bool = False):
     """S[t, x, y, z, s, c, s0, c0] from a source at the origin (point, or Wuppertal-smeared),
-    all 12 columns in one solve."""
+    all 12 columns in one solve, on WilsonDiracGPU (MLX) or WilsonDiracTorch."""
     B = np.zeros(D.shape + (3, 4, 12), np.complex64)
     for s0 in range(4):
         for c0 in range(3):
             B[0, 0, 0, 0, c0, s0, s0 * 3 + c0] = 1.0
-    B = D.mx.array(B)
+    B = D.asarray(B)
     if smeared:
         B = D.smear(B)
     X, iters = D.solve(B)
-    X = np.array(X).astype(complex).reshape(D.shape + (3, 4, 4, 3))       # (…, c, s, s0, c0)
+    X = D.to_numpy(X).astype(complex).reshape(D.shape + (3, 4, 4, 3))       # (…, c, s, s0, c0)
     return X.transpose(0, 1, 2, 3, 5, 4, 6, 7), iters
 
 
@@ -217,9 +299,12 @@ def plateau(m: np.ndarray, width: int = 3) -> float:
 
 def propagator(g: GaugeField, kappa: float, smeared: bool = True):
     """Quark propagator with whichever accelerator this machine has."""
-    from ..core.accel import have_mlx
-    if have_mlx():
+    from ..core.accel import preferred
+    which = preferred()
+    if which == "mlx":
         return point_propagator_gpu(WilsonDiracGPU(g, kappa), smeared=smeared)
+    if which == "torch":
+        return point_propagator_gpu(WilsonDiracTorch(g, kappa), smeared=smeared)
     return point_propagator(WilsonDirac(g, kappa))      # CPU reference: no source smearing
 
 
