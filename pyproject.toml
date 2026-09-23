@@ -6,7 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.0",
     "scipy>=1.13",
-    "mlx>=0.32",
+    "mlx>=0.32; sys_platform == 'darwin' and platform_machine == 'arm64'",
     "aiohttp>=3.10",
     "numba>=0.67.0",
 ]

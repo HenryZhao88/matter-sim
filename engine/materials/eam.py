@@ -121,11 +121,20 @@ def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=No
     """configs: list of dicts {cell, positions, energy, forces} (Hartree, bohr).
 
     All configurations are packed into one graph (atoms numbered globally, energies summed
-    per configuration), so each training step is a handful of GPU kernels.
+    per configuration), so each training step is a handful of GPU kernels. Without MLX this
+    returns a plain starting guess: :func:`refine` (float64 least squares, NumPy and SciPy only)
+    does the real work from there on any machine.
 
     ``e_scale_eV`` weights each configuration by 1 / (1 + (ΔE / e_scale)²), ΔE its energy per
     atom above the lowest one: the potential should be most accurate where the metal actually
     spends its time (solid and liquid near melting lie within a few tenths of an eV)."""
+    from ..core.accel import have_mlx
+    rng0 = np.random.default_rng(seed)
+    if not have_mlx():
+        return EAM(rng0.normal(0, 1e-3, N_BASIS), np.abs(rng0.normal(0.05, 0.01, N_BASIS)),
+                   np.array([-0.2, 0.0, 0.0, 0.0]),
+                   float(np.mean([c["energy"] / len(c["positions"]) for c in configs])))
+
     import mlx.core as mx
     import mlx.optimizers as optim
 

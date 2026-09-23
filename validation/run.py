@@ -229,7 +229,7 @@ def atoms_section(quick: bool, q: str) -> None:
     record("hydrogen", "Lyman-α (2p→1s)", lyman, 121.567, "nm", "infinite nuclear mass",
            abs(lyman - 121.567) < 0.2)
     record("hydrogen", "Balmer-α (3→2)", balmer, 656.28, "nm", "infinite nuclear mass", abs(balmer - 656.28) < 1.0)
-    g3 = Grid(14.0, 0.2, get_backend("mlx"))
+    g3 = Grid(14.0, 0.2, get_backend("auto"))
     e3 = SCFSolver(g3, System([1], [[0, 0, 0]]), functional="none").run().energy
     record("hydrogen", "Ground state on the 3D grid", e3, -0.5, "Ha", "h = 0.2 bohr", abs(e3 + 0.5) < 2e-3)
 
@@ -274,7 +274,7 @@ def atoms_section(quick: bool, q: str) -> None:
     sim = relax(system_from_preset("h2_form"), q)
     P = sim.system.positions
     R = float(np.linalg.norm(P[0] - P[1])) * BOHR_ANGSTROM
-    gH = Grid(sim.grid.L, sim.params.h, get_backend("mlx"))
+    gH = Grid(sim.grid.L, sim.params.h, get_backend("auto"))
     eH = SCFSolver(gH, System([1], [[0, 0, 0]])).run().energy
     De = (2 * eH - sim.result.energy) * HARTREE_EV
     record("molecules", "H₂ bond length", R, 0.7414, "Å", "LDA ≈ 0.765", abs(R - 0.765) < 0.02)

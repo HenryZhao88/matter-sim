@@ -215,6 +215,14 @@ def plateau(m: np.ndarray, width: int = 3) -> float:
     return float(np.mean(vals)) if len(vals) else float("nan")
 
 
+def propagator(g: GaugeField, kappa: float, smeared: bool = True):
+    """Quark propagator with whichever accelerator this machine has."""
+    from ..core.accel import have_mlx
+    if have_mlx():
+        return point_propagator_gpu(WilsonDiracGPU(g, kappa), smeared=smeared)
+    return point_propagator(WilsonDirac(g, kappa))      # CPU reference: no source smearing
+
+
 def spectrum(beta: float = 5.7, L: int = 6, T: int = 12, kappas=(0.150, 0.155, 0.160), n_configs: int = 6,
              therm: int = 60, spacing: int = 20, seed: int = 11, progress=None) -> dict:
     """Pion and rho masses (lattice units) at several quark masses, averaged over gluon configurations."""
@@ -226,7 +234,7 @@ def spectrum(beta: float = 5.7, L: int = 6, T: int = 12, kappas=(0.150, 0.155, 0
         for _ in range(spacing):
             g.sweep()
         for k in kappas:
-            S, _ = point_propagator_gpu(WilsonDiracGPU(g, k), smeared=True)
+            S, _ = propagator(g, k)
             C = correlators(S)
             acc[k]["pion"] += C["pion"] / n_configs
             acc[k]["rho"] += C["rho"] / n_configs

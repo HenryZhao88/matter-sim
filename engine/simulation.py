@@ -43,7 +43,7 @@ class Params:
     functional: str = "lda"
     quality: str = "draft"
     mode: str = "relax"
-    backend: str = "mlx"
+    backend: str = "auto"      # "mlx" on Apple silicon, else "numpy" (see engine/core/accel.py)
     T_e: float = 3e-3            # electronic temperature, Hartree (~950 K)
     temperature_K: float = 0.0   # heat-bath temperature for dynamics
     dt: float = 10.0             # MD time step, a.u. (~0.24 fs)
