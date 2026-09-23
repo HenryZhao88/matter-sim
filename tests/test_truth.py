@@ -3,7 +3,9 @@
 import numpy as np
 import pytest
 
-from engine.truth.vmc import VMC, Molecule
+pytest.importorskip("mlx.core", reason="truth mode needs the MLX GPU backend (Apple silicon)")
+
+from engine.truth.vmc import VMC, Molecule  # noqa: E402
 
 
 @pytest.mark.slow

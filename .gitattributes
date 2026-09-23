@@ -1,0 +1,7 @@
+# One line ending everywhere, so commits from Windows do not rewrite whole files.
+* text=auto eol=lf
+*.png binary
+*.woff binary
+*.woff2 binary
+*.npz binary
+*.pkl binary
