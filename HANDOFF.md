@@ -53,13 +53,26 @@ still a condensed metal.
   `.cache/pseudo/v4_Z*_checks.json` and `matter-sim pseudos` rebuilds them. Scandium currently
   fails (212 meV against a 150 meV limit) and is greyed out.
 
+- **Truth-mode error bars cover sampling, not training.** `evaluate()` takes its ± from the
+  spread of the 512 walkers' time-averaged energies (independent Markov chains), which is honest
+  for the energy of *that* trained wavefunction. A different seed trains a different
+  wavefunction; measured on He and H₂ (five seeds, CUDA), that adds ~2 mHa of seed-to-seed
+  spread no single run's ± can include. At the default `evaluate(12, 5)` the ± is ~4.5 mHa and
+  sampling dominates; on long evaluations the ± falls to 1–2 mHa and the training spread does
+  not, so there the ± understates how far another run could land. For a claim about the method
+  rather than one wavefunction, run several seeds. (The previous estimate, from 12 correlated
+  block means, was unstable: 1.5 mHa on a run whose walker spread says 4.0.)
+
 ## Cross-platform (Mac + Windows/NVIDIA)
 
 `engine/core/accel.py` answers what a machine can compute on: MLX on Apple silicon, CUDA (or
 MPS) through PyTorch, NumPy always as the reference. `mlx` installs only on Apple silicon and
 `torch` is the optional `gpu` extra, so the project installs everywhere. Truth mode and the
-lattice Wilson–Dirac solver each have MLX and PyTorch implementations that agree within their
-error bars. Still to do: the periodic DFT in `engine/crystal/periodic.py` is plain NumPy on the
+lattice Wilson–Dirac solver each have MLX and PyTorch implementations: the Dirac operators and
+propagators agree with the float64 NumPy reference to 1e-4 (a test), and the two VMC ports give
+energies that agree within the seed-to-seed spread below. On the RTX 4050 the VMC runs no faster
+than the CPU at 512 walkers (kernel-launch bound, ~23 s for He); at 8192 walkers CUDA is 7× the
+CPU per walker, so on a CUDA box Truth mode should scale walkers, not iterations. Still to do: the periodic DFT in `engine/crystal/periodic.py` is plain NumPy on the
 CPU and is the real bottleneck — labelling 89 configurations took about five hours. It is the
 piece with the most to gain from a CUDA port, and the open question is whether single precision
 holds energies to ~1 meV/atom, since a consumer NVIDIA card runs double precision at 1/64 speed

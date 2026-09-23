@@ -236,11 +236,17 @@ class VMC:
         return {"history": history}
 
     def evaluate(self, blocks: int = 20, per_block: int = 10) -> tuple[float, float]:
-        """Energy and statistical error from decorrelated blocks."""
-        means = []
+        """Energy and its statistical error.
+
+        The error comes from the walkers: each is an independent Markov chain, so the spread of
+        the walkers' time-averaged energies gives the standard error whatever the chains'
+        autocorrelation time. (Treating the block means as independent understated it: blocks of
+        a few MCMC steps are correlated with each other.) It is the error of this wavefunction's
+        energy; a different seed trains a different wavefunction, which it cannot include.
+        """
+        total = torch.zeros(self.nw, device=self.device)
         for _ in range(blocks):
             self.mcmc(per_block)
-            el = self.local_energy(self.r)
-            means.append(float(torch.mean(el)))
-        m = np.array(means)
-        return float(m.mean()), float(m.std() / math.sqrt(len(m)))
+            total += self.local_energy(self.r)
+        w = (total / blocks).cpu().numpy().astype(np.float64)
+        return float(w.mean()), float(w.std(ddof=1) / math.sqrt(len(w)))
