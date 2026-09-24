@@ -126,8 +126,10 @@ machines silently named the same label differently.
   Its pseudopotential passes (8 valence electrons, 9 meV transferability); what is missing is
   spin-polarised periodic DFT.
 - **Copper's pseudopotential passes** (11 valence electrons, 53 meV transferability, limit 150),
-  and the fp32 path handles its d projectors (above). Not yet checked: whether h = 0.3 bohr, chosen
-  for aluminium, converges copper's more localised d states. That grid convergence comes first.
+  and the fp32 path handles its d projectors (above). But h = 0.3 bohr, chosen for aluminium, does
+  not converge copper's d states: a half-grid-step shift of the crystal moves the energy by
+  −335 meV/atom at h = 0.30 and −15.7 at h = 0.26 (egg-box test; numbers and the finer-grid runs
+  are in AGENTS.md, "In flight"). That grid convergence comes first.
 
 ## Conventions
 

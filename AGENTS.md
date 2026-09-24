@@ -71,7 +71,8 @@ hard-won lessons; read it too.
   **−335 meV/atom at h = 0.30** and **−15.7 meV/atom at h = 0.26**, with spurious forces of
   2.7e-2 and 4.4e-3 Ha/bohr on a perfect crystal where every force is exactly zero. For scale,
   the whole aluminium fit achieved 6.5 meV/atom. h = 0.22, 0.19, 0.16 are running
-  (`scratchpad/eggbox.py`, ~2 min per point). **Do not label copper until this lands**, and
+  (`scratchpad/eggbox.py`, ~2 min per point; that script is local to the Mac and not in
+  the repo — commit it with the results so the other machine can rerun it). **Do not label copper until this lands**, and
   re-time one copper label afterwards: copper needs ~3× aluminium's grid points and has 11
   valence electrons against 3, so aluminium's 8-minute label is not the right estimate.
 - **Memory decides which h is usable (Windows, 2026-09-24).** Both DFT paths keep every
