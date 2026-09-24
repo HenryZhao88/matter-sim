@@ -59,6 +59,15 @@ def _solver(name: str, c: Crystal):
     raise ValueError(f"unknown DFT solver {name!r}")
 
 
+def cache_key(conf: dict) -> str:
+    """The label's cache name. Pickle protocol pinned at 4: the default changed to 5 in Python 3.14,
+    so the same configuration hashed differently on the Mac (3.13) and on Windows (3.14) and each
+    machine silently missed the other's labels. 4 keeps every existing key valid."""
+    return hashlib.sha1(pickle.dumps((np.round(conf["cell"], 6).tolist(), conf["charges"],
+                                      np.round(conf["positions"], 6).tolist(), K_SPACING, T_E),
+                                     protocol=4)).hexdigest()[:16]
+
+
 def label(conf: dict, solver: str = "numpy") -> dict:
     """Run DFT on one configuration (cached by content hash).
 
@@ -67,8 +76,7 @@ def label(conf: dict, solver: str = "numpy") -> dict:
     label, 17x faster on CUDA, slower than NumPy on Apple's MPS). Either satisfies the cache,
     since both are far inside the fit's own error; each label records which produced it. Labels
     from before this field existed were all NumPy float64."""
-    key = hashlib.sha1(pickle.dumps((np.round(conf["cell"], 6).tolist(), conf["charges"],
-                                     np.round(conf["positions"], 6).tolist(), K_SPACING, T_E))).hexdigest()[:16]
+    key = cache_key(conf)
     path = CACHE / "dft" / f"{key}.pkl"
     if path.exists():
         return pickle.loads(path.read_bytes())

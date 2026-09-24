@@ -132,3 +132,11 @@ def test_labels_record_which_solver_produced_them(monkeypatch, tmp_path):
     assert d["kspacing"] == dataset.K_SPACING and d["T_e"] == dataset.T_E and d["scf_iterations"] == 9
     with pytest.raises(ValueError):
         dataset.label({**conf, "positions": np.ones((1, 3))}, solver="fortran")
+
+
+def test_label_cache_key_is_the_same_on_every_python():
+    """The first 8-atom aluminium configuration, keyed on the Mac (Python 3.13): results/al_fcc8_reference.json."""
+    from engine.core.units import angstrom_to_bohr
+    from engine.materials import dataset
+    conf = next(c for c in dataset.initial_configurations(13, angstrom_to_bohr(3.955)) if c["tag"] == "fcc-8")
+    assert dataset.cache_key(conf) == "443949903599bfb7"
