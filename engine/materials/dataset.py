@@ -34,36 +34,60 @@ class NotConverged(RuntimeError):
     """A DFT label whose self-consistent field did not converge."""
 
 
-def _label_or_none(conf: dict):
+def _label_or_none(conf: dict, solver: str = "numpy"):
     try:
-        return label(conf)
+        return label(conf, solver)
     except NotConverged as e:
         print(f"refused: {e}", flush=True)
         return None
 
 
-def label(conf: dict) -> dict:
-    """Run DFT on one configuration (cached by content hash)."""
+def _solver(name: str, c: Crystal):
+    """The DFT path, and the provenance it leaves in the label."""
+    kw = dict(h=0.3, kmesh=_kmesh(c.cell), T_e=T_E, symmetry=False)
+    if name == "numpy":
+        return PeriodicDFT(c, **kw), {"solver": "numpy", "precision": "float64", "device": "cpu"}
+    if name == "torch":
+        from ..crystal.periodic_torch import PeriodicDFTTorch
+        dft = PeriodicDFTTorch(c, **kw)
+        dev = dft.dev.type
+        if dev == "cuda":
+            import torch
+            dev = f"cuda ({torch.cuda.get_device_name(dft.dev)})"
+        return dft, {"solver": "torch", "precision": "complex64 eigensolver, float64 energy and force sums",
+                     "device": dev}
+    raise ValueError(f"unknown DFT solver {name!r}")
+
+
+def label(conf: dict, solver: str = "numpy") -> dict:
+    """Run DFT on one configuration (cached by content hash).
+
+    ``solver`` is "numpy" (float64, the reference) or "torch" (engine/crystal/periodic_torch.py,
+    single precision on a GPU: 0.0065 meV/atom and 1.4e-4 Ha/bohr from float64 on a production
+    label, 17x faster on CUDA, slower than NumPy on Apple's MPS). Either satisfies the cache,
+    since both are far inside the fit's own error; each label records which produced it. Labels
+    from before this field existed were all NumPy float64."""
     key = hashlib.sha1(pickle.dumps((np.round(conf["cell"], 6).tolist(), conf["charges"],
                                      np.round(conf["positions"], 6).tolist(), K_SPACING, T_E))).hexdigest()[:16]
     path = CACHE / "dft" / f"{key}.pkl"
     if path.exists():
         return pickle.loads(path.read_bytes())
     c = Crystal(conf["cell"], conf["charges"], conf["positions"])
-    r = PeriodicDFT(c, h=0.3, kmesh=_kmesh(c.cell), T_e=T_E, symmetry=False).run(forces=True)
+    dft, provenance = _solver(solver, c)
+    r = dft.run(forces=True)
     if not r.converged:
         # a non-converged SCF still returns an energy, several meV off and indistinguishable from a
         # real one; it is neither cached nor handed on
         raise NotConverged(f"{conf.get('tag', '')}: SCF not converged in {r.iterations} iterations")
     out = {"cell": c.cell, "charges": c.charges, "positions": c.positions,
            "energy": r.free_energy, "forces": r.forces, "converged": r.converged, "tag": conf.get("tag", ""),
-           "kspacing": K_SPACING, "T_e": T_E}
+           "kspacing": K_SPACING, "T_e": T_E, **provenance, "scf_iterations": r.iterations}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(pickle.dumps(out))
     return out
 
 
-def label_all(confs, workers: int | None = None, progress=None) -> list[dict]:
+def label_all(confs, workers: int | None = None, progress=None, solver: str = "numpy") -> list[dict]:
     """Label every configuration, in parallel, skipping whatever the cache already holds.
 
     Each worker holds the projectors for every k-point (~1.5 GB at this mesh density), so the
@@ -73,7 +97,19 @@ def label_all(confs, workers: int | None = None, progress=None) -> list[dict]:
     blocked at startup.
 
     A configuration whose SCF does not converge is refused, not returned: the result holds only
-    converged labels, and the count of refusals is ``len(confs) - len(result)``."""
+    converged labels, and the count of refusals is ``len(confs) - len(result)``.
+
+    ``solver="torch"`` labels one configuration at a time in this process: the GPU does the
+    work, and every extra process would pay for its own CUDA context (~1 GB of host memory)."""
+    if solver != "numpy":
+        out = []
+        for i, conf in enumerate(confs):
+            res = _label_or_none(conf, solver)
+            if res is not None:
+                out.append(res)
+            if progress:
+                progress(i + 1, len(confs))
+        return out
     n = workers or max(1, min((os.cpu_count() or 2) - 2, 5))
     ctx = mp.get_context("spawn")
     out: list[dict] = []

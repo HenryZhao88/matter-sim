@@ -115,3 +115,20 @@ def test_labeller_refuses_an_unconverged_scf(monkeypatch, tmp_path):
         dataset.label(conf)
     assert not list(tmp_path.rglob("*.pkl"))
     assert dataset._label_or_none(conf) is None
+
+
+def test_labels_record_which_solver_produced_them(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from engine.materials import dataset
+
+    def converged(self, **kw):
+        return SimpleNamespace(converged=True, iterations=9, free_energy=-8.4, forces=np.zeros((1, 3)))
+
+    monkeypatch.setattr(dataset, "CACHE", tmp_path)
+    monkeypatch.setattr(dataset.PeriodicDFT, "run", converged)
+    conf = {"cell": np.array([7.6, 7.6, 7.6]), "charges": [13], "positions": np.zeros((1, 3)), "tag": "test"}
+    d = dataset.label(conf)
+    assert (d["solver"], d["precision"], d["device"]) == ("numpy", "float64", "cpu")
+    assert d["kspacing"] == dataset.K_SPACING and d["T_e"] == dataset.T_E and d["scf_iterations"] == 9
+    with pytest.raises(ValueError):
+        dataset.label({**conf, "positions": np.ones((1, 3))}, solver="fortran")

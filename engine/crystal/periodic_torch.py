@@ -145,7 +145,9 @@ class PeriodicDFTTorch(PeriodicDFT):
         return float((B.abs() ** 2).sum(dim=1).max()) * self.dV
 
     # -------------------------------------------------------------- SCF
-    def run(self, max_iter: int = 60, tol: float = 1e-6, forces: bool = False, verbose: bool = False) -> CrystalResult:
+    def run(self, max_iter: int = 60, tol: float = 1e-6, forces: bool = False, verbose: bool = False,
+            rho_tol: float = 1e-4) -> CrystalResult:
+        """As PeriodicDFT.run; ``rho_tol`` is the density-change test (the NumPy path's fixed 1e-4)."""
         t0 = time.perf_counter()
         c = self.c
         ne = c.valence
@@ -186,7 +188,7 @@ class PeriodicDFTTorch(PeriodicDFT):
             # ~1e-6 Ha/cell jitter once converged on fcc Al), or passing it becomes a matter of luck;
             # the density test, ~15x above its own noise, is what guarantees self-consistency
             tol_eff = max(tol, torch.finfo(F32).eps * sum(abs(v) for v in comps.values()))
-            if abs(F - E_prev) < tol_eff and drho < 1e-4:
+            if abs(F - E_prev) < tol_eff and drho < rho_tol:
                 rho = rho_out
                 converged = True
                 break
