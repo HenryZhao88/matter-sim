@@ -239,16 +239,22 @@ def initial_configurations(Z: int, a0: float, seed: int = 0) -> list[dict]:
     return confs
 
 
-def md_snapshots(model, a0: float, temps=(600.0, 1000.0, 1400.0), per_T: int = 6, seed: int = 0) -> list[dict]:
+def md_snapshots(model, a0: float, temps=(600.0, 1000.0, 1400.0), per_T: int = 6, seed: int = 0,
+                 Z: int = 13, mass_amu: float = 26.9815385) -> list[dict]:
     """Configurations the metal actually visits: 8-atom cells run with a learned potential
-    (hot enough to disorder, then held at T), sampled every few hundred femtoseconds."""
+    (hot enough to disorder, then held at T), sampled every few hundred femtoseconds.
+
+    ``Z`` and ``mass_amu`` default to aluminium exactly as its training set was generated (the
+    dynamics are chaotic, so any change to the mass would move every snapshot and its cache key);
+    another metal passes its own. The temperatures, and the 900 K above which a run is first
+    disordered at 2500 K, were chosen for aluminium and are the caller's to revisit."""
     from ..core.units import AMU_ME, AU_TIME_FS, KELVIN_HARTREE
     from .eam import energy_forces
     rng = np.random.default_rng(seed)
-    base = cubic("fcc", a0, 13)
+    base = cubic("fcc", a0, Z)
     cell = base.cell * np.array([2, 1, 1])
     out = []
-    mass = 26.9815385 * AMU_ME
+    mass = mass_amu * AMU_ME
     dt = 3.0 / AU_TIME_FS
     for T in temps:
         pos = np.concatenate([base.positions, base.positions + np.array([base.cell[0], 0, 0])])
@@ -264,7 +270,7 @@ def md_snapshots(model, a0: float, temps=(600.0, 1000.0, 1400.0), per_T: int = 6
             kT = mass * np.sum(vel ** 2) / (3 * (len(pos) - 1))
             vel *= math.sqrt(1 + 0.05 * (target * KELVIN_HARTREE / max(kT, 1e-12) - 1))   # weak rescaling
             if step >= 600 and (step - 600) % 400 == 399:
-                out.append({"cell": cell, "charges": [13] * 8, "positions": pos.copy(), "tag": f"md-{int(T)}"})
+                out.append({"cell": cell, "charges": [Z] * 8, "positions": pos.copy(), "tag": f"md-{int(T)}"})
     return out
 
 
