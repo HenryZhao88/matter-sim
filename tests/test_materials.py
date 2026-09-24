@@ -175,3 +175,29 @@ def test_label_found_under_its_legacy_name_is_renamed_not_recomputed(monkeypatch
     assert not old.exists()
     assert (tmp_path / "dft" / f"{dataset.cache_key(conf)}.pkl").exists()
     assert dataset.label(conf)["tag"] == "legacy"                       # and found again under the new name
+
+
+def test_cross_checks_cover_every_kind_of_configuration(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from engine.materials import dataset
+    rng = np.random.default_rng(1)
+    labels = [{"cell": np.array([7.6, 7.6, 7.6]), "charges": [13], "positions": rng.uniform(0, 7.6, (1, 3)),
+               "tag": tag, "energy": -2.0, "forces": np.zeros((1, 3)), "solver": "torch"}
+              for tag, n in (("fcc-volume", 9), ("fcc-8", 16), ("md-1000", 41)) for _ in range(n)]
+    chosen = dataset.select_for_cross_check(labels)
+    assert sorted({c["tag"] for c in chosen}) == ["fcc-8", "fcc-volume", "md-1000"]
+    assert len(chosen) == 1 + 1 + 3                                      # ceil(5 %) per tag, at least one
+    assert [dataset.cache_key(c) for c in dataset.select_for_cross_check(labels[::-1])] == \
+           [dataset.cache_key(c) for c in chosen]                        # order-independent: both machines agree
+
+    def float64_run(self, **kw):
+        return SimpleNamespace(converged=True, iterations=8, free_energy=-2.0 + 1e-6, forces=np.full((1, 3), 2e-5))
+
+    monkeypatch.setattr(dataset, "CACHE", tmp_path)
+    monkeypatch.setattr(dataset.PeriodicDFT, "run", float64_run)
+    for c in chosen:
+        assert dataset.cross_check(c)["solver"] == "numpy"
+    rep = dataset.consistency(labels)
+    assert rep["checked"] == 5 and abs(rep["max_abs_dE_meV_per_atom"] - 0.0272) < 1e-3
+    assert abs(rep["max_dF_Ha_per_bohr"] - 2e-5) < 1e-12
+    assert not (tmp_path / "dft").exists()                               # checks never land in the label cache

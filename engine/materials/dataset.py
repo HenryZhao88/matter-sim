@@ -114,6 +114,61 @@ def label(conf: dict, solver: str = "numpy") -> dict:
     return out
 
 
+CROSS_CHECK_FRACTION = 0.05     # of each kind of configuration, also computed on the NumPy float64 path
+
+
+def select_for_cross_check(labels: list[dict], fraction: float = CROSS_CHECK_FRACTION) -> list[dict]:
+    """The labels to recompute in float64: ~``fraction`` of each tag, at least one per tag.
+
+    Per tag, because what broke the first aluminium fit was inconsistency between kinds of
+    configuration (cells whose k-meshes differed), not the error of any single label. Within a tag
+    the lowest cache keys are taken, so both machines pick the same configurations unprompted."""
+    by_tag: dict = {}
+    for lab in labels:
+        by_tag.setdefault(lab.get("tag", ""), []).append(lab)
+    chosen = []
+    for tag in sorted(by_tag):
+        group = sorted(by_tag[tag], key=cache_key)
+        chosen += group[:max(1, math.ceil(fraction * len(group)))]
+    return chosen
+
+
+def cross_check(lab: dict) -> dict:
+    """The NumPy float64 recomputation of a label, cached in dft_check/ beside it (never over it)."""
+    path = CACHE / "dft_check" / f"{cache_key(lab)}.pkl"
+    if path.exists():
+        return pickle.loads(path.read_bytes())
+    c = Crystal(lab["cell"], lab["charges"], lab["positions"])
+    dft, provenance = _solver("numpy", c)
+    r = dft.run(forces=True)
+    if not r.converged:
+        raise NotConverged(f"{lab.get('tag', '')}: cross-check SCF not converged in {r.iterations} iterations")
+    out = {"energy": r.free_energy, "forces": r.forces, "tag": lab.get("tag", ""), "kspacing": K_SPACING,
+           "T_e": T_E, **provenance, "scf_iterations": r.iterations}
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(pickle.dumps(out))
+    return out
+
+
+def consistency(labels: list[dict]) -> dict:
+    """Every label that has a float64 cross-check, against it: energy per atom and largest force gap."""
+    rows = []
+    for lab in labels:
+        path = CACHE / "dft_check" / f"{cache_key(lab)}.pkl"
+        if not path.exists():
+            continue
+        chk = pickle.loads(path.read_bytes())
+        n = len(lab["charges"])
+        rows.append({"key": cache_key(lab), "tag": lab.get("tag", ""), "solver": lab.get("solver", "numpy"),
+                     "dE_meV_per_atom": 27211.386 * (lab["energy"] - chk["energy"]) / n,
+                     "max_dF_Ha_per_bohr": float(np.abs(np.asarray(lab["forces"]) - chk["forces"]).max())})
+    out = {"labels": len(labels), "checked": len(rows), "rows": rows}
+    if rows:
+        out["max_abs_dE_meV_per_atom"] = max(abs(r["dE_meV_per_atom"]) for r in rows)
+        out["max_dF_Ha_per_bohr"] = max(r["max_dF_Ha_per_bohr"] for r in rows)
+    return out
+
+
 def label_all(confs, workers: int | None = None, progress=None, solver: str = "numpy") -> list[dict]:
     """Label every configuration, in parallel, skipping whatever the cache already holds.
 
