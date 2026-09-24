@@ -2,6 +2,7 @@
 
 import numpy as np
 import pytest
+from conftest import requires_torch
 
 from engine.materials.continuum import Block, Derived
 from engine.materials.eam import EAM, N_BASIS, energy_forces
@@ -201,3 +202,20 @@ def test_cross_checks_cover_every_kind_of_configuration(monkeypatch, tmp_path):
     assert rep["checked"] == 5 and abs(rep["max_abs_dE_meV_per_atom"] - 0.0272) < 1e-3
     assert abs(rep["max_dF_Ha_per_bohr"] - 2e-5) < 1e-12
     assert not (tmp_path / "dft").exists()                               # checks never land in the label cache
+
+
+@requires_torch
+@pytest.mark.parametrize("n,sigma", [((6, 6, 6), 0.15), ((6, 6, 6), 1.2), ((3, 3, 3), 0.3)])
+def test_gpu_force_field_matches_numpy(n, sigma):
+    """md_torch against md.EAMForceField: a jostled crystal and a liquid-like jumble large enough
+    for the cell list (864 atoms, 4 cells a side), and a small box that takes the all-pairs route."""
+    from engine.materials.md_torch import EAMForceFieldTorch
+    m = toy_model(2)
+    pos, box = fcc_lattice(7.6, n)
+    rng = np.random.default_rng(0)
+    pos = (pos + rng.normal(0, sigma, pos.shape)) % box
+    E_ref, F_ref, W_ref = EAMForceField(m).compute(pos, box)
+    E, F, W = EAMForceFieldTorch(m).compute(pos, box)
+    assert abs(E - E_ref) < 1e-10 * abs(E_ref)
+    assert np.abs(F - F_ref).max() < 1e-10
+    assert abs(W - W_ref) < 1e-10 * abs(W_ref)
