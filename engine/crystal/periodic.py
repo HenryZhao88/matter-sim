@@ -73,8 +73,13 @@ def cubic_operations() -> list[tuple[tuple[int, int, int], tuple[int, int, int]]
     return [(p, s) for p in permutations(range(3)) for s in product((1, -1), repeat=3)]
 
 
-def crystal_symmetries(c: Crystal, tol: float = 1e-6):
-    """Cube operations (about the origin) that map the cell and every atom onto the crystal."""
+def crystal_symmetries(c: Crystal, tol: float = 1e-6, labels=None):
+    """Cube operations (about the origin) that map the cell and every atom onto the crystal.
+
+    ``labels`` (one per atom, default the nuclear charges) says which atoms count as alike: a
+    spin-polarised start passes (Z, initial moment), so an antiferromagnetic arrangement keeps only
+    the operations that map up-atoms onto up-atoms."""
+    labels = list(c.charges) if labels is None else list(labels)
     ops = []
     frac = c.positions / c.cell
     for perm, sign in cubic_operations():
@@ -82,9 +87,9 @@ def crystal_symmetries(c: Crystal, tol: float = 1e-6):
             continue
         moved = (frac[:, list(perm)] * np.array(sign)) % 1.0
         ok = True
-        for m, Z in zip(moved, c.charges):
+        for m, Z in zip(moved, labels):
             d = np.abs(((frac - m) + 0.5) % 1.0 - 0.5).max(axis=1)
-            if not any(dd < tol and Zj == Z for dd, Zj in zip(d, c.charges)):
+            if not any(dd < tol and Zj == Z for dd, Zj in zip(d, labels)):
                 ok = False
                 break
         if ok:
@@ -129,14 +134,28 @@ class CrystalResult:
     seconds: float
     forces: np.ndarray | None = None
     notes: dict = field(default_factory=dict)
+    # spin-polarised runs only: ρ↑ and ρ↓ (2, Nx, Ny, Nz); ∫(ρ↑ − ρ↓) and ∫|ρ↑ − ρ↓| in Bohr
+    # magnetons per cell. ``eigenvalues``/``occupations`` then hold a (2, bands) array per k.
+    rho_spin: np.ndarray | None = None
+    moment: float = 0.0
+    abs_moment: float = 0.0
 
 
 class PeriodicDFT:
     def __init__(self, crystal: Crystal, h: float = 0.3, kmesh: int | tuple = 6, T_e: float = 0.005,
-                 symmetry: bool = True, extra_bands: int = 6, smearing: str = "fd") -> None:
+                 symmetry: bool = True, extra_bands: int = 6, smearing: str = "fd",
+                 spin: bool = False, moments=None) -> None:
+        """``spin``: collinear spin-polarised DFT (LSDA), one chemical potential for both spins, so the
+        magnetisation is free and comes out of the SCF. ``moments`` (Bohr magnetons per atom) is only
+        the starting magnetisation: without one the two spins stay equal by symmetry, whatever the
+        true ground state; with one, a non-magnetic metal still relaxes back to zero."""
+        if moments is not None and not spin:
+            raise ValueError("starting moments need spin=True")
         self.c = crystal
         self.T_e = T_e
         self.smearing = smearing
+        self.nspin = 2 if spin else 1
+        self.moments = None if moments is None else np.broadcast_to(np.asarray(moments, float), (len(crystal.charges),)).copy()
         self.N = tuple(fft_friendly(math.ceil(L / h)) for L in crystal.cell)
         self.Ntot = int(np.prod(self.N))
         self.dV = crystal.volume / self.Ntot
@@ -145,7 +164,8 @@ class PeriodicDFT:
         self.G2 = np.sum(self.G ** 2, axis=-1)
         gmax = min(np.pi * n / L for n, L in zip(self.N, crystal.cell))
         self.filter = np.exp(-36.0 * np.minimum(np.sqrt(self.G2) / gmax, 1.5) ** 36)
-        self.ops = crystal_symmetries(crystal) if symmetry else [((0, 1, 2), (1, 1, 1))]
+        labels = None if self.moments is None else [(Z, round(float(m), 6)) for Z, m in zip(crystal.charges, self.moments)]
+        self.ops = crystal_symmetries(crystal, labels=labels) if symmetry else [((0, 1, 2), (1, 1, 1))]
         self.kpts, self.wk = kpoint_mesh(crystal, kmesh, self.ops)
         self.n_bands = int(math.ceil(crystal.valence / 2)) + extra_bands
         self._form_factors()
@@ -245,6 +265,8 @@ class PeriodicDFT:
 
     # -------------------------------------------------------------- SCF
     def run(self, max_iter: int = 60, tol: float = 1e-6, forces: bool = False, verbose: bool = False) -> CrystalResult:
+        if self.nspin == 2:
+            return self._run_spin(max_iter, tol, forces, verbose)
         t0 = time.perf_counter()
         c = self.c
         ne = c.valence
@@ -294,6 +316,125 @@ class PeriodicDFT:
             result.forces = self._forces(rho, U, occ, projs)
         return result
 
+    # -------------------------------------------------------------- spin-polarised SCF
+    def _run_spin(self, max_iter, tol, forces, verbose) -> CrystalResult:
+        """As run, with separate Kohn–Sham potentials for ↑ and ↓ (LSDA) and one Fermi level, so the
+        electrons choose how many of each spin to hold. ρ is (2, Nx, Ny, Nz) throughout."""
+        t0 = time.perf_counter()
+        c = self.c
+        ne = c.valence
+        nk = len(self.kpts)
+        rho = self._initial_spin_density(ne)
+        # one random start shared by both spins: without a starting moment the two channels then do
+        # identical arithmetic, and ↑ = ↓ holds exactly rather than to eigensolver noise
+        U0 = [self._rng.standard_normal((self.n_bands, self.Ntot)) + 1j * self._rng.standard_normal((self.n_bands, self.Ntot))
+              for _ in range(nk)]
+        U = [U0, [u.copy() for u in U0]]
+        projs = [self._projectors(k) for k in self.kpts]
+        hist_x, hist_f = [], []
+        E_prev = np.inf
+        converged = False
+        for it in range(1, max_iter + 1):
+            vh = self._hartree(rho[0] + rho[1])
+            _, vu, vd = lda_xc(*self._spin_xc_input(rho))
+            evals = [[], []]
+            for s, vxc in enumerate((vu, vd)):
+                Veff = self.Vloc + vh + vxc
+                for ik, k in enumerate(self.kpts):
+                    B, _, E, _ = projs[ik]
+                    lam, U[s][ik] = self._eig(k, Veff, B, E, U[s][ik], 30 if it == 1 else 5)
+                    evals[s].append(lam)
+            occ_all, mu, S = fermi_all(evals[0] + evals[1], np.concatenate([self.wk, self.wk]), ne, self.T_e,
+                                       self.smearing, g=1)
+            occ = [occ_all[:nk], occ_all[nk:]]
+            rho_out = np.zeros((2,) + self.N)
+            for s in range(2):
+                for ik in range(nk):
+                    dens = np.sum(occ[s][ik][:, None] * np.abs(U[s][ik]) ** 2, axis=0).reshape(self.N)
+                    rho_out[s] += self.wk[ik] * dens / self.dV
+                rho_out[s] = self._symmetrize(rho_out[s])
+            comps = self._energy_spin(rho_out, U, occ, projs)
+            E = sum(comps.values())
+            F = E - self.T_e * S
+            drho = float(np.sum(np.abs(rho_out - rho)) * self.dV)
+            if verbose:
+                m = float(np.sum(rho_out[0] - rho_out[1]) * self.dV)
+                print(f"  it {it:2d}  E = {E:.8f}  dρ = {drho:.2e}  M = {m:+.4f} μB", flush=True)
+            if abs(F - E_prev) < tol and drho < 1e-4:
+                rho = rho_out
+                converged = True
+                break
+            E_prev = F
+            rho = self._mix_spin(rho, rho_out, hist_x, hist_f)
+        m = rho[0] - rho[1]
+        result = CrystalResult(
+            energy=0.5 * (E + F), free_energy=F, components=comps, fermi=mu,
+            eigenvalues=[np.stack(p) for p in zip(*evals)], occupations=[np.stack(p) for p in zip(*occ)],
+            kpoints=self.kpts, weights=self.wk, rho=rho[0] + rho[1],
+            converged=converged, iterations=it, seconds=time.perf_counter() - t0,
+            # a highest band that holds electrons means too few bands for the majority spin
+            notes={"top_band_occupation": max(float(o[-1]) for o in occ[0] + occ[1])},
+            rho_spin=rho, moment=float(np.sum(m) * self.dV), abs_moment=float(np.sum(np.abs(m)) * self.dV),
+        )
+        if forces:
+            result.forces = self._forces_spin(rho, U, occ)
+        return result
+
+    def _initial_spin_density(self, ne):
+        """Uniform charge, plus the starting moments as Gaussians (1.5 bohr) on their atoms."""
+        c = self.c
+        n = np.full(self.N, ne / c.volume)
+        m = np.zeros(self.N)
+        if self.moments is not None and np.any(self.moments):
+            mg = np.zeros(self.N, complex)
+            for mu, R in zip(self.moments, c.positions):
+                mg += mu * np.exp(-0.5 * self.G2 * 1.5 ** 2 - 1j * (self.G @ R))
+            m = np.clip(np.real(np.fft.ifftn(mg) * self.Ntot) / c.volume, -0.9 * n, 0.9 * n)
+        return np.stack([(n + m) / 2, (n - m) / 2])
+
+    def _spin_xc_input(self, rho):
+        """(ρ↑, ρ↓) for exchange–correlation: the partial core counts half to each spin."""
+        return rho[0] + self.rho_core / 2, rho[1] + self.rho_core / 2
+
+    def _mix_spin(self, rho_in, rho_out, hist_x, hist_f, beta=0.3, q0=1.2, keep=7):
+        """Pulay mixing of (ρ, m = ρ↑ − ρ↓): Kerker-preconditioned for the charge, as in _mix; plain
+        for the magnetisation, which is no long-range Coulomb field and whose total (G = 0) must move."""
+        to_nm = lambda r: np.stack([r[0] + r[1], r[0] - r[1]])
+        x_in = to_nm(rho_in)
+        res = to_nm(rho_out) - x_in
+        hist_x.append(x_in.ravel().copy())
+        hist_f.append(res.ravel().copy())
+        if len(hist_x) > keep:
+            hist_x.pop(0)
+            hist_f.pop(0)
+        Fm = np.array(hist_f)
+        coef = _pulay_coefficients(Fm)
+        x = (coef @ np.array(hist_x)).reshape((2,) + self.N)
+        f = (coef @ Fm).reshape((2,) + self.N)
+        kerker = self.G2 / (self.G2 + q0 * q0)
+        kerker[0, 0, 0] = 0.0
+        n = x[0] + beta * np.real(np.fft.ifftn(kerker * np.fft.fftn(f[0])))
+        m = x[1] + beta * f[1]
+        new = np.stack([np.maximum((n + m) / 2, 0), np.maximum((n - m) / 2, 0)])
+        return new * (self.c.valence / (new.sum() * self.dV))
+
+    def _energy_spin(self, rho, U, occ, projs):
+        kin = enl = 0.0
+        for s in range(2):
+            k_s, e_s = self._band_terms(U[s], occ[s], projs, 1)
+            kin += k_s
+            enl += e_s
+        exc = float(np.sum(lda_xc(*self._spin_xc_input(rho))[0]) * self.dV)
+        return self._energy_terms(rho[0] + rho[1], kin, enl, exc)
+
+    def _forces_spin(self, rho, U, occ):
+        v_core = None
+        if self.core_q:
+            # E_xc(ρ↑ + ρc/2, ρ↓ + ρc/2): the core density moves both spins' share at once
+            _, vu, vd = lda_xc(*self._spin_xc_input(rho))
+            v_core = 0.5 * (vu + vd)
+        return self._forces_from(rho[0] + rho[1], v_core, [(U[0], occ[0], 1), (U[1], occ[1], 1)])
+
     def _hartree(self, rho):
         rg = np.fft.fftn(rho) / self.Ntot
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -325,18 +466,7 @@ class PeriodicDFT:
             hist_x.pop(0)
             hist_f.pop(0)
         Fm = np.array(hist_f)
-        A = Fm @ Fm.T
-        m = len(hist_f)
-        M = np.zeros((m + 1, m + 1))
-        M[:m, :m] = A / max(np.abs(A).max(), 1e-300)
-        M[m, :m] = M[:m, m] = 1
-        rhs = np.zeros(m + 1)
-        rhs[m] = 1
-        try:
-            coef = np.linalg.solve(M, rhs)[:m]
-        except np.linalg.LinAlgError:
-            coef = np.zeros(m)
-            coef[-1] = 1
+        coef = _pulay_coefficients(Fm)
         x = coef @ np.array(hist_x)
         f = coef @ Fm
         fg = np.fft.fftn(f.reshape(self.N))
@@ -345,30 +475,46 @@ class PeriodicDFT:
         return new * (self.c.valence / (new.sum() * self.dV))
 
     def _energy(self, rho, U, occ, projs):
-        c = self.c
+        kin, enl = self._band_terms(U, occ, projs, 2)
+        rx = rho + self.rho_core
+        exc = float(np.sum(lda_xc(rx / 2, rx / 2)[0]) * self.dV)
+        return self._energy_terms(rho, kin, enl, exc)
+
+    def _band_terms(self, U, occ, projs, g):
+        """Kinetic and nonlocal energy of the occupied bands; g states per band (2, or 1 per spin)."""
         kin = 0.0
         enl = 0.0
         for ik, k in enumerate(self.kpts):
             Ug = np.fft.fftn(U[ik].reshape((-1,) + self.N), axes=(1, 2, 3))
             kk = 0.5 * np.sum((self.G + k) ** 2, axis=-1)
             per_band = np.sum(kk * np.abs(Ug) ** 2, axis=(1, 2, 3)) / self.Ntot
-            kin += 2 * self.wk[ik] * float(np.dot(occ[ik], per_band))
+            kin += g * self.wk[ik] * float(np.dot(occ[ik], per_band))
             B, _, E, _ = projs[ik]
             if len(E):
                 cc = (U[ik] @ B.conj().T) * math.sqrt(self.dV)
-                enl += 2 * self.wk[ik] * float(np.sum(occ[ik][:, None] * E[None, :] * np.abs(cc) ** 2))
+                enl += g * self.wk[ik] * float(np.sum(occ[ik][:, None] * E[None, :] * np.abs(cc) ** 2))
+        return kin, enl
+
+    def _energy_terms(self, rho, kin, enl, exc):
+        c = self.c
         rg = np.fft.fftn(rho) / self.Ntot
         with np.errstate(divide="ignore", invalid="ignore"):
             eh = 0.5 * c.volume * float(np.sum(np.where(self.G2 > 0, 4 * np.pi * np.abs(rg) ** 2 / self.G2, 0)))
-        rx = rho + self.rho_core
-        exc = float(np.sum(lda_xc(rx / 2, rx / 2)[0]) * self.dV)
         eloc = float(np.sum(self.Vloc * rho) * self.dV)
         return {"kinetic": kin, "electron_ion": eloc + enl, "hartree": eh, "exchange_correlation": exc,
                 "ion_ion": self.E_ewald}
 
     def _forces(self, rho, U, occ, projs):
+        v_core = None
+        if self.core_q:
+            rx = rho + self.rho_core
+            _, v_core, _ = lda_xc(rx / 2, rx / 2)
+        return self._forces_from(rho, v_core, [(U, occ, 2)])
+
+    def _forces_from(self, rho, v_core, bands):
+        """Forces from the total density, the xc potential the partial core feels (v_core), and
+        ``bands``: (U, occ, states per band) for each spin channel."""
         c = self.c
-        n = len(c.charges)
         F = self.F_ewald.copy()
         rg = np.fft.fftn(rho) / self.Ntot
         for i, (Z, R) in enumerate(zip(c.charges, c.positions)):
@@ -377,9 +523,7 @@ class PeriodicDFT:
             dE = np.real(np.sum(np.conj(rg)[..., None] * (-1j * self.G) * vI[..., None], axis=(0, 1, 2)))
             F[i] -= dE
         if self.core_q:
-            rx = rho + self.rho_core
-            _, vxc, _ = lda_xc(rx / 2, rx / 2)
-            vg = np.fft.fftn(vxc) / self.Ntot
+            vg = np.fft.fftn(v_core) / self.Ntot
             for i, (Z, R) in enumerate(zip(c.charges, c.positions)):
                 if Z in self.core_q:
                     cI = self.core_q[Z] * np.exp(-1j * (self.G @ R)) * self.filter
@@ -389,20 +533,22 @@ class PeriodicDFT:
             B, Fs, E, atom = self._projectors(k, keep_g=True)
             if not len(E):
                 continue
-            cc = (U[ik] @ B.conj().T) * math.sqrt(self.dV)                   # (nb, P)
+            cc = [(U[ik] @ B.conj().T) * math.sqrt(self.dV) for U, _, _ in bands]    # (nb, P) per spin
             kG = self.G + k
             for p in range(len(E)):
                 for a in range(3):
                     dB = (np.fft.ifftn(-1j * kG[..., a] * Fs[p]) * self.Ntot).ravel()   # ∂b/∂R_a
-                    dc = (U[ik] @ dB.conj()) * math.sqrt(self.dV)
-                    dE = 2 * self.wk[ik] * float(np.sum(occ[ik] * E[p] * 2 * np.real(np.conj(cc[:, p]) * dc)))
-                    F[atom[p], a] -= dE
+                    for (U, occ, g), ccs in zip(bands, cc):
+                        dc = (U[ik] @ dB.conj()) * math.sqrt(self.dV)
+                        dE = g * self.wk[ik] * float(np.sum(occ[ik] * E[p] * 2 * np.real(np.conj(ccs[:, p]) * dc)))
+                        F[atom[p], a] -= dE
         return F
 
 
 # ------------------------------------------------------------------ helpers
-def fermi_all(evals, wk, ne, T, smearing: str = "fd"):
-    """Occupations (0..1 per spin state) with one chemical potential across all k.
+def fermi_all(evals, wk, ne, T, smearing: str = "fd", g: int = 2):
+    """Occupations (0..1 per spin state) with one chemical potential across all k; each band holds
+    g electrons (2 without spin polarisation, 1 when each spin has its own bands).
 
     ``smearing`` "fd": Fermi–Dirac at temperature T (physical electronic temperature).
     "mp": first-order Methfessel–Paxton with width T — a numerical device for metals whose
@@ -418,20 +564,20 @@ def fermi_all(evals, wk, ne, T, smearing: str = "fd"):
         lo, hi = flat.min() - 1, flat.max() + 1
         for _ in range(200):
             mu = 0.5 * (lo + hi)
-            if sum(2 * w * np.sum(f_mp(e, mu)) for e, w in zip(evals, wk)) > ne:
+            if sum(g * w * np.sum(f_mp(e, mu)) for e, w in zip(evals, wk)) > ne:
                 hi = mu
             else:
                 lo = mu
         occ = [f_mp(e, mu) for e in evals]
-        # generalised entropy: −T S = Σ 2 w σ · ½ A₁ H₂(x) e^{−x²},  A₁ = −1/(4√π), H₂ = 4x² − 2
+        # generalised entropy: −T S = Σ g w σ · ½ A₁ H₂(x) e^{−x²},  A₁ = −1/(4√π), H₂ = 4x² − 2
         S = 0.0
         for e, w in zip(evals, wk):
             x = (e - mu) / T
-            S -= 2 * w * float(np.sum(0.5 * (-1 / (4 * math.sqrt(math.pi))) * (4 * x * x - 2) * np.exp(-x * x)))
+            S -= g * w * float(np.sum(0.5 * (-1 / (4 * math.sqrt(math.pi))) * (4 * x * x - 2) * np.exp(-x * x)))
         return occ, mu, S
 
     def count(mu):
-        return sum(2 * w * np.sum(0.5 * (1 - np.tanh((e - mu) / (2 * T)))) for e, w in zip(evals, wk))
+        return sum(g * w * np.sum(0.5 * (1 - np.tanh((e - mu) / (2 * T)))) for e, w in zip(evals, wk))
 
     lo, hi = flat.min() - 1, flat.max() + 1
     for _ in range(200):
@@ -444,8 +590,25 @@ def fermi_all(evals, wk, ne, T, smearing: str = "fd"):
     S = 0.0
     for f, w in zip(occ, wk):
         fc = np.clip(f, 1e-300, 1 - 1e-16)
-        S += -2 * w * float(np.sum(fc * np.log(fc) + (1 - fc) * np.log1p(-fc)))
+        S += -g * w * float(np.sum(fc * np.log(fc) + (1 - fc) * np.log1p(-fc)))
     return occ, mu, S
+
+
+def _pulay_coefficients(Fm):
+    """Pulay (DIIS) weights, summing to one, that minimise the mixed residual Σ c_i F_i."""
+    A = Fm @ Fm.T
+    m = len(Fm)
+    M = np.zeros((m + 1, m + 1))
+    M[:m, :m] = A / max(np.abs(A).max(), 1e-300)
+    M[m, :m] = M[:m, m] = 1
+    rhs = np.zeros(m + 1)
+    rhs[m] = 1
+    try:
+        coef = np.linalg.solve(M, rhs)[:m]
+    except np.linalg.LinAlgError:
+        coef = np.zeros(m)
+        coef[-1] = 1
+    return coef
 
 
 def lobpcg_complex(apply_H, X, precond, maxiter):

@@ -60,6 +60,8 @@ class PeriodicDFTTorch(PeriodicDFT):
     def __init__(self, crystal, *args, device: str | None = None, wide_device: str | None = None,
                  cache_projectors: bool = False, **kw) -> None:
         super().__init__(crystal, *args, **kw)
+        if self.nspin != 1:
+            raise NotImplementedError("spin-polarised DFT is on the NumPy path only so far (PeriodicDFT)")
         self.dev = torch.device(device or torch_device())
         # float64 work stays on the device unless it cannot do float64 (MPS)
         self.wdev = torch.device(wide_device or ("cpu" if self.dev.type == "mps" else self.dev.type))

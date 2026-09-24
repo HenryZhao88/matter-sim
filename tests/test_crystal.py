@@ -48,6 +48,60 @@ def test_aluminium_chooses_fcc():
     assert e["fcc"] < e["bcc"] < e["sc"]
 
 
+def test_antiferromagnetic_order_lowers_the_symmetry():
+    """Layered antiferromagnetic fcc (up planes and down planes alternating along z) is tetragonal:
+    of the cube's 48 operations only the 16 that keep z as z map up-atoms onto up-atoms."""
+    c = cubic("fcc", 6.8, 26)
+    up_down = [(26, m) for m in (1, -1, -1, 1)]          # atoms at z = 0, ½, ½, 0
+    assert len(crystal_symmetries(c, labels=up_down)) == 16
+
+
+def test_spin_polarised_dft_without_a_starting_moment_is_the_unpolarised_one():
+    """Both spins start from the same state, so they stay equal exactly, and every spin-resolved
+    piece (occupations, energy terms, mixing) must add back up to the unpolarised calculation."""
+    c = cubic("fcc", 7.6, 13)
+    kw = dict(h=0.45, kmesh=2, T_e=0.01)
+    ref = PeriodicDFT(c, **kw).run()
+    got = PeriodicDFT(c, spin=True, **kw).run()
+    assert got.converged and got.moment == 0 and got.abs_moment == 0
+    assert got.free_energy == pytest.approx(ref.free_energy, abs=1e-9)
+
+
+@pytest.mark.slow
+def test_aluminium_does_not_stay_magnetic():
+    """Pushed to 1 Bohr magneton per atom, aluminium's electrons give the moment back: nothing in the
+    code says which metals are magnets, so this has to come out of exchange against band energy."""
+    c = cubic("fcc", 7.6, 13)
+    kw = dict(h=0.4, kmesh=4, T_e=0.01)
+    ref = PeriodicDFT(c, **kw).run()
+    got = PeriodicDFT(c, spin=True, moments=1.0, **kw).run()
+    assert got.converged
+    assert got.abs_moment / 4 < 1e-3
+    assert got.free_energy == pytest.approx(ref.free_energy, abs=1e-7)
+
+
+@pytest.mark.slow
+def test_spin_polarised_forces_match_energy_slope():
+    """Magnetic iron, displaced: the force includes each spin's nonlocal term and the partial core's
+    share of both spins' exchange-correlation potential."""
+    rng = np.random.default_rng(5)
+    base = cubic("bcc", 5.3, 26)
+    pos = base.positions + rng.normal(0, 0.15, base.positions.shape)
+
+    def run(p):
+        return PeriodicDFT(Crystal(base.cell, base.charges, p), h=0.35, kmesh=2, T_e=0.01, symmetry=False,
+                           spin=True, moments=2.5).run(forces=True, tol=1e-8)
+    r0 = run(pos)
+    assert r0.converged and r0.abs_moment / 2 > 1.0
+    eps = 0.01
+    for atom, axis in ((0, 0), (1, 2)):
+        pp, pm = pos.copy(), pos.copy()
+        pp[atom, axis] += eps
+        pm[atom, axis] -= eps
+        slope = (run(pp).free_energy - run(pm).free_energy) / (2 * eps)
+        assert r0.forces[atom, axis] == pytest.approx(-slope, rel=0.05, abs=2e-4)
+
+
 def test_colour_factors_come_from_the_group():
     from engine.particles.shower import group_constants
     g = group_constants()
