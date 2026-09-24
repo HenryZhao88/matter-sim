@@ -76,6 +76,7 @@ def main(quick: bool = False, part: str = "all") -> None:
         atoms_section(quick, q)
     if part in ("all", "materials"):
         materials_section()
+        iron_section()
     ok = [r["ok"] for r in rows if r["ok"] is not None]
     print(f"\n{sum(ok)}/{len(ok)} checks pass  ({time.time() - t0:.0f} s)")
     OUT.write_text(json.dumps({"quick": quick, "part": part, "rows": rows}, indent=2, default=float))
@@ -106,6 +107,35 @@ def materials_section() -> None:
            "m/s", "from the DFT elastic constants", abs(b.sound_speeds()["longitudinal"] - ref["sound_long"]) < 900)
     record("materials", "Energy to melt 1 cm³ from room temperature", b.heat_to_melt_J() / 1000, 3.0, "kJ",
            "≈2.9 kJ from measured tables", 2.0 < b.heat_to_melt_J() / 1000 < 4.5)
+
+
+def iron_section() -> None:
+    """Iron: spin-polarised periodic DFT (scripts/fe_magnetism.py). Whether iron is a magnet, how strong,
+    and which crystal it picks all come out of the calculation; the starting moment is only a push."""
+    path = Path(__file__).resolve().parents[1] / "results" / "fe_magnetism.json"
+    if not path.exists():
+        print("\n(Iron checks skipped: run scripts/fe_magnetism.py first.)")
+        return
+    d = json.loads(path.read_text())
+    fits = d["fits"]
+    section(f"Iron: spin-polarised DFT (LSDA, h = {d['h']} bohr, {d['k']}³ k-mesh)")
+    fm = fits.get("bcc-ferromagnetic")
+    if fm is None:
+        print("  (bcc ferromagnetic scan incomplete)")
+        return
+    record("materials", "Iron: magnetic moment per atom (bcc)", fm["moment_at_V0"], 2.22, "μB",
+           "at the computed lattice constant", abs(fm["moment_at_V0"] - 2.22) < 0.3)
+    record("materials", "Iron: lattice constant (bcc, ferromagnetic)", fm["a0"] * BOHR_ANGSTROM, 2.8665, "Å",
+           "LDA over-binds 3d metals", fm["inside_scan"] and abs(fm["a0"] * BOHR_ANGSTROM / 2.8665 - 1) < 0.03)
+    record("materials", "Iron: bulk modulus", fm["B0_GPa"], 170.0, "GPa", "", abs(fm["B0_GPa"] / 170 - 1) < 0.3)
+    nm = fits.get("bcc-nonmagnetic")
+    if nm is not None:
+        record("materials", "Iron: magnetic energy (bcc, FM − NM)", (fm["E0"] - nm["E0"]) * HARTREE_EV * 1000,
+               "< 0", "meV/atom", "negative: iron chooses to be a magnet", fm["E0"] < nm["E0"])
+    ranked = sorted(fits, key=lambda p: fits[p]["E0"])
+    record("materials", "Iron: lowest-energy phase", ranked[0], "bcc-ferromagnetic", "",
+           " < ".join(f"{p} {(fits[p]['E0'] - fits[ranked[0]]['E0']) * HARTREE_EV * 1000:+.0f}" for p in ranked[1:]) + " meV",
+           ranked[0] == "bcc-ferromagnetic")
 
 
 def particles_section(quick: bool) -> None:
