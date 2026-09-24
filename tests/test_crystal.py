@@ -66,8 +66,8 @@ def test_gluon_jets_radiate_more_than_quark_jets():
 @pytest.mark.parametrize("wide", [None, "cpu"])
 def test_single_precision_gpu_dft_matches_numpy(wide):
     """The complex64 device path (periodic_torch.py) against the NumPy reference on a real metal:
-    energy within 0.1 meV/atom and forces within 1e-4 Ha/bohr, ten times tighter than the budget
-    it has to meet (1 meV/atom, 1e-3 Ha/bohr). ``wide="cpu"`` keeps the float64 work on the CPU,
+    energy within 0.1 meV/atom and forces within 5e-6 Ha/bohr, far inside the budget it has to
+    meet (1 meV/atom, 1e-3 Ha/bohr). ``wide="cpu"`` keeps the float64 work on the CPU,
     as on Apple's MPS, which has no float64."""
     from engine.crystal.periodic_torch import PeriodicDFTTorch
     rng = np.random.default_rng(5)
@@ -78,7 +78,9 @@ def test_single_precision_gpu_dft_matches_numpy(wide):
     got = PeriodicDFTTorch(c, wide_device=wide, **kw).run(forces=True)
     assert ref.converged and got.converged
     assert abs(got.free_energy - ref.free_energy) / 2 * 27.211386 < 1e-4
-    assert np.abs(got.forces - ref.forces).max() < 1e-4
+    # forces are first order in the eigenvectors' error, energies second: a solver floor 30x too
+    # loose left 3.8e-5 here (1.4e-4 on a production label) while energies still agreed
+    assert np.abs(got.forces - ref.forces).max() < 5e-6
     assert np.abs(ref.forces).max() > 1e-3                 # the displacement produces real forces
 
 

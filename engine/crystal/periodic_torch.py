@@ -30,7 +30,7 @@ from ..electrons.xc import lda_xc
 from .periodic import CrystalResult, PeriodicDFT, fermi_all
 
 C64, C128, F32, F64 = torch.complex64, torch.complex128, torch.float32, torch.float64
-RESIDUAL_FLOOR = 30.0      # LOBPCG stops refining a band at this many ε₃₂·‖H‖ (see lobpcg_dev)
+RESIDUAL_FLOOR = 1.0       # LOBPCG stops refining a band at this many ε₃₂·‖H‖ (see lobpcg_dev)
 
 
 def _interp(x, xp, fp):
