@@ -30,6 +30,18 @@ def _kmesh(cell):
     return tuple(max(1, math.ceil(K_SPACING / L)) for L in cell)
 
 
+class NotConverged(RuntimeError):
+    """A DFT label whose self-consistent field did not converge."""
+
+
+def _label_or_none(conf: dict):
+    try:
+        return label(conf)
+    except NotConverged as e:
+        print(f"refused: {e}", flush=True)
+        return None
+
+
 def label(conf: dict) -> dict:
     """Run DFT on one configuration (cached by content hash)."""
     key = hashlib.sha1(pickle.dumps((np.round(conf["cell"], 6).tolist(), conf["charges"],
@@ -39,6 +51,10 @@ def label(conf: dict) -> dict:
         return pickle.loads(path.read_bytes())
     c = Crystal(conf["cell"], conf["charges"], conf["positions"])
     r = PeriodicDFT(c, h=0.3, kmesh=_kmesh(c.cell), T_e=T_E, symmetry=False).run(forces=True)
+    if not r.converged:
+        # a non-converged SCF still returns an energy, several meV off and indistinguishable from a
+        # real one; it is neither cached nor handed on
+        raise NotConverged(f"{conf.get('tag', '')}: SCF not converged in {r.iterations} iterations")
     out = {"cell": c.cell, "charges": c.charges, "positions": c.positions,
            "energy": r.free_energy, "forces": r.forces, "converged": r.converged, "tag": conf.get("tag", ""),
            "kspacing": K_SPACING, "T_e": T_E}
@@ -54,13 +70,17 @@ def label_all(confs, workers: int | None = None, progress=None) -> list[dict]:
     worker count is bounded by memory rather than cores, and children are recycled so that does
     not creep. multiprocessing.Pool rather than ProcessPoolExecutor: the latter's
     ``max_tasks_per_child`` deadlocked here, parent waiting on a lock while the workers sat
-    blocked at startup."""
+    blocked at startup.
+
+    A configuration whose SCF does not converge is refused, not returned: the result holds only
+    converged labels, and the count of refusals is ``len(confs) - len(result)``."""
     n = workers or max(1, min((os.cpu_count() or 2) - 2, 5))
     ctx = mp.get_context("spawn")
     out: list[dict] = []
     with ctx.Pool(processes=n, maxtasksperchild=4) as pool:
-        for i, res in enumerate(pool.imap(label, confs)):
-            out.append(res)
+        for i, res in enumerate(pool.imap(_label_or_none, confs)):
+            if res is not None:
+                out.append(res)
             if progress:
                 progress(i + 1, len(confs))
     return out

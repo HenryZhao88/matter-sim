@@ -80,3 +80,38 @@ def test_single_precision_gpu_dft_matches_numpy(wide):
     assert abs(got.free_energy - ref.free_energy) / 2 * 27.211386 < 1e-4
     assert np.abs(got.forces - ref.forces).max() < 1e-4
     assert np.abs(ref.forces).max() > 1e-3                 # the displacement produces real forces
+
+
+@requires_torch
+def test_single_precision_scf_converges_on_degenerate_bands():
+    """Perfect fcc Al on one k-point: heavily degenerate bands, where the complex64 eigensolver once
+    fed its own rounding noise back as search directions, produced eigenvalues of −91 Ha, and left
+    the SCF unconverged after 60 iterations, 4 meV/atom off. It must converge, and agree."""
+    from engine.crystal.periodic_torch import PeriodicDFTTorch
+    c = cubic("fcc", 7.6, 13)
+    ref = PeriodicDFT(c, h=0.4, kmesh=2).run()
+    got = PeriodicDFTTorch(c, h=0.4, kmesh=2).run()
+    assert ref.converged and got.converged
+    assert abs(got.free_energy - ref.free_energy) / 4 * 27.211386 < 0.1
+
+
+@requires_torch
+def test_single_precision_eigensolver_is_stable_far_past_convergence():
+    """Run LOBPCG 200 iterations on a converged problem: the eigenvalues must stay on the float64 ones."""
+    import torch
+    from engine.crystal.periodic_torch import PeriodicDFTTorch
+    from engine.electrons.xc import lda_xc
+    c = cubic("fcc", 7.6, 13)
+    n, t = PeriodicDFT(c, h=0.4, kmesh=2), PeriodicDFTTorch(c, h=0.4, kmesh=2)
+    rho = np.full(n.N, c.valence / c.volume)
+    rx = rho + n.rho_core
+    Veff = n.Vloc + n._hartree(rho) + lda_xc(rx / 2, rx / 2)[1]
+    k = n.kpts[0]
+    B, _, E, _ = n._projectors(k)
+    rng = np.random.default_rng(0)
+    U0 = rng.standard_normal((n.n_bands, n.Ntot)) + 1j * rng.standard_normal((n.n_bands, n.Ntot))
+    ref, _ = n._eig(k, Veff, B, E, U0.copy(), 60)
+    Bt, Et, _ = t._projectors_dev(0, k)
+    V32 = torch.tensor(Veff.reshape(1, -1).astype(np.float32), device=t.dev)
+    got, _ = t._eig_dev(k, V32, Bt, Et, torch.tensor(U0.astype(np.complex64), device=t.dev), 200)
+    assert np.abs(got - ref).max() < 1e-5

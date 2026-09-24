@@ -30,6 +30,7 @@ from ..electrons.xc import lda_xc
 from .periodic import CrystalResult, PeriodicDFT, fermi_all
 
 C64, C128, F32, F64 = torch.complex64, torch.complex128, torch.float32, torch.float64
+RESIDUAL_FLOOR = 30.0      # LOBPCG stops refining a band at this many ε₃₂·‖H‖ (see lobpcg_dev)
 
 
 def _interp(x, xp, fp):
@@ -134,7 +135,14 @@ class PeriodicDFTTorch(PeriodicDFT):
             return torch.fft.ifftn(P * torch.fft.fftn(R.reshape((nb,) + self.N), dim=(1, 2, 3)),
                                    dim=(1, 2, 3)).reshape(nb, -1)
 
-        return lobpcg_dev(lambda X: self._apply_dev(X, kin32, Veff32, B, E), U0, precond, iters, wide=self.wdev)
+        # the smallest residual complex64 can resolve is ~ε·‖H‖; bound ‖H‖ by its largest diagonal terms
+        h_norm = float(x.max()) + float(Veff32.abs().max()) + (float(E.abs().max()) * self._b_norm2(B) if len(E) else 0.0)
+        floor = RESIDUAL_FLOOR * torch.finfo(F32).eps * h_norm
+        return lobpcg_dev(lambda X: self._apply_dev(X, kin32, Veff32, B, E), U0, precond, iters, floor, wide=self.wdev)
+
+    def _b_norm2(self, B):
+        """Largest |b_p|² dV: the scale of a projector's contribution to H."""
+        return float((B.abs() ** 2).sum(dim=1).max()) * self.dV
 
     # -------------------------------------------------------------- SCF
     def run(self, max_iter: int = 60, tol: float = 1e-6, forces: bool = False, verbose: bool = False) -> CrystalResult:
@@ -174,7 +182,11 @@ class PeriodicDFTTorch(PeriodicDFT):
             drho = float(np.sum(np.abs(rho_out - rho)) * self.dV)
             if verbose:
                 print(f"  it {it:2d}  E = {E:.8f}  dρ = {drho:.2e}", flush=True)
-            if abs(F - E_prev) < tol and drho < 1e-4:
+            # the energy test cannot be tighter than complex64 rounding of the energy itself (measured:
+            # ~1e-6 Ha/cell jitter once converged on fcc Al), or passing it becomes a matter of luck;
+            # the density test, ~15x above its own noise, is what guarantees self-consistency
+            tol_eff = max(tol, torch.finfo(F32).eps * sum(abs(v) for v in comps.values()))
+            if abs(F - E_prev) < tol_eff and drho < 1e-4:
                 rho = rho_out
                 converged = True
                 break
@@ -184,6 +196,7 @@ class PeriodicDFTTorch(PeriodicDFT):
             energy=0.5 * (E + F), free_energy=F, components=comps, fermi=mu,
             eigenvalues=evals, occupations=occ, kpoints=self.kpts, weights=self.wk, rho=rho,
             converged=converged, iterations=it, seconds=time.perf_counter() - t0,
+            notes={"precision": "complex64 eigensolver", "energy_tol": tol_eff, "final_drho": drho},
         )
         if forces:
             result.forces = self._forces(rho, U, occ, None)
@@ -249,11 +262,16 @@ class PeriodicDFTTorch(PeriodicDFT):
         return F
 
 
-def lobpcg_dev(apply_H, X, precond, maxiter, rtol: float = 1e-7, keep_tol: float = 1e-10, wide=None):
+def lobpcg_dev(apply_H, X, precond, maxiter, floor: float, keep_tol: float = 1e-10, wide=None):
     """lobpcg_complex from periodic.py with the blocks in complex64 on X's device and the small
     Rayleigh–Ritz matrices accumulated and diagonalised in complex128 on ``wide`` (default: the
-    same device). ``keep_tol`` is looser than the float64 version's 1e-12: directions that
-    complex64 rounding alone makes independent are dropped. Returns float64 NumPy eigenvalues."""
+    same device). Returns float64 NumPy eigenvalues and the vectors.
+
+    Soft locking, which float64 can do without and complex64 cannot: a band whose residual has
+    fallen to ``floor`` gets no further search direction, and the solve stops when every band is
+    there. Below that floor a residual is complex64 rounding noise; fed back as a search direction
+    it makes the subspace nearly singular, Rayleigh–Ritz amplifies the rounding, and eigenvalues
+    appear far below the true spectrum (measured: −91 Ha against −0.06 on fcc Al, 1 k-point)."""
     nb = X.shape[0]
     dev = X.device
     wide = wide or dev
@@ -280,14 +298,17 @@ def lobpcg_dev(apply_H, X, precond, maxiter, rtol: float = 1e-7, keep_tol: float
     P = HP = None
     for _ in range(maxiter):
         R = HX - lam.to(F32).to(dev)[:, None] * X
-        if float(torch.linalg.norm(R, dim=1).max()) < rtol:
+        active = torch.linalg.norm(R, dim=1) > floor
+        if not bool(active.any()):
             break
-        W = precond(R)
+        W = precond(R[active])
         W = W - narrow(gram(X, W).T) @ X
         W = W / torch.clamp(torch.linalg.norm(W, dim=1), min=1e-30)[:, None]
         HW = apply_H(W)
-        blocks = [X, W] + ([P] if P is not None else [])
-        hblocks = [HX, HW] + ([HP] if P is not None else [])
+        blocks, hblocks = [X, W], [HX, HW]
+        if P is not None:
+            blocks.append(P[active])
+            hblocks.append(HP[active])
         for attempt in range(2):
             S, HS = torch.cat(blocks), torch.cat(hblocks)
             Gm, Hm = herm(gram(S, S)), herm(gram(S, HS))

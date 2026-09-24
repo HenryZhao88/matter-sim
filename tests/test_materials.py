@@ -98,3 +98,20 @@ def test_methfessel_paxton_smearing_converges_faster_in_k():
     ref = PeriodicDFT(c, h=0.35, kmesh=(10, 10, 10), T_e=0.01).run().free_energy
     fd = PeriodicDFT(c, h=0.35, kmesh=(4, 4, 4), T_e=0.01).run().free_energy
     assert abs(fd - ref) > 1e-4          # coarse Fermi–Dirac sampling is visibly off
+
+
+def test_labeller_refuses_an_unconverged_scf(monkeypatch, tmp_path):
+    """A non-converged SCF returns a plausible energy; the labeller must neither cache nor return it."""
+    from types import SimpleNamespace
+    from engine.materials import dataset
+
+    def unconverged(self, **kw):
+        return SimpleNamespace(converged=False, iterations=60, free_energy=-8.4, forces=np.zeros((1, 3)))
+
+    monkeypatch.setattr(dataset, "CACHE", tmp_path)
+    monkeypatch.setattr(dataset.PeriodicDFT, "run", unconverged)
+    conf = {"cell": np.array([7.6, 7.6, 7.6]), "charges": [13], "positions": np.zeros((1, 3)), "tag": "test"}
+    with pytest.raises(dataset.NotConverged):
+        dataset.label(conf)
+    assert not list(tmp_path.rglob("*.pkl"))
+    assert dataset._label_or_none(conf) is None

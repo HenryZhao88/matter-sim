@@ -37,7 +37,7 @@ def main(workers: int = 3) -> None:
     print(f"{len(confs)} configurations, {len(cached)} already cached", flush=True)
     data = label_all(confs, workers=workers,
                      progress=lambda d, n: print(f"{d}/{n}  {time.time() - t:.0f}s", flush=True))
-    print("done:", sum(d["converged"] for d in data), "converged", flush=True)
+    print(f"done: {len(data)} converged labels, {len(confs) - len(data)} refused (SCF not converged)", flush=True)
 
 
 if __name__ == "__main__":
