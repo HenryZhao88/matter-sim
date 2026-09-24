@@ -139,4 +139,39 @@ def test_label_cache_key_is_the_same_on_every_python():
     from engine.core.units import angstrom_to_bohr
     from engine.materials import dataset
     conf = next(c for c in dataset.initial_configurations(13, angstrom_to_bohr(3.955)) if c["tag"] == "fcc-8")
-    assert dataset.cache_key(conf) == "443949903599bfb7"
+    assert dataset.legacy_cache_key(conf) == "443949903599bfb7"
+
+
+def test_label_cache_key_ignores_lattice_translations():
+    from engine.materials import dataset
+    rng = np.random.default_rng(0)
+    cell = np.array([15.36, 7.68, 7.68])
+    pos = rng.uniform(0, 1, (8, 3)) * cell
+    conf = {"cell": cell, "charges": [13] * 8, "positions": pos}
+    shifted = pos + rng.integers(-2, 3, pos.shape) * cell              # every atom by some lattice vector
+    assert dataset.cache_key({**conf, "positions": shifted}) == dataset.cache_key(conf)
+    assert dataset.cache_key({**conf, "charges": list(np.full(8, 13))}) == dataset.cache_key(conf)
+    on_face = pos.copy(); on_face[0, 0] = 0.0
+    wrapped = on_face.copy(); wrapped[0, 0] = cell[0] * (1 - 1e-12)   # the same face, from the other side
+    assert dataset.cache_key({**conf, "positions": wrapped}) == dataset.cache_key({**conf, "positions": on_face})
+    moved = pos.copy(); moved[3, 1] += 0.01
+    assert dataset.cache_key({**conf, "positions": moved}) != dataset.cache_key(conf)
+
+
+def test_label_found_under_its_legacy_name_is_renamed_not_recomputed(monkeypatch, tmp_path):
+    import pickle
+    from engine.materials import dataset
+
+    def must_not_run(self, **kw):
+        raise AssertionError("a cached label was recomputed")
+
+    monkeypatch.setattr(dataset, "CACHE", tmp_path)
+    monkeypatch.setattr(dataset.PeriodicDFT, "run", must_not_run)
+    conf = {"cell": np.array([7.6, 7.6, 7.6]), "charges": [13], "positions": np.array([[-1.0, 8.0, 0.5]])}
+    (tmp_path / "dft").mkdir()
+    old = tmp_path / "dft" / f"{dataset.legacy_cache_key(conf)}.pkl"
+    old.write_bytes(pickle.dumps({"energy": -2.1, "tag": "legacy"}))
+    assert dataset.label(conf)["energy"] == -2.1
+    assert not old.exists()
+    assert (tmp_path / "dft" / f"{dataset.cache_key(conf)}.pkl").exists()
+    assert dataset.label(conf)["tag"] == "legacy"                       # and found again under the new name

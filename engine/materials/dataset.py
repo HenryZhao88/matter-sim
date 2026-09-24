@@ -59,10 +59,25 @@ def _solver(name: str, c: Crystal):
     raise ValueError(f"unknown DFT solver {name!r}")
 
 
+def _wrapped_fractions(conf: dict) -> list:
+    """Fractional coordinates in [0, 1), rounded so an atom on a cell face cannot hash two ways."""
+    f = np.asarray(conf["positions"], float) / np.asarray(conf["cell"], float)
+    return (np.round(f % 1.0, 9) % 1.0 + 0.0).tolist()
+
+
 def cache_key(conf: dict) -> str:
-    """The label's cache name. Pickle protocol pinned at 4: the default changed to 5 in Python 3.14,
-    so the same configuration hashed differently on the Mac (3.13) and on Windows (3.14) and each
-    machine silently missed the other's labels. 4 keeps every existing key valid."""
+    """The label's cache name: the same configuration gets the same name on every machine.
+
+    It hashes the cell, the charges and the positions wrapped into the cell, so an atom moved by
+    a lattice vector (the same crystal) does not get a new name, and the pickle protocol is pinned
+    (Python 3.14 changed the default, and the Mac and Windows once named every label differently)."""
+    return hashlib.sha1(pickle.dumps(("v2", np.round(conf["cell"], 6).tolist(), [int(z) for z in conf["charges"]],
+                                      _wrapped_fractions(conf), K_SPACING, T_E), protocol=4)).hexdigest()[:16]
+
+
+def legacy_cache_key(conf: dict) -> str:
+    """The name labels were cached under before cache_key: unwrapped positions. label() still finds
+    a label stored under it and renames the file, so nothing is recomputed."""
     return hashlib.sha1(pickle.dumps((np.round(conf["cell"], 6).tolist(), conf["charges"],
                                       np.round(conf["positions"], 6).tolist(), K_SPACING, T_E),
                                      protocol=4)).hexdigest()[:16]
@@ -72,13 +87,17 @@ def label(conf: dict, solver: str = "numpy") -> dict:
     """Run DFT on one configuration (cached by content hash).
 
     ``solver`` is "numpy" (float64, the reference) or "torch" (engine/crystal/periodic_torch.py,
-    single precision on a GPU: 0.0065 meV/atom and 1.4e-4 Ha/bohr from float64 on a production
-    label, 17x faster on CUDA, slower than NumPy on Apple's MPS). Either satisfies the cache,
-    since both are far inside the fit's own error; each label records which produced it. Labels
-    from before this field existed were all NumPy float64."""
-    key = cache_key(conf)
-    path = CACHE / "dft" / f"{key}.pkl"
+    single precision on a GPU: on an aluminium production label 0.0002 meV/atom and 1.5e-6 Ha/bohr
+    from float64 and 12x faster on CUDA; copper ~0.3 meV/atom and 1-2e-5 Ha/bohr; slower than NumPy
+    on Apple's MPS). Either satisfies the cache, since both are far inside the fit's own error;
+    each label records which produced it. Labels from before this field existed were all NumPy
+    float64."""
+    path = CACHE / "dft" / f"{cache_key(conf)}.pkl"
     if path.exists():
+        return pickle.loads(path.read_bytes())
+    legacy = CACHE / "dft" / f"{legacy_cache_key(conf)}.pkl"
+    if legacy.exists():
+        os.replace(legacy, path)                    # migrate the name; the label itself is unchanged
         return pickle.loads(path.read_bytes())
     c = Crystal(conf["cell"], conf["charges"], conf["positions"])
     dft, provenance = _solver(solver, c)
