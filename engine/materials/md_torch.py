@@ -143,3 +143,96 @@ class EAMForceFieldTorch:
         b = torch.as_tensor(np.asarray(box), dtype=self.dt, device=self.dev)
         E, F, W = self.compute_t(p, b)
         return E, F.cpu().numpy().astype(np.float64), W
+
+
+class MDTorch:
+    """md.MD with the state kept on the device: velocity Verlet, the Bussi thermostat and the
+    Berendsen barostat, step for step as in md.py. Random numbers come from the same NumPy
+    generator, drawn in the same order, so a seeded run reproduces md.MD's trajectory exactly
+    (the test for this class), while a million atoms never leave the GPU between steps."""
+
+    def __init__(self, model: EAM, state, dt_fs: float = 2.0, seed: int = 0, device: str | None = None) -> None:
+        from ..core.units import AU_TIME_FS
+        self.ff = EAMForceFieldTorch(model, device=device)
+        dev, dt = self.ff.dev, self.ff.dt
+        self.pos = torch.tensor(state.pos, dtype=dt, device=dev)
+        self.vel = torch.tensor(state.vel, dtype=dt, device=dev)
+        self.box = torch.tensor(state.box, dtype=dt, device=dev)
+        self.mass = state.mass
+        self.dt = dt_fs / AU_TIME_FS
+        self.rng = np.random.default_rng(seed)
+        self.E, self.F, self.W = self.ff.compute_t(self.pos, self.box)
+
+    # the same observables as md.kinetic / temperature / pressure
+    def kinetic(self) -> float:
+        return 0.5 * self.mass * float((self.vel ** 2).sum())
+
+    def temperature(self) -> float:
+        from ..core.units import KELVIN_HARTREE
+        return 2 * self.kinetic() / (3 * len(self.pos)) / KELVIN_HARTREE
+
+    def pressure(self) -> float:
+        return (2 * self.kinetic() + self.W) / (3 * float(torch.prod(self.box)))
+
+    def thermalise(self, T: float) -> None:
+        from ..core.units import KELVIN_HARTREE
+        kT = T * KELVIN_HARTREE
+        v = self.rng.normal(0, math.sqrt(kT / self.mass), tuple(self.pos.shape))
+        v -= v.mean(axis=0)
+        self.vel = torch.tensor(v, dtype=self.ff.dt, device=self.ff.dev)
+
+    def step(self, T: float | None = None, P_GPa: float | None = None, tau_T_fs: float = 100.0,
+             tau_P_fs: float = 1000.0, frozen=None) -> None:
+        from ..core.units import AU_TIME_FS
+        from .md import HA_PER_BOHR3_GPA, MAX_BOX_STEP
+        dt = self.dt
+        fz = None if frozen is None else torch.as_tensor(np.asarray(frozen), device=self.ff.dev)
+        self.vel += 0.5 * dt * self.F / self.mass
+        if fz is not None:
+            self.vel[fz] = 0.0
+        self.pos += dt * self.vel
+        if P_GPa is not None:
+            P = self.pressure() * HA_PER_BOHR3_GPA
+            mu = 1 + dt / (tau_P_fs / AU_TIME_FS) * (P - P_GPa) / 76.0 / 3
+            mu = float(np.clip(mu, 1 - MAX_BOX_STEP, 1 + MAX_BOX_STEP))
+            self.pos *= mu
+            self.box *= mu
+        self.pos = torch.remainder(self.pos, self.box)
+        self.E, self.F, self.W = self.ff.compute_t(self.pos, self.box)
+        self.vel += 0.5 * dt * self.F / self.mass
+        if fz is not None:
+            self.vel[fz] = 0.0
+        if T is not None:
+            self._bussi(T, tau_T_fs, frozen)
+
+    def _bussi(self, T, tau_fs, frozen):
+        from ..core.units import AU_TIME_FS, KELVIN_HARTREE
+        n_free = len(self.pos) if frozen is None else int((~np.asarray(frozen)).sum())
+        dof = 3 * n_free - 3
+        K = self.kinetic()
+        if K <= 0:
+            return
+        Kt = 0.5 * dof * T * KELVIN_HARTREE
+        c = math.exp(-self.dt / (tau_fs / AU_TIME_FS))
+        R = self.rng.normal()
+        S = float(np.sum(self.rng.normal(size=dof - 1) ** 2))
+        Knew = K * c + Kt / dof * (1 - c) * (S + R * R) + 2 * R * math.sqrt(c * (1 - c) * K * Kt / dof)
+        self.vel *= math.sqrt(max(Knew, 0) / K)
+
+    def run(self, steps: int, T=None, P_GPa=None, sample_every: int = 10, frozen=None, callback=None):
+        """As md.MD.run: rows of step, E, U, T, P (GPa), V; the same runaway guard."""
+        from .md import HA_PER_BOHR3_GPA, RUNAWAY
+        rows = []
+        V0 = float(torch.prod(self.box))
+        for k in range(steps):
+            self.step(T, P_GPa, frozen=frozen)
+            V = float(torch.prod(self.box))
+            if V > RUNAWAY * V0 or V < V0 / RUNAWAY:
+                raise RuntimeError(f"the cell ran away under the barostat (volume x{V / V0:.2g} after {k} steps)")
+            if k % sample_every == 0:
+                row = {"step": k, "E": self.E + self.kinetic(), "U": self.E, "T": self.temperature(),
+                       "P": self.pressure() * HA_PER_BOHR3_GPA, "V": V}
+                rows.append(row)
+                if callback:
+                    callback(row, self)
+        return rows

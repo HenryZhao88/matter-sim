@@ -219,3 +219,20 @@ def test_gpu_force_field_matches_numpy(n, sigma):
     assert abs(E - E_ref) < 1e-10 * abs(E_ref)
     assert np.abs(F - F_ref).max() < 1e-10
     assert abs(W - W_ref) < 1e-10 * abs(W_ref)
+
+
+@requires_torch
+def test_gpu_md_reproduces_the_numpy_trajectory():
+    """Seeded, with thermostat and barostat: the GPU integrator follows md.MD step for step."""
+    from engine.materials.md import MD, al_state
+    from engine.materials.md_torch import MDTorch
+    m = toy_model(4)
+    a, b = MD(m, al_state(m, 7.6, (4, 4, 4)), dt_fs=1.0, seed=3), MDTorch(m, al_state(m, 7.6, (4, 4, 4)), dt_fs=1.0, seed=3)
+    for md in (a, b):
+        md.thermalise(600.0)
+    ra = a.run(60, T=600.0, P_GPa=0.0, sample_every=10)
+    rb = b.run(60, T=600.0, P_GPa=0.0, sample_every=10)
+    assert np.abs(b.pos.cpu().numpy() - a.s.pos).max() < 1e-9
+    assert np.abs(b.box.cpu().numpy() - a.s.box).max() < 1e-12
+    for x, y in zip(ra, rb):
+        assert abs(x["E"] - y["E"]) < 1e-9 * abs(x["E"]) and abs(x["T"] - y["T"]) < 1e-8 * x["T"]
