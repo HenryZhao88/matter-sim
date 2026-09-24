@@ -84,11 +84,26 @@ lattice Wilson–Dirac solver each have MLX and PyTorch implementations: the Dir
 propagators agree with the float64 NumPy reference to 1e-4 (a test), and the two VMC ports give
 energies that agree within the seed-to-seed spread below. On the RTX 4050 the VMC runs no faster
 than the CPU at 512 walkers (kernel-launch bound, ~23 s for He); at 8192 walkers CUDA is 7× the
-CPU per walker, so on a CUDA box Truth mode should scale walkers, not iterations. Still to do: the periodic DFT in `engine/crystal/periodic.py` is plain NumPy on the
-CPU and is the real bottleneck — labelling 89 configurations took about five hours. It is the
-piece with the most to gain from a CUDA port, and the open question is whether single precision
-holds energies to ~1 meV/atom, since a consumer NVIDIA card runs double precision at 1/64 speed
-and Metal has no double precision at all.
+CPU per walker, so on a CUDA box Truth mode should scale walkers, not iterations. The periodic DFT
+now has a single-precision GPU path, `engine/crystal/periodic_torch.py` (complex64 eigensolver
+on the device, every energy and force sum in float64). On a production label (4-atom fcc Al,
+6×6×6 k, h = 0.3, T_e = 0.01) it lands 0.0065 meV/atom and at most 1.4e-4 Ha/bohr from the float64
+NumPy path, which itself reproduces the Mac's cached label to 1e-11 on Windows. A full label with
+forces takes 65 s on the RTX 4050 against 1121 s for NumPy on that laptop's CPU (17×). **CUDA only:**
+on Apple's MPS the float64 work falls back to the CPU and the path is 8.7× *slower* than NumPy,
+so the Mac should keep labelling with NumPy.
+
+Two things to know about it:
+- **Its eigensolver needs soft locking.** Without it, bands that have converged to complex64's
+  rounding floor keep feeding that noise back as search directions, and LOBPCG returns
+  eigenvalues far below the spectrum (−91 Ha on fcc Al); the SCF then never converges yet still
+  returns an energy, several meV off. Fixed, with tests that fail without the fix.
+- **The force gap (1.4e-4 Ha/bohr) is not yet explained.** Energies agree to 0.01 meV/atom, and
+  forces agreed to 1e-6 on a coarse mesh; on the full mesh the two SCFs stop at slightly
+  different densities (dρ ~ 1e-4), and forces, unlike the energy, are first order in that.
+  Converging both further would tell whether it is that or single precision.
+
+Labels are refused, not cached, when the SCF does not converge (`dataset.NotConverged`).
 
 ## Conventions
 
