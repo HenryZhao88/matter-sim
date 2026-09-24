@@ -57,7 +57,7 @@ result disagrees with nature, say so and leave it disagreeing.
 | Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, pp at 13.6 TeV |
 | Lattice QCD | working: confinement, deconfinement, hadron masses (pion as Goldstone boson, κ_c = 0.1695 vs 0.1694 published) |
 | Electrons and nuclei | working: H–Kr (Sc fails its own check and is greyed out), molecules, truth mode (VMC, MLX and PyTorch) |
-| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity |
+| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`) reaches 10⁶ atoms, tested equal to `md.py`, not yet used by the experiments |
 | Everyday matter | working: the 1 cm³ block, 6.3 × 10²² atoms, 2.83 g, 2.29 kJ to melt |
 
 Results both machines can read are in `results/`. `HANDOFF.md` carries the detail and the
@@ -88,6 +88,11 @@ hard-won lessons; read it too.
   4-atom cells need about half. So h = 0.16 needs the wavefunctions streamed per k-point (or
   stored as G-sphere coefficients only) before either machine can label 8-atom copper with it,
   and h = 0.19 is the finest spacing the current code can do on both.
+- **The fp32 path holds at copper's finer grids (Windows, measured).** Displaced 4-atom Cu, 2×2×2 k,
+  fp32 against NumPy float64: at h = 0.19, −0.147 meV/atom and 1.1e-5 Ha/bohr (fp32 27 s, NumPy
+  317 s). At h = 0.16 fp32 converged in 44 s; the NumPy comparison there was stopped by the
+  low-memory guard and is still owed. The same cell's largest force is 0.109 Ha/bohr at h = 0.30
+  and 0.0157 at h = 0.19 — independent support for the egg-box numbers above.
 - **Iron** needs spin-polarised periodic DFT (`periodic.py` calls `lda_xc(ρ/2, ρ/2)`). Its
   pseudopotential passes. Decision taken: **copper first**, iron as its own piece of work —
   ferromagnetism is not a tolerance change, and iron's structure and elasticity depend on it.
@@ -98,8 +103,12 @@ hard-won lessons; read it too.
    float64 for copper's own lattice constant (it must come from our DFT, not from experiment),
    then label on the Windows machine with `solver="torch"`, with ~5% NumPy cross-checks.
 2. **Spin-polarised periodic DFT**, which unlocks iron, nickel and cobalt.
-3. **The molecular dynamics is a few hundred atoms in Python.** On a GPU, 10⁵–10⁶ atoms is
-   reachable, which is where grains, defects and cracks appear.
+3. **Use the GPU molecular dynamics.** `engine/materials/md_torch.py` (`EAMForceFieldTorch`,
+   `MDTorch`) matches `md.py` to 1e-10 and reproduces its seeded trajectories; on the RTX 4050 a
+   full step is 84 ms at 256 000 atoms and 321 ms at 10⁶ (float64, 2.9 GB VRAM). Nothing uses it
+   yet: `experiments.py` still runs a few hundred atoms. Next: melting by coexistence at 10⁵
+   atoms (smaller finite-size error than today's 1 500), then grains, vacancies and a crack.
+   Possible 2–4× more from float32 pair arithmetic, if it passes the same test.
 4. **One-loop amplitudes** in the particle rung; the running coupling is in, the loops are not.
 
 ## Lessons that cost real time
@@ -137,6 +146,15 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-24, Windows (Claude).** Did not label copper. Measured copper at finer grids on the fp32
+  path (holds at h = 0.19; h = 0.16 NumPy check owed) and which spacings fit in memory (h = 0.16
+  fits on neither machine for 8-atom cells). Built GPU molecular dynamics (`md_torch.py`: forces
+  and integrator, tested equal to `md.py`; 10⁶ atoms at 321 ms/step). Also this stint: wrap-
+  invariant cache keys with free migration, the per-tag cross-check machinery
+  (`scripts/cross_check.py`), `md_snapshots(Z=, mass_amu=)`, and the copper fixes to the fp32
+  eigensolver (floor from the nonlocal term's real size, complex128 overlaps). This laptop's
+  low-memory guard now stops even ~2 GB jobs when idle memory sits near 2 GB: run one job at a
+  time, and expect to be asked before a rerun.
 - **2026-09-24, Mac (Claude).** Wrote this file. Copper grid convergence running: aluminium's
   h = 0.3 is badly unconverged for copper (numbers above). Verified the Windows session's
   wrap-invariant cache keys against the real cache (71/71 configurations found), the full fast
