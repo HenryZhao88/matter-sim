@@ -44,7 +44,7 @@ result disagrees with nature, say so and leave it disagreeing.
 | | Mac (M4, 16 GB) | Windows (Ryzen 5, 7.8 GB, RTX 4050 6 GB) |
 |---|---|---|
 | Accelerator | MLX (Metal) | CUDA through PyTorch |
-| Best at | float64 reference work, MLX paths, the viewer | fp32 DFT labelling: **17× NumPy** |
+| Best at | float64 reference work, MLX paths, the viewer | fp32 DFT labelling: **~12× NumPy** (Al label 95 s vs 1121 s) |
 | Avoid | fp32 DFT (MPS is 8.7× *slower* than NumPy here) | anything needing >4 GB RAM; it gets killed |
 
 `engine/core/accel.py` decides what a machine uses: MLX, else CUDA, else MPS, else NumPy.
@@ -74,6 +74,20 @@ hard-won lessons; read it too.
   (`scratchpad/eggbox.py`, ~2 min per point). **Do not label copper until this lands**, and
   re-time one copper label afterwards: copper needs ~3× aluminium's grid points and has 11
   valence electrons against 3, so aluminium's 8-minute label is not the right estimate.
+- **Memory decides which h is usable (Windows, 2026-09-24).** Both DFT paths keep every
+  k-point's wavefunctions resident (fp32: on the GPU in complex64; NumPy: in RAM in complex128,
+  plus every k-point's projectors). For copper's 8-atom cells (3×7×7 k → 98 after time reversal,
+  50 bands):
+
+  | h (bohr) | grid | fp32 wavefunctions (6 GB GPU) | NumPy wavefunctions + projectors (RAM) |
+  |---|---|---|---|
+  | 0.22 | 64×32×32 | 2.4 GB | ~4.8 + 3.1 GB |
+  | 0.19 | 72×36×36 | 3.4 GB | ~6.8 + 4.5 GB (tight on 16 GB) |
+  | 0.16 | 90×48×48 | **7.6 GB: does not fit** | ~15 + 10 GB: **does not fit on the Mac either** |
+
+  4-atom cells need about half. So h = 0.16 needs the wavefunctions streamed per k-point (or
+  stored as G-sphere coefficients only) before either machine can label 8-atom copper with it,
+  and h = 0.19 is the finest spacing the current code can do on both.
 - **Iron** needs spin-polarised periodic DFT (`periodic.py` calls `lda_xc(ρ/2, ρ/2)`). Its
   pseudopotential passes. Decision taken: **copper first**, iron as its own piece of work —
   ferromagnetism is not a tolerance change, and iron's structure and elasticity depend on it.
