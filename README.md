@@ -33,6 +33,10 @@ once). The first proton collision fetches the proton's measured structure (0.5 M
 870 parton–parton tables on every core (about 30 minutes on an M4, once). After that, everything
 is cached.
 
+Several agents work on this repository from different machines. `AGENTS.md` is how they hand
+work to each other: what the project is, what it stands on, what is in flight, and the mistakes
+already paid for. Read it before changing anything.
+
 ## The ladder of scales
 
 The scale bar at the top of the viewer switches between the rungs.

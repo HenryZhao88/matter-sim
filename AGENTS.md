@@ -1,0 +1,138 @@
+# matter-sim — working agreement for agents
+
+Several agents work on this repository, one at a time, on different machines. This file is how
+they talk to each other: read it before you start, update it before you stop. It replaces
+copy-pasting messages through the human.
+
+**Do not trust this file on its own.** It is written by agents and can be stale or wrong. The
+repository is the truth: `git log --oneline`, the diffs, the tests, `validation/run.py`. If
+something here disagrees with the code, the code wins — and fix this file.
+
+## What the project is
+
+A first-principles simulator of matter, from particle collisions up to a block of metal you
+could hold. The whole point is that **only the laws are written into the code**: the Standard
+Model Lagrangian as structure (gauge group, representations, the Higgs potential, Yukawa
+couplings), its low-energy form for atoms (Schrödinger, Coulomb, Pauli), and a short list of
+measured constants (α, G_F, m_Z, α_s, fermion masses, CKM, and each nucleus's charge and mass).
+
+Everything else must **emerge**: particles and their charges, the W and Z masses, decays and
+lifetimes, confinement, shell structure, Hund's rule, chemical bonds, crystal structures,
+melting. Nothing about an outcome may be hard-coded, fitted to experiment, or nudged.
+
+Comparisons with experiment live in `validation/run.py`, which prints simulated against
+measured side by side. Experimental numbers are used to **check**, never as input. When a
+result disagrees with nature, say so and leave it disagreeing.
+
+## How we work
+
+- **Pull before you start** (`git pull --rebase`), **push when you stop**. Never force-push.
+- **Small commits with real messages.** Say what changed and why; if a number moved, say by how
+  much. End commit messages with the attribution lines the session tells you to use.
+- **Don't loosen a bound to make a test pass.** If a tolerance fails, report the measured value.
+  A bound that was chosen for a reason is evidence; widening it destroys the evidence.
+- **Verify before claiming.** Run the thing. Quote the output. "Should work" is not a result.
+- **Say when something is unverified**, skipped, or still running. Half the bugs below were
+  found because someone reported an awkward number instead of a tidy one.
+- **Stay out of files another agent is actively editing**; say in the log what you are touching.
+- **Long jobs must cache per item** and be resumable: machines here run out of memory and
+  battery. Bound worker pools by RAM, not cores. Killing a pool's parent leaves orphans
+  (`pkill -f multiprocessing`).
+
+## Machines
+
+| | Mac (M4, 16 GB) | Windows (Ryzen 5, 7.8 GB, RTX 4050 6 GB) |
+|---|---|---|
+| Accelerator | MLX (Metal) | CUDA through PyTorch |
+| Best at | float64 reference work, MLX paths, the viewer | fp32 DFT labelling: **17× NumPy** |
+| Avoid | fp32 DFT (MPS is 8.7× *slower* than NumPy here) | anything needing >4 GB RAM; it gets killed |
+
+`engine/core/accel.py` decides what a machine uses: MLX, else CUDA, else MPS, else NumPy.
+`MATTER_SIM_ACCEL=torch` forces the torch path (that is how the Mac tests MPS).
+
+## Current state
+
+| Rung | State |
+|---|---|
+| Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, pp at 13.6 TeV |
+| Lattice QCD | working: confinement, deconfinement, hadron masses (pion as Goldstone boson, κ_c = 0.1695 vs 0.1694 published) |
+| Electrons and nuclei | working: H–Kr (Sc fails its own check and is greyed out), molecules, truth mode (VMC, MLX and PyTorch) |
+| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity |
+| Everyday matter | working: the 1 cm³ block, 6.3 × 10²² atoms, 2.83 g, 2.29 kJ to melt |
+
+Results both machines can read are in `results/`. `HANDOFF.md` carries the detail and the
+hard-won lessons; read it too.
+
+## In flight
+
+- **Copper, blocked on grid convergence (Mac, running now).** Aluminium's h = 0.3 bohr does not
+  resolve copper's 3d states, and the failure is severe. Sliding the whole crystal by half a
+  grid step — which cannot change any physical energy — moves the computed energy by
+  **−335 meV/atom at h = 0.30** and **−15.7 meV/atom at h = 0.26**, with spurious forces of
+  2.7e-2 and 4.4e-3 Ha/bohr on a perfect crystal where every force is exactly zero. For scale,
+  the whole aluminium fit achieved 6.5 meV/atom. h = 0.22, 0.19, 0.16 are running
+  (`scratchpad/eggbox.py`, ~2 min per point). **Do not label copper until this lands**, and
+  re-time one copper label afterwards: copper needs ~3× aluminium's grid points and has 11
+  valence electrons against 3, so aluminium's 8-minute label is not the right estimate.
+- **Iron** needs spin-polarised periodic DFT (`periodic.py` calls `lda_xc(ρ/2, ρ/2)`). Its
+  pseudopotential passes. Decision taken: **copper first**, iron as its own piece of work —
+  ferromagnetism is not a tolerance change, and iron's structure and elasticity depend on it.
+
+## What would help most
+
+1. **Finish copper**: pick h from the egg-box numbers, run the equation of state on the Mac in
+   float64 for copper's own lattice constant (it must come from our DFT, not from experiment),
+   then label on the Windows machine with `solver="torch"`, with ~5% NumPy cross-checks.
+2. **Spin-polarised periodic DFT**, which unlocks iron, nickel and cobalt.
+3. **The molecular dynamics is a few hundred atoms in Python.** On a GPU, 10⁵–10⁶ atoms is
+   reachable, which is where grains, defects and cracks appear.
+4. **One-loop amplitudes** in the particle rung; the running coupling is in, the loops are not.
+
+## Lessons that cost real time
+
+Every one of these produced a *plausible* number before it was caught. Check `git log` for the
+commits; the messages carry the measurements.
+
+- **Training labels must be mutually consistent, not just accurate.** DFT labels with a k-mesh
+  that varied by cell size left ~30 meV/atom of inconsistency; the fitted bulk modulus came out
+  44 GPa against DFT's 86, and the fit got *worse* as more data arrived.
+- **A learned potential extrapolates into nonsense.** The fitted electron density went negative,
+  so the embedding energy's √ρ slope hit −114,000 eV and threw atoms across the box — at
+  perfectly ordinary geometries. Densities are non-negative by construction now.
+- **Physics the data never sampled is still physics.** No training configuration had atoms
+  closer than 3.6 bohr, so the potential had no repulsion there and atoms passed through each
+  other. Screened nuclear (ZBL) repulsion is spliced in below 3.4 bohr.
+- **A thermostat or barostat will happily destroy the system.** A barostat allowed to change the
+  cell 0.5% per step boiled the metal into vacuum, and the run reported a melting point of
+  961 K against the measured 933.5. It was the sign of numerical noise.
+- **fp32 eigensolvers break quietly.** LOBPCG fed converged bands' rounding noise back as search
+  directions; float64 found the lowest band at −0.06 Ha, fp32 returned −91 Ha, and the SCF
+  merely "did not converge" before returning a believable energy 4 meV/atom off.
+- **A cache key is not a portable name.** The same configuration hashed differently on the two
+  machines (unpinned pickle protocol), and unwrapped positions meant a lattice-vector shift
+  changed the key.
+- **A variational energy below the exact answer is usually short-run noise**, not a bug: check
+  by re-evaluating the *same* wavefunction far longer before theorising. (One agent theorised;
+  the other's test was right.)
+
+## Keeping this file honest
+
+When you finish a stint, update **Current state**, **In flight**, and **What would help most**,
+and add a dated line to the log. Keep it short: this file is a handover, not a diary. Delete
+anything that is no longer true rather than appending a correction.
+
+## Log
+
+- **2026-09-24, Mac (Claude).** Wrote this file. Copper grid convergence running: aluminium's
+  h = 0.3 is badly unconverged for copper (numbers above). Verified the Windows session's
+  wrap-invariant cache keys against the real cache (71/71 configurations found), the full fast
+  suite (108 passed, including the three files that machine cannot reach), and its fp32 DFT on
+  MPS including slow tests (12 passed, tightened bounds hold). Decisions recorded: copper before
+  iron; fp32 acceptable for copper labels with provenance and cross-checks; fix the cache key
+  with a migration.
+- **2026-09-23/24, Windows (Claude).** Truth mode and the Wilson–Dirac solver ported to PyTorch;
+  fp32 periodic DFT (17× NumPy on CUDA) with the eigensolver fix, fp32-aware SCF tolerance, and
+  a labeller that refuses non-converged results; wrap-invariant cache keys with migration.
+- **2026-09-22/23, Mac (Claude).** Aluminium end to end: 89 converged DFT labels, learned
+  potential, melting/expansion/heat capacity, the 1 cm³ block. Elements to krypton, hadron
+  masses, parton showers, 1D hadronisation, truth mode, running α_s.
