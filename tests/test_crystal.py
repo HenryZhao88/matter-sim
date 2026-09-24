@@ -117,3 +117,23 @@ def test_single_precision_eigensolver_is_stable_far_past_convergence():
     V32 = torch.tensor(Veff.reshape(1, -1).astype(np.float32), device=t.dev)
     got, _ = t._eig_dev(k, V32, Bt, Et, torch.tensor(U0.astype(np.complex64), device=t.dev), 200)
     assert np.abs(got - ref).max() < 1e-5
+
+
+@requires_torch
+@pytest.mark.slow
+def test_single_precision_dft_on_a_transition_metal():
+    """Copper: d projectors, a p-channel Kleinman–Bylander energy of 469 Ha, and a nonlocal energy that
+    is most of the total. The eigensolver floor once scaled with the projector term's operator norm
+    (3e4 Ha here), locked the bands 500x too early and left forces 2.9e-3 Ha/bohr off (3.4e-5 now).
+    The energy agrees to ~0.1-0.4 meV/atom, not aluminium's 0.001: single precision's relative error
+    times copper's much larger energy terms."""
+    from engine.crystal.periodic_torch import PeriodicDFTTorch
+    rng = np.random.default_rng(7)
+    base = cubic("fcc", 6.83, 29)
+    c = Crystal(base.cell, base.charges, base.positions + rng.normal(0, 0.15, base.positions.shape))
+    kw = dict(h=0.45, kmesh=1, T_e=0.01, symmetry=False)
+    ref = PeriodicDFT(c, **kw).run(forces=True)
+    got = PeriodicDFTTorch(c, **kw).run(forces=True)
+    assert ref.converged and got.converged
+    assert abs(got.free_energy - ref.free_energy) / 4 * 27.211386 < 1e-3
+    assert np.abs(got.forces - ref.forces).max() < 3e-4

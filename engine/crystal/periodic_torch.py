@@ -115,13 +115,19 @@ class PeriodicDFTTorch(PeriodicDFT):
         return out
 
     # -------------------------------------------------------------- Hamiltonian
+    def _overlap(self, U, B):
+        """⟨b_p|u_n⟩ (without dV) accumulated in complex128 on the wide device. The nonlocal energy is
+        most of a transition metal's total (−238 of −242 Ha for a 4-atom Cu cell), so complex64
+        accumulation of these overlaps alone biased copper's energy by 0.1 meV/atom."""
+        return self._wide(U, C128) @ self._wide(B, C128).conj().T
+
     def _apply_dev(self, U, kin32, Veff32, B, E):
         nb = U.shape[0]
         Ug = torch.fft.fftn(U.reshape((nb,) + self.N), dim=(1, 2, 3))
         out = torch.fft.ifftn(kin32 * Ug, dim=(1, 2, 3)).reshape(nb, -1) + Veff32 * U
         if len(E):
-            cvec = (U @ B.conj().T) * self.dV
-            out = out + (cvec * E) @ B
+            cvec = self._narrow(self._overlap(U, B) * self.dV * self._wide(E, F64))
+            out = out + cvec @ B
         return out
 
     def _eig_dev(self, k, Veff32, B, E, U0, iters):
@@ -135,14 +141,21 @@ class PeriodicDFTTorch(PeriodicDFT):
             return torch.fft.ifftn(P * torch.fft.fftn(R.reshape((nb,) + self.N), dim=(1, 2, 3)),
                                    dim=(1, 2, 3)).reshape(nb, -1)
 
-        # the smallest residual complex64 can resolve is ~ε·‖H‖; bound ‖H‖ by its largest diagonal terms
-        h_norm = float(x.max()) + float(Veff32.abs().max()) + (float(E.abs().max()) * self._b_norm2(B) if len(E) else 0.0)
+        # the smallest residual complex64 can resolve is ~ε × the size of the terms that make up H·x:
+        # kinetic and local potential by their largest values, the nonlocal term by its actual size on
+        # these vectors. Its operator norm E·|b|²dV is no guide: 3e4 Ha for copper's p channel
+        # (E = 469 Ha), 500x the rounding it really causes, since bound states barely overlap a
+        # strongly repulsive projector; used as the scale it froze copper's bands 500x too early
+        h_norm = float(x.max()) + float(Veff32.abs().max()) + self._nonlocal_scale(U0, B, E)
         floor = RESIDUAL_FLOOR * torch.finfo(F32).eps * h_norm
         return lobpcg_dev(lambda X: self._apply_dev(X, kin32, Veff32, B, E), U0, precond, iters, floor, wide=self.wdev)
 
-    def _b_norm2(self, B):
-        """Largest |b_p|² dV: the scale of a projector's contribution to H."""
-        return float((B.abs() ** 2).sum(dim=1).max()) * self.dV
+    def _nonlocal_scale(self, U, B, E):
+        """Largest ‖Σ_p E_p ⟨b_p|u⟩ b_p‖ over the (normalised) vectors u: the nonlocal term's real size."""
+        if not len(E):
+            return 0.0
+        Un = U / torch.clamp(torch.linalg.norm(U, dim=1), min=1e-30)[:, None]
+        return float(torch.linalg.norm(self._narrow(self._overlap(Un, B) * self.dV * self._wide(E, F64)) @ B, dim=1).max())
 
     # -------------------------------------------------------------- SCF
     def run(self, max_iter: int = 60, tol: float = 1e-6, forces: bool = False, verbose: bool = False,
@@ -214,9 +227,8 @@ class PeriodicDFTTorch(PeriodicDFT):
             kin += 2 * self.wk[ik] * float(o @ per_band)
             B, E, _ = self._projectors_dev(ik, k)
             if len(E):
-                cc = (U[ik] @ B.conj().T) * math.sqrt(self.dV)
-                enl += 2 * self.wk[ik] * float(torch.sum(o[:, None] * self._wide(E, F64)[None, :]
-                                                         * self._wide(cc.abs() ** 2, F64)))
+                cc = self._overlap(U[ik], B) * math.sqrt(self.dV)
+                enl += 2 * self.wk[ik] * float(torch.sum(o[:, None] * self._wide(E, F64)[None, :] * cc.abs() ** 2))
         c = self.c
         rg = np.fft.fftn(rho) / self.Ntot
         with np.errstate(divide="ignore", invalid="ignore"):
@@ -234,13 +246,12 @@ class PeriodicDFTTorch(PeriodicDFT):
             if not len(E):
                 continue
             o = torch.tensor(occ[ik], dtype=F64, device=self.wdev)
-            Ew = self._wide(E, F64)
-            cc = self._wide((U[ik] @ B.conj().T) * math.sqrt(self.dV), C128)             # (nb, P)
+            cc = self._overlap(U[ik], B) * math.sqrt(self.dV)                           # (nb, P)
             kG = self._Gt + torch.tensor(k, dtype=F64, device=self.wdev)
             for a in range(3):
                 dB = self._narrow((torch.fft.ifftn(-1j * kG[..., a] * Fs, dim=(1, 2, 3)) * self.Ntot).reshape(len(E), -1))
-                dc = self._wide((U[ik] @ dB.conj().T) * math.sqrt(self.dV), C128)         # (nb, P)
-                dE = 2 * self.wk[ik] * torch.sum(o[:, None] * Ew[None, :] * 2 * torch.real(cc.conj() * dc), dim=0)
+                dc = self._overlap(U[ik], dB) * math.sqrt(self.dV)                        # (nb, P)
+                dE = 2 * self.wk[ik] * torch.sum(o[:, None] * self._wide(E, F64)[None, :] * 2 * torch.real(cc.conj() * dc), dim=0)
                 for p, i in enumerate(atom):
                     F[i, a] -= float(dE[p])
         return F
