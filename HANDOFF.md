@@ -107,7 +107,27 @@ Two things to know about it:
   unmoved by tighter SCF tolerances, float64 occupations or a float64 force routine. The floor is
   now 1 ε₃₂‖H‖ (+40% time). Judge any change to this path by its forces.
 
-Labels are refused, not cached, when the SCF does not converge (`dataset.NotConverged`).
+- **Heavier elements lose accuracy in proportion to their energy terms.** Copper (d projectors, a
+  469 Ha p-channel KB energy, nonlocal energy −238 of −242 Ha per 4-atom cell): forces agree to
+  1–2e-5 Ha/bohr, energies only to ~0.3 meV/atom (Al: 0.001). Converging further does not move it;
+  it scales like ε₃₂ × the energy terms (~800 Ha per Cu cell against ~20 for Al). Inside the
+  1 meV/atom budget, but check a heavier element's labels against NumPy before labelling in bulk.
+  A production-settings Cu label (4 atoms, 7³ k, 28 bands) takes 473 s on the RTX 4050; NumPy on
+  that cell is not measured.
+
+Labels are refused, not cached, when the SCF does not converge (`dataset.NotConverged`). Cache
+keys pin pickle protocol 4 (`dataset.cache_key`): Python 3.14 changed the default, and the two
+machines silently named the same label differently.
+
+## Before the next metal
+
+- **Iron cannot be labelled yet, at any speed.** The periodic DFT is spin-unpolarised
+  (`lda_xc(ρ/2, ρ/2)`), and iron's structure and elastic behaviour come from its ferromagnetism.
+  Its pseudopotential passes (8 valence electrons, 9 meV transferability); what is missing is
+  spin-polarised periodic DFT.
+- **Copper's pseudopotential passes** (11 valence electrons, 53 meV transferability, limit 150),
+  and the fp32 path handles its d projectors (above). Not yet checked: whether h = 0.3 bohr, chosen
+  for aluminium, converges copper's more localised d states. That grid convergence comes first.
 
 ## Conventions
 
