@@ -113,6 +113,12 @@ hard-won lessons; read it too.
   potentials' band structures agree to 0.02 Ha, so the error is in the energy's volume
   dependence. `scripts/pp_check.py` reproduces all of it. **Lesson: a pseudopotential is not
   validated until a solid's E(V) has been looked at.** Copper's (1.25×) is fine, as its EOS shows.
+  **Proposed fix, not applied:** cap the ghost-avoidance stretch at 1.25×. The 1.5× stretch is
+  used by exactly Ti, V, Cr, Mn, Fe (Co, Ni 1.0×; Cu 1.25×; K–Sc, Zn–Kr unaffected). Under the cap
+  the generator's own rule picks, free-atom error in meV (limit 150): V 77, Cr 69.5, Mn 58, Fe 73
+  (r_s = 2.88; bcc E(V) at h 0.24, xc 2: −15.2, −0.6, +7.0, +10.9 mHa/atom, minimum a ≈ 2.75 Å),
+  but **Ti 280** (it fails today too, at 154 here). Needs a `CACHE_VERSION` bump and the atoms
+  validation rerun for Ti–Fe; V–Mn's solids are unchecked.
 
 ## What would help most
 
