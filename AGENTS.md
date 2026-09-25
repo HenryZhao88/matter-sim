@@ -45,7 +45,7 @@ result disagrees with nature, say so and leave it disagreeing.
 |---|---|---|
 | Accelerator | MLX (Metal) | CUDA through PyTorch |
 | Best at | float64 reference work, MLX paths, the viewer | fp32 DFT labelling: **~12× NumPy** (Al label 95 s vs 1121 s) |
-| Avoid | fp32 DFT (MPS is 8.7× *slower* than NumPy here) | anything needing >4 GB RAM; it gets killed |
+| Avoid | fp32 DFT (MPS is 8.7× *slower* than NumPy here) | long GPU jobs from a Claude Code session: idle RAM is ~2 GB and the low-memory guard stops them (copper's 8-atom labels included) |
 
 `engine/core/accel.py` decides what a machine uses: MLX, else CUDA, else MPS, else NumPy.
 `MATTER_SIM_ACCEL=torch` forces the torch path (that is how the Mac tests MPS).
@@ -104,13 +104,23 @@ hard-won lessons; read it too.
 
 ## What would help most
 
-1. **Label copper's crystal set on the Windows machine:** `uv run python scripts/label_crystal.py
-   29 6.704 torch` (71 configurations, resumable, one at a time; 1 of 71 done). A 4-atom label is
-   ~8–12 min, so ~9 h for the 4-atom and bcc cells plus the 16 untimed 8-atom cells. On this
-   laptop (idle RAM ~2 GB) Claude Code's low-memory guard stops long GPU jobs it starts; run from a
-   plain terminal instead, where it does not apply. Then `scripts/cross_check.py 29` on the Mac
-   (float64, ~5%), a seed fit, and `md_snapshots(..., Z=29, mass_amu=63.546)` with temperatures
-   chosen for copper (the defaults were aluminium's).
+1. **Label copper's crystal set — open, needs a machine with more memory than the Windows laptop.**
+   The human is finding an agent/machine for it; whoever takes it, say so in the log first.
+   - Command: `uv run python scripts/label_crystal.py 29 6.704 <solver> [workers]` — 71
+     configurations (`initial_configurations(29, 6.704)` without sc/disordered), resumable through
+     the cache, grid from `dataset.GRID` (h 0.19, xc_grid 2), provenance on every label.
+   - Solver: `torch` on a CUDA GPU (fp32, measured against float64 at h 0.19: −0.147 meV/atom,
+     1.1e-5 Ha/bohr; run it with 1 worker, the GPU does the work). `numpy` anywhere else (float64;
+     bound workers by RAM). Not `torch` on a Mac: MPS is slower than NumPy.
+   - Cost, measured (Windows, fp32, RTX 4050): a 4-atom label 732 s, peak 2.0 GB VRAM, 1.3 GB RAM.
+     8-atom cells (16 of the 71) are **untimed**: the only attempt was stopped by the low-memory
+     guard. Estimated from sizes: ~3.4 GB VRAM on fp32; ~11 GB RAM per worker on NumPy.
+   - Caches are per machine and not in git. The one finished label (the compressed fcc-volume cell,
+     key `0f5146c079ed2647`) exists only in the Windows laptop's `.cache/materials/dft/`; another
+     machine will simply recompute it.
+   - After it: `scripts/cross_check.py 29` in float64 (~5%, per tag), a seed fit, then
+     `md_snapshots(..., Z=29, mass_amu=63.546)` with temperatures chosen for copper (the defaults
+     were aluminium's).
 2. **Spin-polarised periodic DFT**, which unlocks iron, nickel and cobalt.
 3. **Use the GPU molecular dynamics.** `engine/materials/md_torch.py` (`EAMForceFieldTorch`,
    `MDTorch`) matches `md.py` to 1e-10 and reproduces its seeded trajectories; on the RTX 4050 a
@@ -158,6 +168,9 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-25, Windows (Claude).** Handed copper labelling back: this laptop cannot run the 8-atom
+  labels under Claude Code's low-memory guard. Instructions for any machine are under "What would
+  help most" #1. Nothing is running here.
 - **2026-09-25, Windows (Claude).** Started copper labelling: 1 of 71 crystal configurations done
   (732 s, fp32, h 0.19 / xc_grid 2); the first 8-atom label was stopped by the low-memory guard.
   Added `scripts/label_crystal.py` (element-generic, resumable). Found that on Windows committed
