@@ -133,8 +133,9 @@ class CrystalResult:
 
 class PeriodicDFT:
     def __init__(self, crystal: Crystal, h: float = 0.3, kmesh: int | tuple = 6, T_e: float = 0.005,
-                 symmetry: bool = True, extra_bands: int = 6, smearing: str = "fd") -> None:
+                 symmetry: bool = True, extra_bands: int = 6, smearing: str = "fd", xc_grid: int = 1) -> None:
         self.c = crystal
+        self.xc_grid = int(xc_grid)
         self.T_e = T_e
         self.smearing = smearing
         self.N = tuple(fft_friendly(math.ceil(L / h)) for L in crystal.cell)
@@ -145,17 +146,78 @@ class PeriodicDFT:
         self.G2 = np.sum(self.G ** 2, axis=-1)
         gmax = min(np.pi * n / L for n, L in zip(self.N, crystal.cell))
         self.filter = np.exp(-36.0 * np.minimum(np.sqrt(self.G2) / gmax, 1.5) ** 36)
+        self._setup_xc_grid()
         self.ops = crystal_symmetries(crystal) if symmetry else [((0, 1, 2), (1, 1, 1))]
         self.kpts, self.wk = kpoint_mesh(crystal, kmesh, self.ops)
         self.n_bands = int(math.ceil(crystal.valence / 2)) + extra_bands
         self._form_factors()
         self._rng = np.random.default_rng(0)
 
+    def _setup_xc_grid(self) -> None:
+        """A grid ``xc_grid`` times finer on which exchange–correlation is evaluated.
+
+        LDA is a nonlinear function of the density, so on a grid it makes Fourier components
+        beyond the grid's reach, which fold back (alias) onto the ones it keeps. Where the density
+        is smooth that is harmless; a partial core density (copper's 3s3p core, carried into LDA as
+        the nonlinear core correction) is sharp, and the folded part depends on where the atoms sit
+        relative to the grid points. Measured on fcc Cu, 4 atoms, h = 0.19: sliding the crystal by
+        half a grid step moved the energy by +15.6 meV/atom with the core correction and −0.2
+        without it. Evaluating XC on a finer grid (the density interpolated exactly, the core
+        density built there at its own higher resolution, the potential brought back by Fourier
+        truncation) removes the folding without touching the physics; 1 keeps the plain grid."""
+        self.Nf = tuple(n * self.xc_grid for n in self.N)
+        self.Nftot = int(np.prod(self.Nf))
+        self.dVf = self.c.volume / self.Nftot
+        # where each coarse Fourier component lives on the fine grid
+        self._fine_idx = np.ix_(*[np.round(np.fft.fftfreq(n) * n).astype(int) % (n * self.xc_grid) for n in self.N])
+        if self.xc_grid > 1:
+            gs = [2 * np.pi * np.fft.fftfreq(n, d=L / n) for n, L in zip(self.Nf, self.c.cell)]
+            self.Gf = np.stack(np.meshgrid(*gs, indexing="ij"), axis=-1)
+            gmaxf = min(np.pi * n / L for n, L in zip(self.Nf, self.c.cell))
+            self.filter_f = np.exp(-36.0 * np.minimum(np.linalg.norm(self.Gf, axis=-1) / gmaxf, 1.5) ** 36)
+        else:
+            self.Gf, self.filter_f = self.G, self.filter
+
+    def _to_fine(self, f):
+        """A coarse-grid field, Fourier-interpolated onto the XC grid."""
+        if self.xc_grid == 1:
+            return f
+        g = np.zeros(self.Nf, complex)
+        g[self._fine_idx] = np.fft.fftn(f) / f.size
+        return np.real(np.fft.ifftn(g) * self.Nftot)
+
+    def _to_coarse(self, ff):
+        """An XC-grid field, Fourier-truncated back onto the coarse grid."""
+        if self.xc_grid == 1:
+            return ff
+        g = (np.fft.fftn(ff) / self.Nftot)[self._fine_idx]
+        return np.real(np.fft.ifftn(g) * self.Ntot)
+
+    def _xc(self, rho):
+        """(E_xc, v_xc on the coarse grid, v_xc on the XC grid) for valence density ``rho``."""
+        rx = self._to_fine(rho) + self.rho_core
+        exc, vxc_f, _ = lda_xc(rx / 2, rx / 2)
+        return float(np.sum(exc) * self.dVf), self._to_coarse(vxc_f), vxc_f
+
+    def _core_forces(self, rho):
+        """−∫ v_xc ∂ρ_core/∂R_I, on the XC grid, where the core density lives."""
+        c = self.c
+        F = np.zeros((len(c.charges), 3))
+        if not self.core_q:
+            return F
+        vg = np.fft.fftn(self._xc(rho)[2]) / self.Nftot
+        for i, (Z, R) in enumerate(zip(c.charges, c.positions)):
+            if Z in self.core_q:
+                cI = self.core_q[Z] * np.exp(-1j * (self.Gf @ R)) * self.filter_f
+                F[i] -= np.real(np.sum(np.conj(vg)[..., None] * (-1j * self.Gf) * cI[..., None], axis=(0, 1, 2)))
+        return F
+
     # -------------------------------------------------------------- ions
     def _form_factors(self) -> None:
         c = self.c
         q = np.sqrt(self.G2)
-        qtab = np.linspace(0, q.max() * 1.001 + 1, 3000)
+        qf = np.linalg.norm(self.Gf, axis=-1) if self.xc_grid > 1 else q
+        qtab = np.linspace(0, qf.max() * 1.001 + 1, 3000 * self.xc_grid)
         self.pp = {Z: species.pseudopotential(Z) for Z in set(c.charges)}
         self.vloc_q: dict = {}
         self.proj_tab: dict = {}
@@ -170,7 +232,7 @@ class PeriodicDFT:
             for l in pp.nonlocal_channels:
                 self.proj_tab[(Z, l)] = (qtab, pp.projector_q(l, qtab))
             if pp.rho_core is not None:
-                self.core_q[Z] = np.interp(q, qtab, pp.core_density_q(qtab))
+                self.core_q[Z] = np.interp(qf, qtab, pp.core_density_q(qtab))
         self._set_local()
 
     def _set_local(self) -> None:
@@ -183,11 +245,11 @@ class PeriodicDFT:
         self.Vloc = np.real(np.fft.ifftn(Vg) * self.Ntot)
         self.rho_core = 0.0
         if self.core_q:
-            Cg = np.zeros(self.N, complex)
+            Cg = np.zeros(self.Nf, complex)
             for Z, R in zip(c.charges, c.positions):
                 if Z in self.core_q:
-                    Cg += self.core_q[Z] * np.exp(-1j * (self.G @ R))
-            self.rho_core = np.real(np.fft.ifftn(Cg * self.filter / c.volume) * self.Ntot)
+                    Cg += self.core_q[Z] * np.exp(-1j * (self.Gf @ R))
+            self.rho_core = np.real(np.fft.ifftn(Cg * self.filter_f / c.volume) * self.Nftot)
         self.E_ewald, self.F_ewald = ewald(c)
 
     def _projectors(self, k, keep_g: bool = False):
@@ -259,8 +321,7 @@ class PeriodicDFT:
         converged = False
         for it in range(1, max_iter + 1):
             vh = self._hartree(rho)
-            rx = rho + self.rho_core                         # + partial core (nonlinear core correction)
-            _, vxc, _ = lda_xc(rx / 2, rx / 2)
+            _, vxc, _ = self._xc(rho)                        # with the partial core (nonlinear core correction)
             Veff = self.Vloc + vh + vxc
             evals = []
             for ik, k in enumerate(self.kpts):
@@ -360,8 +421,7 @@ class PeriodicDFT:
         rg = np.fft.fftn(rho) / self.Ntot
         with np.errstate(divide="ignore", invalid="ignore"):
             eh = 0.5 * c.volume * float(np.sum(np.where(self.G2 > 0, 4 * np.pi * np.abs(rg) ** 2 / self.G2, 0)))
-        rx = rho + self.rho_core
-        exc = float(np.sum(lda_xc(rx / 2, rx / 2)[0]) * self.dV)
+        exc = self._xc(rho)[0]
         eloc = float(np.sum(self.Vloc * rho) * self.dV)
         return {"kinetic": kin, "electron_ion": eloc + enl, "hartree": eh, "exchange_correlation": exc,
                 "ion_ion": self.E_ewald}
@@ -376,14 +436,7 @@ class PeriodicDFT:
             # E_loc = Σ_G conj(ρ_G) v_I(G): dE/dR = Σ conj(ρ_G)(−iG) v_I
             dE = np.real(np.sum(np.conj(rg)[..., None] * (-1j * self.G) * vI[..., None], axis=(0, 1, 2)))
             F[i] -= dE
-        if self.core_q:
-            rx = rho + self.rho_core
-            _, vxc, _ = lda_xc(rx / 2, rx / 2)
-            vg = np.fft.fftn(vxc) / self.Ntot
-            for i, (Z, R) in enumerate(zip(c.charges, c.positions)):
-                if Z in self.core_q:
-                    cI = self.core_q[Z] * np.exp(-1j * (self.G @ R)) * self.filter
-                    F[i] -= np.real(np.sum(np.conj(vg)[..., None] * (-1j * self.G) * cI[..., None], axis=(0, 1, 2)))
+        F += self._core_forces(rho)
         for ik, k in enumerate(self.kpts):
             # the G-space projector forms are needed only here, so rebuild them one k at a time
             B, Fs, E, atom = self._projectors(k, keep_g=True)

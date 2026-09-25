@@ -26,7 +26,6 @@ import numpy as np
 import torch
 
 from ..core.accel import torch_device
-from ..electrons.xc import lda_xc
 from .periodic import CrystalResult, PeriodicDFT, fermi_all
 
 C64, C128, F32, F64 = torch.complex64, torch.complex128, torch.float32, torch.float64
@@ -176,8 +175,7 @@ class PeriodicDFTTorch(PeriodicDFT):
         converged = False
         for it in range(1, max_iter + 1):
             vh = self._hartree(rho)
-            rx = rho + self.rho_core
-            _, vxc, _ = lda_xc(rx / 2, rx / 2)
+            _, vxc, _ = self._xc(rho)
             Veff = self.Vloc + vh + vxc
             Veff32 = torch.tensor(Veff.reshape(1, -1).astype(np.float32), device=self.dev)
             evals = []
@@ -233,8 +231,7 @@ class PeriodicDFTTorch(PeriodicDFT):
         rg = np.fft.fftn(rho) / self.Ntot
         with np.errstate(divide="ignore", invalid="ignore"):
             eh = 0.5 * c.volume * float(np.sum(np.where(self.G2 > 0, 4 * np.pi * np.abs(rg) ** 2 / self.G2, 0)))
-        rx = rho + self.rho_core
-        exc = float(np.sum(lda_xc(rx / 2, rx / 2)[0]) * self.dV)
+        exc = self._xc(rho)[0]
         eloc = float(np.sum(self.Vloc * rho) * self.dV)
         return {"kinetic": kin, "electron_ion": eloc + enl, "hartree": eh, "exchange_correlation": exc,
                 "ion_ion": self.E_ewald}
@@ -264,15 +261,7 @@ class PeriodicDFTTorch(PeriodicDFT):
         for i, (Z, R) in enumerate(zip(c.charges, c.positions)):
             vI = self.vloc_q[Z] * np.exp(-1j * (self.G @ R)) * self.filter
             F[i] -= np.real(np.sum(np.conj(rg)[..., None] * (-1j * self.G) * vI[..., None], axis=(0, 1, 2)))
-        if self.core_q:
-            rx = rho + self.rho_core
-            _, vxc, _ = lda_xc(rx / 2, rx / 2)
-            vg = np.fft.fftn(vxc) / self.Ntot
-            for i, (Z, R) in enumerate(zip(c.charges, c.positions)):
-                if Z in self.core_q:
-                    cI = self.core_q[Z] * np.exp(-1j * (self.G @ R)) * self.filter
-                    F[i] -= np.real(np.sum(np.conj(vg)[..., None] * (-1j * self.G) * cI[..., None], axis=(0, 1, 2)))
-        return F
+        return F + self._core_forces(rho)
 
 
 def lobpcg_dev(apply_H, X, precond, maxiter, floor: float, keep_tol: float = 1e-10, wide=None):
