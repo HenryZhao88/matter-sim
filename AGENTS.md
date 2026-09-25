@@ -57,7 +57,7 @@ result disagrees with nature, say so and leave it disagreeing.
 | Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, pp at 13.6 TeV |
 | Lattice QCD | working: confinement, deconfinement, hadron masses (pion as Goldstone boson, κ_c = 0.1695 vs 0.1694 published) |
 | Electrons and nuclei | working: H–Kr (Sc fails its own check and is greyed out), molecules, truth mode (VMC, MLX and PyTorch) |
-| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`) reaches 10⁶ atoms, tested equal to `md.py`, not yet used by the experiments |
+| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`) reaches 10⁶ atoms, tested equal to `md.py`, not yet used by the experiments. **Copper**: grid converged, DFT lattice constant 3.548 Å; not yet labelled |
 | Everyday matter | working: the 1 cm³ block, 6.3 × 10²² atoms, 2.83 g, 2.29 kJ to melt |
 
 Results both machines can read are in `results/`. `HANDOFF.md` carries the detail and the
@@ -65,15 +65,16 @@ hard-won lessons; read it too.
 
 ## In flight
 
-- **Copper, blocked on grid convergence (Mac, running now).** Aluminium's h = 0.3 bohr does not
-  resolve copper's 3d states, and the failure is severe. Sliding the whole crystal by half a
-  grid step — which cannot change any physical energy — moves the computed energy by
-  **−335 meV/atom at h = 0.30** and **−15.7 meV/atom at h = 0.26**, with spurious forces of
-  2.7e-2 and 4.4e-3 Ha/bohr on a perfect crystal where every force is exactly zero. For scale,
-  the whole aluminium fit achieved 6.5 meV/atom. h = 0.22, 0.19, 0.16 are running
-  (`scratchpad/eggbox.py`, ~2 min per point). **Do not label copper until this lands**, and
-  re-time one copper label afterwards: copper needs ~3× aluminium's grid points and has 11
-  valence electrons against 3, so aluminium's 8-minute label is not the right estimate.
+- **Copper: grid chosen, lattice constant computed, ready to label (Mac, 2026-09-25).** The grid
+  error was copper's partial core density going through the nonlinear LDA on the plain grid, not
+  its 3d states. `PeriodicDFT(xc_grid=2)` evaluates XC on a 2× grid and cuts the half-step egg-box
+  from +15.6 to +0.56 meV/atom at h = 0.19. Copper's grid is **h = 0.19, xc_grid = 2**
+  (`dataset.GRID[29]`). Against h = 0.16 it holds displacement energies to 0.1 meV/atom, strain
+  energies to 1.2, forces to 2e-4 Ha/bohr; h = 0.22 misses strain by 9 meV/atom. Our own lattice
+  constant is **a₀ = 3.548 Å = 6.704 bohr**, B = 168 GPa (`results/cu_eos.json`, k = 10³ — k = 12 moves a volume difference by 0.075 meV/atom — fit
+  residuals ≤ 0.45 meV/atom). Build copper's training set around 6.704 bohr, not the measured
+  3.615 Å. The labeller refuses an element with no `GRID` entry, and copper's cache names include
+  its grid. Not yet done: timing one copper label at h = 0.19.
 - **Memory decides which h is usable (Windows, 2026-09-24).** Both DFT paths keep every
   k-point's wavefunctions resident (fp32: on the GPU in complex64; NumPy: in RAM in complex128,
   plus every k-point's projectors). For copper's 8-atom cells (3×7×7 k → 98 after time reversal,
@@ -99,9 +100,12 @@ hard-won lessons; read it too.
 
 ## What would help most
 
-1. **Finish copper**: pick h from the egg-box numbers, run the equation of state on the Mac in
-   float64 for copper's own lattice constant (it must come from our DFT, not from experiment),
-   then label on the Windows machine with `solver="torch"`, with ~5% NumPy cross-checks.
+1. **Label copper on the Windows machine** with `solver="torch"` (fp32 at h = 0.19 against
+   float64: −0.147 meV/atom, 1.1e-5 Ha/bohr). Use `initial_configurations(29, 6.704)`; the grid
+   comes from `dataset.GRID` by itself. Time one 4-atom and one 8-atom label first: at h = 0.19 an
+   8-atom cell needs ~3.4 GB of VRAM, so run one at a time. Then `scripts/cross_check.py 29` on the
+   Mac (float64, ~5%). `md_snapshots(..., Z=29, mass_amu=63.546)`; its temperatures were chosen
+   for aluminium.
 2. **Spin-polarised periodic DFT**, which unlocks iron, nickel and cobalt.
 3. **Use the GPU molecular dynamics.** `engine/materials/md_torch.py` (`EAMForceFieldTorch`,
    `MDTorch`) matches `md.py` to 1e-10 and reproduces its seeded trajectories; on the RTX 4050 a
@@ -134,6 +138,9 @@ commits; the messages carry the measurements.
 - **A cache key is not a portable name.** The same configuration hashed differently on the two
   machines (unpinned pickle protocol), and unwrapped positions meant a lattice-vector shift
   changed the key.
+- **The obvious suspect is not always the cause.** Copper's grid error looked like unresolved 3d
+  states; it was the partial core density in the XC functional. Wavefunction cutoffs did nothing,
+  removing the core correction took 15.6 meV/atom to 0.2. Switch pieces off one at a time.
 - **A variational energy below the exact answer is usually short-run noise**, not a bug: check
   by re-evaluating the *same* wavefunction far longer before theorising. (One agent theorised;
   the other's test was right.)
@@ -145,6 +152,15 @@ and add a dated line to the log. Keep it short: this file is a handover, not a d
 anything that is no longer true rather than appending a correction.
 
 ## Log
+
+- **2026-09-25, Mac (Claude).** Copper unblocked. Found the grid error's cause (partial core ×
+  nonlinear LDA; diagnosed by turning the pieces off one at a time) and added `xc_grid`, which is
+  bit-for-bit the old code at 1. Converged copper's grid (h = 0.19, xc_grid = 2) and computed its
+  lattice constant (3.548 Å, B 168 GPa). Grids are now per element in `dataset.GRID`; there is a
+  resumable `scripts/eos.py`, and copper appears in `validation/run.py` (no pass mark). Fixed the
+  GPU-MD tests on the Mac (MPS has no float64 → CPU). Recorded, not fixed: below h ≈ 0.19 the
+  absolute energy scatters by a few meV/atom with grid size, from the grid products |ψ|² and V·ψ
+  (see HANDOFF.md). Fast suite 117 passed.
 
 - **2026-09-24, Windows (Claude).** Did not label copper. Measured copper at finer grids on the fp32
   path (holds at h = 0.19; h = 0.16 NumPy check owed) and which spacings fit in memory (h = 0.16

@@ -125,9 +125,23 @@ machines silently named the same label differently.
   (`lda_xc(ρ/2, ρ/2)`), and iron's structure and elastic behaviour come from its ferromagnetism.
   Its pseudopotential passes (8 valence electrons, 9 meV transferability); what is missing is
   spin-polarised periodic DFT.
-- **Copper's pseudopotential passes** (11 valence electrons, 53 meV transferability, limit 150),
-  and the fp32 path handles its d projectors (above). Not yet checked: whether h = 0.3 bohr, chosen
-  for aluminium, converges copper's more localised d states. That grid convergence comes first.
+- **Copper's grid is h = 0.19 bohr with exchange–correlation on a 2× grid** (`dataset.GRID`,
+  `PeriodicDFT(xc_grid=2)`). Its grid error was not the 3d wavefunctions. It was the partial core
+  density (11 electrons, following the true 3s3p core in to ~0.3 bohr) put through the nonlinear
+  LDA on the plain grid, whose harmonics fold back onto the grid by an amount that depends on where
+  the atoms sit. Sliding a perfect crystal half a grid step moved the energy +15.6 meV/atom at
+  h = 0.19; with XC on a 2× grid, +0.56 (0.3–0.4 at h = 0.22–0.26). Against h = 0.16, h = 0.19 gets
+  displacement energies to 0.1 meV/atom, strain energies to 1.2, and forces to 2e-4 Ha/bohr.
+  h = 0.22 misses the strain energy by 9 meV/atom and h = 0.30 is wrong outright (a second grid
+  error of ~90 meV/atom that the finer XC grid does not touch).
+- **Below h ≈ 0.19 the grid does not converge further in absolute energy.** At fixed cell, E(N)
+  scatters by a few meV/atom without trend. That scatter comes from the grid products |ψ|² and V·ψ
+  (the wavefunctions fill the whole FFT cube). Removing the core correction, or the local
+  potential's or projectors' high-q tails, leaves it unchanged. The standard cure is wavefunctions
+  inside a sphere of radius gmax/2 (a plane-wave energy cutoff): tried, it converges better but is
+  45× slower at the grid it needs. For labels this matters only between cells of different sizes,
+  and is inside the 1.2 meV/atom above. It is the thing to fix before asking for better than
+  ~1 meV/atom, and it would also give the same basis quality in every cell shape.
 
 ## Conventions
 

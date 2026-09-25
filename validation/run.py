@@ -82,8 +82,22 @@ def main(quick: bool = False, part: str = "all") -> None:
     print(f"Wrote {OUT}")
 
 
+def copper_section() -> None:
+    """Copper's crystal from this engine's own DFT (scripts/eos.py), against measurement. No pass
+    mark yet: no bound was set before the numbers existed, and one chosen afterwards is no test."""
+    path = Path(__file__).resolve().parents[1] / "results" / "cu_eos.json"
+    if not path.exists():
+        return
+    d = json.loads(path.read_text())
+    section(f"Copper: fcc crystal from periodic LDA DFT (h = {d['h']}, XC grid ×{d['xc_grid']}, k = {d['k']}³)")
+    record("materials", "Cu lattice constant (static lattice)", d["a0_A"], 3.603, "Å",
+           "exp. 3.615 at 293 K, 3.603 at 0 K; LDA is usually 1–3% short")
+    record("materials", "Cu bulk modulus", d["B_GPa"], 142.0, "GPa", "exp. 0 K; LDA is usually stiff")
+
+
 def materials_section() -> None:
     """Aluminium: what the learned forces and the continuum block produce, against measurement."""
+    copper_section()
     from engine.materials.continuum import REFERENCE, Block, derived_aluminium
     d = derived_aluminium()
     if d is None:
