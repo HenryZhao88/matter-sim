@@ -74,7 +74,11 @@ hard-won lessons; read it too.
   constant is **a₀ = 3.548 Å = 6.704 bohr**, B = 168 GPa (`results/cu_eos.json`, k = 10³ — k = 12 moves a volume difference by 0.075 meV/atom — fit
   residuals ≤ 0.45 meV/atom). Build copper's training set around 6.704 bohr, not the measured
   3.615 Å. The labeller refuses an element with no `GRID` entry, and copper's cache names include
-  its grid. Not yet done: timing one copper label at h = 0.19.
+  its grid. **First copper label done (Windows, 2026-09-25):** the compressed fcc-volume cell
+  (a × 0.90, 8³ k → 256, h 0.19, xc_grid 2) in 732 s on fp32, 15 SCF iterations, peak 2.0 GB VRAM
+  and 1.3 GB RAM. The 8-atom attempt was stopped by Claude Code's low-memory guard before its first
+  memory sample, so it is untimed. On Windows, "commit" tracks GPU memory one for one (a 4-atom
+  label shows ~5.6 GB committed with 1.3 GB actually in RAM): watch the working set, not commit.
 - **Memory decides which h is usable (Windows, 2026-09-24).** Both DFT paths keep every
   k-point's wavefunctions resident (fp32: on the GPU in complex64; NumPy: in RAM in complex128,
   plus every k-point's projectors). For copper's 8-atom cells (3×7×7 k → 98 after time reversal,
@@ -100,12 +104,13 @@ hard-won lessons; read it too.
 
 ## What would help most
 
-1. **Label copper on the Windows machine** with `solver="torch"` (fp32 at h = 0.19 against
-   float64: −0.147 meV/atom, 1.1e-5 Ha/bohr). Use `initial_configurations(29, 6.704)`; the grid
-   comes from `dataset.GRID` by itself. Time one 4-atom and one 8-atom label first: at h = 0.19 an
-   8-atom cell needs ~3.4 GB of VRAM, so run one at a time. Then `scripts/cross_check.py 29` on the
-   Mac (float64, ~5%). `md_snapshots(..., Z=29, mass_amu=63.546)`; its temperatures were chosen
-   for aluminium.
+1. **Label copper's crystal set on the Windows machine:** `uv run python scripts/label_crystal.py
+   29 6.704 torch` (71 configurations, resumable, one at a time; 1 of 71 done). A 4-atom label is
+   ~8–12 min, so ~9 h for the 4-atom and bcc cells plus the 16 untimed 8-atom cells. On this
+   laptop (idle RAM ~2 GB) Claude Code's low-memory guard stops long GPU jobs it starts; run from a
+   plain terminal instead, where it does not apply. Then `scripts/cross_check.py 29` on the Mac
+   (float64, ~5%), a seed fit, and `md_snapshots(..., Z=29, mass_amu=63.546)` with temperatures
+   chosen for copper (the defaults were aluminium's).
 2. **Spin-polarised periodic DFT**, which unlocks iron, nickel and cobalt.
 3. **Use the GPU molecular dynamics.** `engine/materials/md_torch.py` (`EAMForceFieldTorch`,
    `MDTorch`) matches `md.py` to 1e-10 and reproduces its seeded trajectories; on the RTX 4050 a
@@ -153,6 +158,11 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-25, Windows (Claude).** Started copper labelling: 1 of 71 crystal configurations done
+  (732 s, fp32, h 0.19 / xc_grid 2); the first 8-atom label was stopped by the low-memory guard.
+  Added `scripts/label_crystal.py` (element-generic, resumable). Found that on Windows committed
+  memory tracks GPU allocations, so RAM caps must use the working set. Fast crystal and materials
+  tests pass on CUDA with the Mac's xc_grid changes (27 passed).
 - **2026-09-25, Mac (Claude).** Copper unblocked. Found the grid error's cause (partial core ×
   nonlinear LDA; diagnosed by turning the pieces off one at a time) and added `xc_grid`, which is
   bit-for-bit the old code at 1. Converged copper's grid (h = 0.19, xc_grid = 2) and computed its
