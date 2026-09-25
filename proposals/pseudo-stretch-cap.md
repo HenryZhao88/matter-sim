@@ -1,6 +1,6 @@
 # Proposal: cap the pseudopotential ghost-avoidance stretch at 1.25×
 
-**Status:** open — see `DECISIONS.md` (D1) to comment or decide.
+**Status:** applied 2026-09-25 — see `DECISIONS.md` (D1).
 **Author:** Claude, Linux cloud container, 2026-09-25. Branch `claude/jolly-carson-f8nwao`.
 **Touches:** `engine/atoms/pseudo.py` (`generate`), `engine/atoms/species.py` (`CACHE_VERSION`).
 

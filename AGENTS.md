@@ -57,7 +57,7 @@ result disagrees with nature, say so and leave it disagreeing.
 | Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, pp at 13.6 TeV |
 | Lattice QCD | working: confinement, deconfinement, hadron masses (pion as Goldstone boson, κ_c = 0.1695 vs 0.1694 published) |
 | Electrons and nuclei | working: H–Kr (Sc fails its own check and is greyed out), molecules, truth mode (VMC, MLX and PyTorch) |
-| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`) reaches 10⁶ atoms, tested equal to `md.py`, not yet used by the experiments. Spin-polarised periodic DFT built; iron blocked on its pseudopotential. **Copper**: grid converged, DFT lattice constant 3.548 Å; not yet labelled |
+| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`) reaches 10⁶ atoms, tested equal to `md.py`, not yet used by the experiments. Spin-polarised periodic DFT built; iron's pseudopotential fixed (D1), its grid not yet converged. **Copper**: grid converged, DFT lattice constant 3.548 Å; not yet labelled |
 | Everyday matter | working: the 1 cm³ block, 6.3 × 10²² atoms, 2.83 g, 2.29 kJ to melt |
 
 Results both machines can read are in `results/`. `HANDOFF.md` carries the detail and the
@@ -115,8 +115,11 @@ hard-won lessons; read it too.
   potentials' band structures agree to 0.02 Ha, so the error is in the energy's volume
   dependence. `scripts/pp_check.py` reproduces all of it. **Lesson: a pseudopotential is not
   validated until a solid's E(V) has been looked at.** Copper's (1.25×) is fine, as its EOS shows.
-  **Proposed fix, awaiting decision:** `DECISIONS.md` D1 (cap the stretch at 1.25×; details and
-  costs in `proposals/pseudo-stretch-cap.md`). Comment there.
+  **Fixed (D1, applied 2026-09-25, Mac):** the stretch is capped at 1.25× and the pseudopotential
+  cache is v5, so every machine regenerates on first use (a few minutes for Ti–Fe; the rest come
+  back identical). Iron is now the 1.25× s-local potential with a minimum near a ≈ 2.75 Å. V, Cr
+  and Mn changed too and are **not checked in a solid**. Ti and (on the Mac) V now fail their
+  free-atom check. **Pseudopotentials for V/Mn differ between machines:** `DECISIONS.md` D2.
 
 ## What would help most
 
@@ -137,8 +140,8 @@ hard-won lessons; read it too.
    - After it: `scripts/cross_check.py 29` in float64 (~5%, per tag), a seed fit, then
      `md_snapshots(..., Z=29, mass_amu=63.546)` with temperatures chosen for copper (the defaults
      were aluminium's).
-2. **Iron, then nickel and cobalt**, on the spin-polarised DFT — after iron has a pseudopotential
-   whose solid E(V) has a minimum (above). Then `scripts/fe_magnetism.py` (resumable, all phases;
+2. **Iron, then nickel and cobalt**, on the spin-polarised DFT. Iron's pseudopotential now has a
+   minimum in the solid (D1). First converge iron's grid, then run `scripts/fe_magnetism.py` (resumable, all phases;
    clear `.cache/fe_magnetism` first) and the validation rows it feeds. Choose iron's grid like
    copper's (egg-box and strain energies against h). Port spin to `periodic_torch.py` before
    labelling a magnetic metal on the GPU.
@@ -187,6 +190,11 @@ and add a dated line to the log. Keep it short: this file is a handover, not a d
 anything that is no longer true rather than appending a correction.
 
 ## Log
+
+- **2026-09-25, Mac (Claude).** Decided and applied D1 at the human's request, after reproducing
+  iron's E(V) here (to 0.01 mHa). Pseudopotentials regenerated as v5: only Ti–Fe changed, copper
+  bit for bit identical. Opened D2: the generator gives different V/Mn (Ti, Fe) pseudopotentials
+  on different machines, probably from the unconverged all-electron reference atom.
 
 - **2026-09-25, Linux cloud container (Claude; 4 cores, 15 GB, no GPU, ephemeral).** Checked
   this file against the code (held). Built spin-polarised periodic DFT (merged with main's

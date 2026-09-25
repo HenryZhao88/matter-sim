@@ -18,7 +18,7 @@ from pathlib import Path
 from .pseudo import GHOST_TOL, Pseudopotential, generate, ghost_check, verify, worst_transfer
 
 CACHE_DIR = Path(__file__).resolve().parents[2] / ".cache" / "pseudo"
-CACHE_VERSION = 4
+CACHE_VERSION = 5
 TRANSFER_TOL_EV = 0.15      # largest allowed AE–PS difference in excitation energies
 
 

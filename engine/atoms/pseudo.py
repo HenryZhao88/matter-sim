@@ -284,8 +284,11 @@ def generate(Z: int, rc: dict[int, float] | None = None, l_local: int | None = N
     base = rc or DEFAULT_RC[Z]
     base = base if isinstance(base, dict) else {0: base, 1: base, 2: base}
     ghostly, clean = [], []
-    # a softer local potential (its channel pseudised further out) removes most ghosts
-    for scale in (1.0, 1.25, 1.5):
+    # a softer local potential (its channel pseudised further out) removes most ghosts. Not past
+    # 1.25x: at 1.5x the 3d metals' s radius reached 3.45-3.76 bohr, neighbouring cores overlapped by
+    # half in the solid, and iron's passed every free-atom test yet had no energy minimum in bcc
+    # (E rising 17 mHa/atom per 8 bohr^3 from 56 to 80). DECISIONS.md D1.
+    for scale in (1.0, 1.25):
         for cand in [first] + [l for l in (0, 1, 2) if l != first]:
             rcs = dict(base)
             rcs[cand] = base[cand] * scale
