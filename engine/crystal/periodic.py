@@ -143,7 +143,7 @@ class CrystalResult:
 
 class PeriodicDFT:
     def __init__(self, crystal: Crystal, h: float = 0.3, kmesh: int | tuple = 6, T_e: float = 0.005,
-                 symmetry: bool = True, extra_bands: int = 6, smearing: str = "fd",
+                 symmetry: bool = True, extra_bands: int = 6, smearing: str = "fd", xc_grid: int = 1,
                  spin: bool = False, moments=None) -> None:
         """``spin``: collinear spin-polarised DFT (LSDA), one chemical potential for both spins, so the
         magnetisation is free and comes out of the SCF. ``moments`` (Bohr magnetons per atom) is only
@@ -152,6 +152,7 @@ class PeriodicDFT:
         if moments is not None and not spin:
             raise ValueError("starting moments need spin=True")
         self.c = crystal
+        self.xc_grid = int(xc_grid)
         self.T_e = T_e
         self.smearing = smearing
         self.nspin = 2 if spin else 1
@@ -164,6 +165,7 @@ class PeriodicDFT:
         self.G2 = np.sum(self.G ** 2, axis=-1)
         gmax = min(np.pi * n / L for n, L in zip(self.N, crystal.cell))
         self.filter = np.exp(-36.0 * np.minimum(np.sqrt(self.G2) / gmax, 1.5) ** 36)
+        self._setup_xc_grid()
         labels = None if self.moments is None else [(Z, round(float(m), 6)) for Z, m in zip(crystal.charges, self.moments)]
         self.ops = crystal_symmetries(crystal, labels=labels) if symmetry else [((0, 1, 2), (1, 1, 1))]
         self.kpts, self.wk = kpoint_mesh(crystal, kmesh, self.ops)
@@ -171,11 +173,80 @@ class PeriodicDFT:
         self._form_factors()
         self._rng = np.random.default_rng(0)
 
+    def _setup_xc_grid(self) -> None:
+        """A grid ``xc_grid`` times finer on which exchange–correlation is evaluated.
+
+        LDA is a nonlinear function of the density, so on a grid it makes Fourier components
+        beyond the grid's reach, which fold back (alias) onto the ones it keeps. Where the density
+        is smooth that is harmless; a partial core density (copper's 3s3p core, carried into LDA as
+        the nonlinear core correction) is sharp, and the folded part depends on where the atoms sit
+        relative to the grid points. Measured on fcc Cu, 4 atoms, h = 0.19: sliding the crystal by
+        half a grid step moved the energy by +15.6 meV/atom with the core correction and −0.2
+        without it. Evaluating XC on a finer grid (the density interpolated exactly, the core
+        density built there at its own higher resolution, the potential brought back by Fourier
+        truncation) removes the folding without touching the physics; 1 keeps the plain grid."""
+        self.Nf = tuple(n * self.xc_grid for n in self.N)
+        self.Nftot = int(np.prod(self.Nf))
+        self.dVf = self.c.volume / self.Nftot
+        # where each coarse Fourier component lives on the fine grid
+        self._fine_idx = np.ix_(*[np.round(np.fft.fftfreq(n) * n).astype(int) % (n * self.xc_grid) for n in self.N])
+        if self.xc_grid > 1:
+            gs = [2 * np.pi * np.fft.fftfreq(n, d=L / n) for n, L in zip(self.Nf, self.c.cell)]
+            self.Gf = np.stack(np.meshgrid(*gs, indexing="ij"), axis=-1)
+            gmaxf = min(np.pi * n / L for n, L in zip(self.Nf, self.c.cell))
+            self.filter_f = np.exp(-36.0 * np.minimum(np.linalg.norm(self.Gf, axis=-1) / gmaxf, 1.5) ** 36)
+        else:
+            self.Gf, self.filter_f = self.G, self.filter
+
+    def _to_fine(self, f):
+        """A coarse-grid field, Fourier-interpolated onto the XC grid."""
+        if self.xc_grid == 1:
+            return f
+        g = np.zeros(self.Nf, complex)
+        g[self._fine_idx] = np.fft.fftn(f) / f.size
+        return np.real(np.fft.ifftn(g) * self.Nftot)
+
+    def _to_coarse(self, ff):
+        """An XC-grid field, Fourier-truncated back onto the coarse grid."""
+        if self.xc_grid == 1:
+            return ff
+        g = (np.fft.fftn(ff) / self.Nftot)[self._fine_idx]
+        return np.real(np.fft.ifftn(g) * self.Ntot)
+
+    def _xc(self, rho):
+        """(E_xc, v_xc on the coarse grid, v_xc on the XC grid) for valence density ``rho``."""
+        rx = self._to_fine(rho) + self.rho_core
+        exc, vxc_f, _ = lda_xc(rx / 2, rx / 2)
+        return float(np.sum(exc) * self.dVf), self._to_coarse(vxc_f), vxc_f
+
+    def _xc_spin(self, rho):
+        """As _xc for (ρ↑, ρ↓): (E_xc, (v↑, v↓) on the coarse grid, (v↑, v↓) on the XC grid). The
+        partial core counts half to each spin."""
+        ru = self._to_fine(rho[0]) + self.rho_core / 2
+        rd = self._to_fine(rho[1]) + self.rho_core / 2
+        exc, vu_f, vd_f = lda_xc(ru, rd)
+        return float(np.sum(exc) * self.dVf), (self._to_coarse(vu_f), self._to_coarse(vd_f)), (vu_f, vd_f)
+
+    def _core_forces(self, rho, vxc_f=None):
+        """−∫ v_xc ∂ρ_core/∂R_I, on the XC grid, where the core density lives. ``vxc_f``: the xc
+        potential the core feels there (default: the unpolarised one of ``rho``)."""
+        c = self.c
+        F = np.zeros((len(c.charges), 3))
+        if not self.core_q:
+            return F
+        vg = np.fft.fftn(self._xc(rho)[2] if vxc_f is None else vxc_f) / self.Nftot
+        for i, (Z, R) in enumerate(zip(c.charges, c.positions)):
+            if Z in self.core_q:
+                cI = self.core_q[Z] * np.exp(-1j * (self.Gf @ R)) * self.filter_f
+                F[i] -= np.real(np.sum(np.conj(vg)[..., None] * (-1j * self.Gf) * cI[..., None], axis=(0, 1, 2)))
+        return F
+
     # -------------------------------------------------------------- ions
     def _form_factors(self) -> None:
         c = self.c
         q = np.sqrt(self.G2)
-        qtab = np.linspace(0, q.max() * 1.001 + 1, 3000)
+        qf = np.linalg.norm(self.Gf, axis=-1) if self.xc_grid > 1 else q
+        qtab = np.linspace(0, qf.max() * 1.001 + 1, 3000 * self.xc_grid)
         self.pp = {Z: species.pseudopotential(Z) for Z in set(c.charges)}
         self.vloc_q: dict = {}
         self.proj_tab: dict = {}
@@ -190,7 +261,7 @@ class PeriodicDFT:
             for l in pp.nonlocal_channels:
                 self.proj_tab[(Z, l)] = (qtab, pp.projector_q(l, qtab))
             if pp.rho_core is not None:
-                self.core_q[Z] = np.interp(q, qtab, pp.core_density_q(qtab))
+                self.core_q[Z] = np.interp(qf, qtab, pp.core_density_q(qtab))
         self._set_local()
 
     def _set_local(self) -> None:
@@ -203,11 +274,11 @@ class PeriodicDFT:
         self.Vloc = np.real(np.fft.ifftn(Vg) * self.Ntot)
         self.rho_core = 0.0
         if self.core_q:
-            Cg = np.zeros(self.N, complex)
+            Cg = np.zeros(self.Nf, complex)
             for Z, R in zip(c.charges, c.positions):
                 if Z in self.core_q:
-                    Cg += self.core_q[Z] * np.exp(-1j * (self.G @ R))
-            self.rho_core = np.real(np.fft.ifftn(Cg * self.filter / c.volume) * self.Ntot)
+                    Cg += self.core_q[Z] * np.exp(-1j * (self.Gf @ R))
+            self.rho_core = np.real(np.fft.ifftn(Cg * self.filter_f / c.volume) * self.Nftot)
         self.E_ewald, self.F_ewald = ewald(c)
 
     def _projectors(self, k, keep_g: bool = False):
@@ -281,8 +352,7 @@ class PeriodicDFT:
         converged = False
         for it in range(1, max_iter + 1):
             vh = self._hartree(rho)
-            rx = rho + self.rho_core                         # + partial core (nonlinear core correction)
-            _, vxc, _ = lda_xc(rx / 2, rx / 2)
+            _, vxc, _ = self._xc(rho)                        # with the partial core (nonlinear core correction)
             Veff = self.Vloc + vh + vxc
             evals = []
             for ik, k in enumerate(self.kpts):
@@ -336,7 +406,7 @@ class PeriodicDFT:
         converged = False
         for it in range(1, max_iter + 1):
             vh = self._hartree(rho[0] + rho[1])
-            _, vu, vd = lda_xc(*self._spin_xc_input(rho))
+            _, (vu, vd), _ = self._xc_spin(rho)
             evals = [[], []]
             for s, vxc in enumerate((vu, vd)):
                 Veff = self.Vloc + vh + vxc
@@ -392,10 +462,6 @@ class PeriodicDFT:
             m = np.clip(np.real(np.fft.ifftn(mg) * self.Ntot) / c.volume, -0.9 * n, 0.9 * n)
         return np.stack([(n + m) / 2, (n - m) / 2])
 
-    def _spin_xc_input(self, rho):
-        """(ρ↑, ρ↓) for exchange–correlation: the partial core counts half to each spin."""
-        return rho[0] + self.rho_core / 2, rho[1] + self.rho_core / 2
-
     def _mix_spin(self, rho_in, rho_out, hist_x, hist_f, beta=0.3, q0=1.2, keep=7):
         """Pulay mixing of (ρ, m = ρ↑ − ρ↓): Kerker-preconditioned for the charge, as in _mix; plain
         for the magnetisation, which is no long-range Coulomb field and whose total (G = 0) must move."""
@@ -424,15 +490,15 @@ class PeriodicDFT:
             k_s, e_s = self._band_terms(U[s], occ[s], projs, 1)
             kin += k_s
             enl += e_s
-        exc = float(np.sum(lda_xc(*self._spin_xc_input(rho))[0]) * self.dV)
+        exc = self._xc_spin(rho)[0]
         return self._energy_terms(rho[0] + rho[1], kin, enl, exc)
 
     def _forces_spin(self, rho, U, occ):
         v_core = None
         if self.core_q:
             # E_xc(ρ↑ + ρc/2, ρ↓ + ρc/2): the core density moves both spins' share at once
-            _, vu, vd = lda_xc(*self._spin_xc_input(rho))
-            v_core = 0.5 * (vu + vd)
+            vu_f, vd_f = self._xc_spin(rho)[2]
+            v_core = 0.5 * (vu_f + vd_f)
         return self._forces_from(rho[0] + rho[1], v_core, [(U[0], occ[0], 1), (U[1], occ[1], 1)])
 
     def _hartree(self, rho):
@@ -476,9 +542,7 @@ class PeriodicDFT:
 
     def _energy(self, rho, U, occ, projs):
         kin, enl = self._band_terms(U, occ, projs, 2)
-        rx = rho + self.rho_core
-        exc = float(np.sum(lda_xc(rx / 2, rx / 2)[0]) * self.dV)
-        return self._energy_terms(rho, kin, enl, exc)
+        return self._energy_terms(rho, kin, enl, self._xc(rho)[0])
 
     def _band_terms(self, U, occ, projs, g):
         """Kinetic and nonlocal energy of the occupied bands; g states per band (2, or 1 per spin)."""
@@ -505,14 +569,11 @@ class PeriodicDFT:
                 "ion_ion": self.E_ewald}
 
     def _forces(self, rho, U, occ, projs):
-        v_core = None
-        if self.core_q:
-            rx = rho + self.rho_core
-            _, v_core, _ = lda_xc(rx / 2, rx / 2)
-        return self._forces_from(rho, v_core, [(U, occ, 2)])
+        return self._forces_from(rho, None, [(U, occ, 2)])
 
     def _forces_from(self, rho, v_core, bands):
-        """Forces from the total density, the xc potential the partial core feels (v_core), and
+        """Forces from the total density, the xc potential the partial core feels on the XC grid
+        (v_core; None for the unpolarised one), and
         ``bands``: (U, occ, states per band) for each spin channel."""
         c = self.c
         F = self.F_ewald.copy()
@@ -522,12 +583,7 @@ class PeriodicDFT:
             # E_loc = Σ_G conj(ρ_G) v_I(G): dE/dR = Σ conj(ρ_G)(−iG) v_I
             dE = np.real(np.sum(np.conj(rg)[..., None] * (-1j * self.G) * vI[..., None], axis=(0, 1, 2)))
             F[i] -= dE
-        if self.core_q:
-            vg = np.fft.fftn(v_core) / self.Ntot
-            for i, (Z, R) in enumerate(zip(c.charges, c.positions)):
-                if Z in self.core_q:
-                    cI = self.core_q[Z] * np.exp(-1j * (self.G @ R)) * self.filter
-                    F[i] -= np.real(np.sum(np.conj(vg)[..., None] * (-1j * self.G) * cI[..., None], axis=(0, 1, 2)))
+        F += self._core_forces(rho, v_core)
         for ik, k in enumerate(self.kpts):
             # the G-space projector forms are needed only here, so rebuild them one k at a time
             B, Fs, E, atom = self._projectors(k, keep_g=True)

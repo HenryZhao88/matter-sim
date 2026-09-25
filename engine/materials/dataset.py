@@ -24,6 +24,14 @@ CACHE = Path(__file__).resolve().parents[2] / ".cache" / "materials"
 K_SPACING = 45.0    # bohr: k-mesh n ≈ K_SPACING / L along each axis (≈ 7 meV/atom converged, uniform
                     # across cells; 26 bohr left ~30 meV/atom errors that differed from cell to cell)
 T_E = 0.01          # Ha, Fermi–Dirac smearing of the labels
+# Real-space grid per element: spacing h (bohr) and how much finer the exchange–correlation grid is.
+# Aluminium's was chosen for aluminium; copper's partial core density needs XC on a finer grid (see
+# PeriodicDFT._setup_xc_grid). An element absent here has not had its grid converged: not labelled.
+# Copper (fcc, 4 atoms, 3x3x3 k), h = 0.19 against 0.16: displacement energy 17.84 vs 17.74 meV/atom,
+# strain energy (a x 1.04) 106.2 vs 107.4, forces within 2e-4 Ha/bohr; half-step egg-box +0.56 meV/atom.
+# h = 0.22 misses the strain energy by 9 meV/atom, h = 0.30 by 70. 0.19 is also the finest spacing
+# whose 8-atom cells fit in memory on both machines.
+GRID = {13: {"h": 0.3, "xc_grid": 1}, 29: {"h": 0.19, "xc_grid": 2}}
 
 
 def _kmesh(cell):
@@ -42,9 +50,17 @@ def _label_or_none(conf: dict, solver: str = "numpy"):
         return None
 
 
+def grid_settings(charges) -> dict:
+    """The element's converged grid (see GRID); refuses an element whose grid nobody has converged."""
+    zs = sorted({int(z) for z in charges})
+    if len(zs) != 1 or zs[0] not in GRID:
+        raise ValueError(f"no converged DFT grid for elements {zs}: measure one before labelling (GRID)")
+    return dict(GRID[zs[0]])
+
+
 def _solver(name: str, c: Crystal):
     """The DFT path, and the provenance it leaves in the label."""
-    kw = dict(h=0.3, kmesh=_kmesh(c.cell), T_e=T_E, symmetry=False)
+    kw = dict(**grid_settings(c.charges), kmesh=_kmesh(c.cell), T_e=T_E, symmetry=False)
     if name == "numpy":
         return PeriodicDFT(c, **kw), {"solver": "numpy", "precision": "float64", "device": "cpu"}
     if name == "torch":
@@ -71,8 +87,12 @@ def cache_key(conf: dict) -> str:
     It hashes the cell, the charges and the positions wrapped into the cell, so an atom moved by
     a lattice vector (the same crystal) does not get a new name, and the pickle protocol is pinned
     (Python 3.14 changed the default, and the Mac and Windows once named every label differently)."""
-    return hashlib.sha1(pickle.dumps(("v2", np.round(conf["cell"], 6).tolist(), [int(z) for z in conf["charges"]],
-                                      _wrapped_fractions(conf), K_SPACING, T_E), protocol=4)).hexdigest()[:16]
+    key = ("v2", np.round(conf["cell"], 6).tolist(), [int(z) for z in conf["charges"]],
+           _wrapped_fractions(conf), K_SPACING, T_E)
+    g = GRID.get(int(conf["charges"][0]))
+    if g is not None and g != GRID[13]:
+        key += (g["h"], g["xc_grid"])       # aluminium's names predate this and keep their form
+    return hashlib.sha1(pickle.dumps(key, protocol=4)).hexdigest()[:16]
 
 
 def legacy_cache_key(conf: dict) -> str:
@@ -108,7 +128,8 @@ def label(conf: dict, solver: str = "numpy") -> dict:
         raise NotConverged(f"{conf.get('tag', '')}: SCF not converged in {r.iterations} iterations")
     out = {"cell": c.cell, "charges": c.charges, "positions": c.positions,
            "energy": r.free_energy, "forces": r.forces, "converged": r.converged, "tag": conf.get("tag", ""),
-           "kspacing": K_SPACING, "T_e": T_E, **provenance, "scf_iterations": r.iterations}
+           "kspacing": K_SPACING, "T_e": T_E, **grid_settings(c.charges), **provenance,
+           "scf_iterations": r.iterations}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(pickle.dumps(out))
     return out

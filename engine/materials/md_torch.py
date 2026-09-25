@@ -27,6 +27,8 @@ class EAMForceFieldTorch:
     def __init__(self, model: EAM, device: str | None = None, dtype=torch.float64, chunk: int = 32768) -> None:
         self.m = model
         self.dev = torch.device(device or torch_device())
+        if self.dev.type == "mps" and dtype == torch.float64:
+            self.dev = torch.device("cpu")          # MPS has no float64; the CPU does it instead
         self.dt = dtype
         self.chunk = chunk
         t = model.tabulate(6000)

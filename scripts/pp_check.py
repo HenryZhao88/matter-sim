@@ -4,7 +4,7 @@
         every candidate pseudo.generate's ghost-avoidance loop tries for Z (local channel x radius
         scale), with its ghost and free-atom transferability checks; each is pickled to
         .cache/pp_check/ for the next command. Nothing is written to .cache/pseudo.
-    uv run python scripts/pp_check.py eos Z kind h k default|<pickle> V1 V2 ...
+    uv run python scripts/pp_check.py eos Z kind h k xc_grid default|<pickle> V1 V2 ...
         energy per atom at each volume (bohr³/atom) and the successive differences: a sound
         potential gives a convex curve with its minimum inside the scan.
 
@@ -50,7 +50,7 @@ def candidates(Z: int) -> None:
             print(json.dumps(dict(rec, pickle=str(path))), flush=True)
 
 
-def eos(Z: int, kind: str, h: float, k: int, which: str, vols: list[float]) -> None:
+def eos(Z: int, kind: str, h: float, k: int, xc_grid: int, which: str, vols: list[float]) -> None:
     from engine.atoms import species
     if which != "default":
         pp = pickle.loads(Path(which).read_bytes())
@@ -61,7 +61,7 @@ def eos(Z: int, kind: str, h: float, k: int, which: str, vols: list[float]) -> N
     E = []
     for v in vols:
         a = (n * v) ** (1 / 3)
-        r = PeriodicDFT(cubic(kind, a, Z), h=h, kmesh=k, smearing="mp", T_e=0.01).run(max_iter=100)
+        r = PeriodicDFT(cubic(kind, a, Z), h=h, kmesh=k, smearing="mp", T_e=0.01, xc_grid=xc_grid).run(max_iter=100)
         E.append(r.energy / n)
         print(json.dumps(dict(Z=Z, pp=which, v=v, a_A=round(a * 0.529177, 4), E=r.energy / n,
                               converged=r.converged, seconds=round(r.seconds))), flush=True)
@@ -73,4 +73,4 @@ if __name__ == "__main__":
     if cmd == "candidates":
         candidates(int(a[0]))
     else:
-        eos(int(a[0]), a[1], float(a[2]), int(a[3]), a[4], [float(x) for x in a[5:]])
+        eos(int(a[0]), a[1], float(a[2]), int(a[3]), int(a[4]), a[5], [float(x) for x in a[6:]])

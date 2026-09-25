@@ -41,6 +41,57 @@ def test_periodic_forces_match_energy_slope():
         assert r0.forces[atom, axis] == pytest.approx(-slope, rel=0.05, abs=2e-4)
 
 
+def test_xc_grid_interpolates_exactly_and_returns_what_it_was_given():
+    """The finer XC grid holds the same band-limited density, not an approximation of it."""
+    s = PeriodicDFT(cubic("fcc", 7.6, 13), h=0.6, kmesh=1, xc_grid=2)
+    L, N = s.c.cell[0], s.N[0]
+    x = np.arange(N) * L / N
+    f = 1.0 + 0.3 * np.cos(2 * np.pi * 3 * x / L)[:, None, None] * np.sin(2 * np.pi * 2 * x / L)[None, :, None] \
+        + 0.1 * np.cos(2 * np.pi * 5 * x / L)[None, None, :]
+    xf = np.arange(2 * N) * L / (2 * N)
+    exact = 1.0 + 0.3 * np.cos(2 * np.pi * 3 * xf / L)[:, None, None] * np.sin(2 * np.pi * 2 * xf / L)[None, :, None] \
+        + 0.1 * np.cos(2 * np.pi * 5 * xf / L)[None, None, :]
+    assert np.abs(s._to_fine(f) - exact).max() < 1e-12
+    assert np.abs(s._to_coarse(s._to_fine(f)) - f).max() < 1e-12
+
+
+@pytest.mark.slow
+def test_copper_forces_match_energy_slope_with_xc_on_a_finer_grid():
+    """The core-correction force is taken on the XC grid, where the core density lives."""
+    rng = np.random.default_rng(3)
+    base = cubic("fcc", 6.83, 29)
+    pos = base.positions + rng.normal(0, 0.15, base.positions.shape)
+    def run(p):
+        return PeriodicDFT(Crystal(base.cell, base.charges, p), h=0.35, kmesh=1, symmetry=False,
+                           xc_grid=2).run(forces=True, tol=1e-8)
+    r0 = run(pos)
+    eps = 0.01
+    for atom, axis in ((1, 0), (2, 2)):
+        pp, pm = pos.copy(), pos.copy()
+        pp[atom, axis] += eps
+        pm[atom, axis] -= eps
+        slope = (run(pp).free_energy - run(pm).free_energy) / (2 * eps)
+        assert r0.forces[atom, axis] == pytest.approx(-slope, rel=0.02, abs=5e-4)
+
+
+@pytest.mark.slow
+def test_xc_on_a_finer_grid_removes_copper_egg_box():
+    """Sliding a perfect crystal cannot change its energy. On copper it did, by tens of meV/atom:
+    the partial core density, sharp, run through the nonlinear LDA on the plain grid. Measured at
+    h = 0.19, 2x2x2 k: +15.6 meV/atom (xc_grid=1) against +0.56 (xc_grid=2). Here (h = 0.26, Γ):
+    5.83 against 0.135. The bound is half the 1 meV/atom a label may be off by."""
+    a, H = 3.61 / 0.529177210903, 0.26
+    def energy(shift, xg):
+        c = cubic("fcc", a, 29)
+        N = PeriodicDFT(c, h=H, kmesh=1).N[0]
+        c.positions = c.positions + shift * (a / N) * np.array([1.0, 0.7, 0.3])
+        return PeriodicDFT(c, h=H, kmesh=1, T_e=0.01, symmetry=False, xc_grid=xg).run().free_energy / 4 * 27211.386
+    plain = abs(energy(0.5, 1) - energy(0.0, 1))
+    fine = abs(energy(0.5, 2) - energy(0.0, 2))
+    assert plain > 20 * fine
+    assert fine < 0.5
+
+
 @pytest.mark.slow
 def test_aluminium_chooses_fcc():
     e = {k: PeriodicDFT(cubic(k, (115.0 * n) ** (1 / 3), 13), kmesh=8).run().energy / n
@@ -65,6 +116,21 @@ def test_spin_polarised_dft_without_a_starting_moment_is_the_unpolarised_one():
     got = PeriodicDFT(c, spin=True, **kw).run()
     assert got.converged and got.moment == 0 and got.abs_moment == 0
     assert got.free_energy == pytest.approx(ref.free_energy, abs=1e-9)
+
+
+@pytest.mark.slow
+def test_spin_polarised_dft_with_a_partial_core_on_a_fine_xc_grid():
+    """Copper: the partial core counts half to each spin, on the finer XC grid; with no starting
+    moment that must add back up to the unpolarised energy and forces."""
+    rng = np.random.default_rng(7)
+    base = cubic("fcc", 6.83, 29)
+    c = Crystal(base.cell, base.charges, base.positions + rng.normal(0, 0.15, base.positions.shape))
+    kw = dict(h=0.5, kmesh=1, T_e=0.01, symmetry=False, xc_grid=2)
+    ref = PeriodicDFT(c, **kw).run(forces=True)
+    got = PeriodicDFT(c, spin=True, **kw).run(forces=True)
+    assert got.converged and got.moment == 0
+    assert got.free_energy == pytest.approx(ref.free_energy, abs=1e-8)
+    assert np.abs(got.forces - ref.forces).max() < 1e-6
 
 
 @pytest.mark.slow
@@ -175,7 +241,8 @@ def test_single_precision_eigensolver_is_stable_far_past_convergence():
 
 @requires_torch
 @pytest.mark.slow
-def test_single_precision_dft_on_a_transition_metal():
+@pytest.mark.parametrize("xc_grid", [1, 2])
+def test_single_precision_dft_on_a_transition_metal(xc_grid):
     """Copper: d projectors, a p-channel Kleinman–Bylander energy of 469 Ha, and a nonlocal energy that
     is most of the total. The eigensolver floor once scaled with the projector term's operator norm
     (3e4 Ha here), locked the bands 500x too early and left forces 2.9e-3 Ha/bohr off (3.4e-5 now).
@@ -185,7 +252,7 @@ def test_single_precision_dft_on_a_transition_metal():
     rng = np.random.default_rng(7)
     base = cubic("fcc", 6.83, 29)
     c = Crystal(base.cell, base.charges, base.positions + rng.normal(0, 0.15, base.positions.shape))
-    kw = dict(h=0.45, kmesh=1, T_e=0.01, symmetry=False)
+    kw = dict(h=0.45, kmesh=1, T_e=0.01, symmetry=False, xc_grid=xc_grid)
     ref = PeriodicDFT(c, **kw).run(forces=True)
     got = PeriodicDFTTorch(c, **kw).run(forces=True)
     assert ref.converged and got.converged
