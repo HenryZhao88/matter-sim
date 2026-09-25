@@ -26,17 +26,18 @@ def birch_murnaghan(V, E0, V0, B0, B1):
 
 
 def _point(args):
-    kind, a, Z, h, k = args
-    r = PeriodicDFT(cubic(kind, a, Z), h=h, kmesh=k).run()
+    kind, a, Z, h, k, kw = args
+    r = PeriodicDFT(cubic(kind, a, Z), h=h, kmesh=k, **kw).run()
     n = ATOMS_PER_CELL[kind]
     return kind, a, r.energy / n, a ** 3 / n, r.converged
 
 
 def scan(Z: int, kinds=("fcc", "bcc", "sc"), v_atom=(95, 128), n_points: int = 7, h=0.3, k=8,
-         workers: int | None = None) -> dict:
-    """E per atom against volume per atom, for each structure (parallel over cores)."""
+         workers: int | None = None, **dft) -> dict:
+    """E per atom against volume per atom, for each structure (parallel over cores). ``dft`` goes
+    to PeriodicDFT as is (T_e, xc_grid, ...)."""
     vols = np.linspace(v_atom[0], v_atom[1], n_points)
-    jobs = [(kind, (v * ATOMS_PER_CELL[kind]) ** (1 / 3), Z, h, k) for kind in kinds for v in vols]
+    jobs = [(kind, (v * ATOMS_PER_CELL[kind]) ** (1 / 3), Z, h, k, dft) for kind in kinds for v in vols]
     out: dict = {kind: [] for kind in kinds}
     with cf.ProcessPoolExecutor(max_workers=workers or max(1, (os.cpu_count() or 2) - 2)) as pool:
         for kind, a, e, v, ok in pool.map(_point, jobs):

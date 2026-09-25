@@ -204,6 +204,27 @@ def test_cross_checks_cover_every_kind_of_configuration(monkeypatch, tmp_path):
     assert not (tmp_path / "dft").exists()                               # checks never land in the label cache
 
 
+def test_each_element_is_labelled_on_its_own_converged_grid():
+    """Copper's labels carry its grid in their cache names, aluminium's names are as they were, and
+    an element nobody has converged a grid for is refused rather than labelled on aluminium's."""
+    import hashlib
+    import pickle
+    from engine.materials import dataset
+    al = {"cell": np.full(3, 7.6), "charges": [13] * 4, "positions": np.zeros((4, 3))}
+    cu = dict(al, charges=[29] * 4)
+
+    def v2_name(conf):                   # the name every label had before grids were per element
+        return hashlib.sha1(pickle.dumps(("v2", np.round(conf["cell"], 6).tolist(), list(conf["charges"]),
+                                          dataset._wrapped_fractions(conf), dataset.K_SPACING, dataset.T_E),
+                                         protocol=4)).hexdigest()[:16]
+    assert dataset.grid_settings(al["charges"]) == {"h": 0.3, "xc_grid": 1}
+    assert dataset.grid_settings(cu["charges"]) == {"h": 0.19, "xc_grid": 2}
+    assert dataset.cache_key(al) == v2_name(al)
+    assert dataset.cache_key(cu) != v2_name(cu)
+    with pytest.raises(ValueError):
+        dataset.grid_settings([26] * 2)
+
+
 @requires_torch
 @pytest.mark.parametrize("n,sigma", [((6, 6, 6), 0.15), ((6, 6, 6), 1.2), ((3, 3, 3), 0.3)])
 def test_gpu_force_field_matches_numpy(n, sigma):
