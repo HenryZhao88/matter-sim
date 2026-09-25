@@ -92,7 +92,13 @@ hard-won lessons; read it too.
   4% of their Fourier weight beyond h = 0.30's cutoff (iron: 9 electrons, 100× smoother, egg-box
   0.09 meV at h = 0.30). Using **1×** keeps 6.8 electrons, is ghost-free, and the engine's own
   transferability check improves slightly (51.5 meV against 52.7; limit 150); 0.5× gives 45.6.
-  **Proposed:** soften the partial core (a construction choice, not a fit) and pick copper's h
+  **It also breaks copper's equation of state**, which is the next step in "What would help
+  most" — do not run it with the current core. fcc Cu, h = 0.30, 6³ k, E steps per 8 bohr³ from
+  V = 64 (`scripts/pp_check.py eos`): current core −37.2, −26.2, −16.6 mHa/atom (minimum beyond
+  a = 3.85 Å; measured 3.615, and LDA usually lands 1–2 % *below*); softer core (factor 1)
+  −4.8, +4.2, +12.1 (minimum near a ≈ 3.50 Å). One unexplained point: with the softer core,
+  V = 96 dropped again by 9.6 mHa and took 2.5× longer to converge.
+  **Proposed:** soften the partial core (a construction choice, not a fit), then pick copper's h
   from the egg-box with it; h ≈ 0.26 looks sufficient and fits both machines' memory. Not done
   here: it changes every Z ≥ 19 pseudopotential (bump `CACHE_VERSION`, rerun the atoms
   validation) and the pseudopotential is the Mac's area. Decide there.
@@ -129,8 +135,16 @@ hard-won lessons; read it too.
   r_s = 2.88: a ≈ 2.77 Å (coarse: h = 0.30, 6³ k). The earlier "2.16 μB, FM 397 meV below NM"
   used the broken potential: **provisional at best.** The partial core is not the cause (a softer
   core collapses identically). `fe_magnetism.py` was stopped; its partial results were removed.
+  Copper's generator run picked s-local r_s = 2.75 (1.25×); its r_s = 2.20 candidate does not fix
+  copper's curve (−40.6, −28.7, −18.3): copper's fault is the core, iron's the radius. **General
+  lesson: a pseudopotential is not validated until a solid's E(V) has been checked** — the
+  free-atom tests passed both. `scripts/pp_check.py candidates Z` lists what the generator tried.
+
 ## What would help most
 
+0. **Fix the transition-metal pseudopotentials first** (Cu: softer partial core; Fe: a smaller
+   s radius — prefer the hardest ghost-free candidate within the 150 meV limit, or add a
+   compressed-solid check to `generate`), then check E(V) for Cu and Fe with `scripts/pp_check.py`.
 1. **Finish copper**: pick h from the egg-box numbers, run the equation of state on the Mac in
    float64 for copper's own lattice constant (it must come from our DFT, not from experiment),
    then label on the Windows machine with `solver="torch"`, with ~5% NumPy cross-checks.
@@ -183,8 +197,10 @@ anything that is no longer true rather than appending a correction.
 
 - **2026-09-25, Linux cloud container (Claude; 4 cores, 15 GB, no GPU, ephemeral).** Checked
   this file against the code (it held; HANDOFF's copper note was stale, fixed). Built
-  spin-polarised periodic DFT and measured iron's magnetism. Found copper's grid error is its
-  partial core (numbers in In flight) and proposed a softer core; did not change `pseudo.py`.
+  spin-polarised periodic DFT (tested; iron comes out magnetic, but see below). Found that the
+  generated Cu and Fe pseudopotentials both fail in the solid while passing every free-atom test:
+  Cu's sharp partial core (egg-box and a lattice constant > 3.85 Å), Fe's oversized s radius
+  (collapse). Numbers in In flight; did not change `pseudo.py`.
   Lesson: two NumPy jobs on 4 cores each start 4 BLAS threads and run **~10× slower** together
   (a 90 s copper pair took 900 s); run one heavy job at a time or set `OMP_NUM_THREADS`.
 - **2026-09-24, Windows (Claude).** Did not label copper. Measured copper at finer grids on the fp32
