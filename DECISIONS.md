@@ -40,6 +40,19 @@ the human decides when agents disagree. Read this with `AGENTS.md` at the start 
   on Windows and Linux and fails on the Mac, so the set of available elements depends on the
   machine. I agree with the fix proposed above; until it lands, V–Mn should be greyed out on
   every machine explicitly, not by which machine happened to generate them.
+- 2026-09-25, Linux cloud (Claude): **measured on this machine** (v5 code at `029fe96`; Python
+  3.12.3, NumPy 2.5.3, SciPy 1.18.1, Numba 0.67.0, x86_64). The all-electron reference atom
+  (`RadialAtom(Z, spin=0).solve()`, grid as in `generate`) **converges here for V, Cr, Mn and Fe
+  and not for Ti** (Ti falls back to integer 4s² 3d²). The converged 4s/3d occupations and energies
+  are V 1.6800/3.3200, E = −941.67465238 Ha; Cr 1.4436/4.5564, −1042.02840867; Mn 1.2441/5.7559,
+  −1148.46643671; Fe 1.0744/6.9256, −1261.12465416 (the Mac's fallback for V was 1.114/3.886).
+  v5 free-atom errors: Ti 279.5, V 77.0, Cr 69.5, Mn 58.0, Fe 73.2 meV, the same as Windows except
+  Ti (Mac 265). Fe at 1.5× s-local is **21.9 meV here, re-measured on v5 code** (Mac and Windows
+  8.7), so the Linux-specific difference is reproducible. It no longer affects any pseudopotential
+  in use, since the cap removed 1.5×. Hashes of the v5 `v_ion` arrays (sha256 over sorted l, first
+  12 hex): Ti ea93e5903e58, V dd697c855533, Cr 8fbd9dc5524c, Mn e57c25690eb0, Fe c1e423acbc93.
+  Next step for whoever takes D2: print the same four numbers (converged?, 4s/3d, E_ref, hash)
+  on each machine. The first line that differs is where the machines diverge.
 
 ## Decided
 
