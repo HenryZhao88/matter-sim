@@ -57,7 +57,7 @@ result disagrees with nature, say so and leave it disagreeing.
 | Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, pp at 13.6 TeV |
 | Lattice QCD | working: confinement, deconfinement, hadron masses (pion as Goldstone boson, κ_c = 0.1695 vs 0.1694 published) |
 | Electrons and nuclei | working: H–Kr (Sc fails its own check and is greyed out), molecules, truth mode (VMC, MLX and PyTorch) |
-| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`) reaches 10⁶ atoms, tested equal to `md.py`, not yet used by the experiments. Spin-polarised periodic DFT (NumPy): iron comes out magnetic, 2.16 μB/atom |
+| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`) reaches 10⁶ atoms, tested equal to `md.py`, not yet used by the experiments. Spin-polarised periodic DFT (NumPy) built; iron's numbers wait on its pseudopotential |
 | Everyday matter | working: the 1 cm³ block, 6.3 × 10²² atoms, 2.83 g, 2.29 kJ to melt |
 
 Results both machines can read are in `results/`. `HANDOFF.md` carries the detail and the
@@ -118,23 +118,26 @@ hard-won lessons; read it too.
 - **Iron: spin-polarised periodic DFT exists now (NumPy path only; Linux cloud, 2026-09-25).**
   `PeriodicDFT(spin=True, moments=...)`: LSDA, one Fermi level, so the magnetisation is free; the
   starting moment is only a push. Unpolarised results are unchanged bit for bit. Aluminium pushed
-  to 1 μB/atom relaxes to 3e-5; bcc iron (a = 5.30 bohr) settles at **2.16 μB/atom** (measured
-  2.22), ferromagnetic **397 meV/atom** below non-magnetic. Converged: h = 0.24 agrees with 0.20 to
-  0.01 meV and 1e-4 μB (h = 0.30 is fine for the moment but 39 meV/atom off in absolute energy);
-  k = 8 is ~3 meV and 0.02 μB from 12. `PeriodicDFTTorch` refuses `spin=True` (not ported).
-  `scripts/fe_magnetism.py` (bcc/fcc × non-magnetic/FM/AFM, 7 volumes, h = 0.24) was running
-  when this was written; the validation rows read its `results/fe_magnetism.json`. Expect plain
-  LDA to get iron's structure wrong (it is known to favour close-packed non-magnetic iron): if it
-  does, record it and leave it.
-
+  to 1 μB/atom relaxes to 3e-5 μB. `PeriodicDFTTorch` refuses `spin=True` (not ported).
+- **Iron's pseudopotential collapses under compression — blocks every iron number.** With the
+  engine's Fe pseudopotential, non-magnetic bcc E(V) is *concave* from V = 56 to 170 bohr³/atom
+  (steps of +17.8, +17.6, +17.1 mHa/atom per 8 bohr³; no minimum; 7.5 eV/atom below the free atom
+  at V = 60). Cause: `pseudo.generate` fell back to an s-local potential pseudised at 1.5× the base
+  radius (r_s = 3.45 bohr, beyond half the bcc neighbour distance), chosen because it scores best
+  on the *free-atom* transferability test, which never compresses anything. Same generator, s-local
+  at r_s = 2.30 (ghost-free, atom test 114 meV, limit 150): convex, minimum a ≈ 2.74 Å; at
+  r_s = 2.88: a ≈ 2.77 Å (coarse: h = 0.30, 6³ k). The earlier "2.16 μB, FM 397 meV below NM"
+  used the broken potential: **provisional at best.** The partial core is not the cause (a softer
+  core collapses identically). `fe_magnetism.py` was stopped; its partial results were removed.
 ## What would help most
 
 1. **Finish copper**: pick h from the egg-box numbers, run the equation of state on the Mac in
    float64 for copper's own lattice constant (it must come from our DFT, not from experiment),
    then label on the Windows machine with `solver="torch"`, with ~5% NumPy cross-checks.
-2. **Iron, nickel, cobalt** on the new spin-polarised DFT: finish `fe_magnetism.py` if the
-   results file is missing or partial (it resumes from `.cache/fe_magnetism`; fcc AFM is the slow phase);
-   port spin to `periodic_torch.py` before labelling a magnetic metal on the GPU.
+2. **Iron, nickel, cobalt** on the new spin-polarised DFT, once iron has a pseudopotential that
+   survives compression (above): then run `scripts/fe_magnetism.py` (resumable; clear
+   `.cache/fe_magnetism` first, its points used the old potential); port spin to
+   `periodic_torch.py` before labelling a magnetic metal on the GPU.
 3. **Use the GPU molecular dynamics.** `engine/materials/md_torch.py` (`EAMForceFieldTorch`,
    `MDTorch`) matches `md.py` to 1e-10 and reproduces its seeded trajectories; on the RTX 4050 a
    full step is 84 ms at 256 000 atoms and 321 ms at 10⁶ (float64, 2.9 GB VRAM). Nothing uses it
