@@ -30,6 +30,16 @@ the human decides when agents disagree. Read this with `AGENTS.md` at the start 
   by a hash of its arrays. Until then, don't compare V/Mn/Ti numbers across machines.
 
 **Comments**
+- 2026-09-25, Windows (Claude): **measured on this machine** (`scripts/pp_check.py candidates`
+  and `RadialAtom(Z).solve()`, v5 code). The reference atom converges here for all of Ti, V, Cr,
+  Mn, Fe. Free-atom errors: V 1.25× s-local **77.0** meV, Mn **58.0**, Fe 1.25× **73.2**, Fe 1.5×
+  **8.7**. So Windows matches Linux for V and Mn (consistent with the Mac's unconverged reference
+  atom being the cause there) but matches the *Mac* for Fe at 1.5× (8.7 against Linux's 22) — so
+  there is a second, Linux-specific difference that the reference atom does not explain. The
+  overflow warnings in `pseudo.py` (lines 209, 217) appear here too. Consequence today: V passes
+  on Windows and Linux and fails on the Mac, so the set of available elements depends on the
+  machine. I agree with the fix proposed above; until it lands, V–Mn should be greyed out on
+  every machine explicitly, not by which machine happened to generate them.
 
 ## Decided
 
@@ -70,6 +80,21 @@ the human decides when agents disagree. Read this with `AGENTS.md` at the start 
   E(V) to 0.01 mHa. Current potential +17.71, +17.21, +17.61 mHa/atom; the 1.25× candidate −15.23,
   −0.61, +7.02 (bcc, h 0.24, xc_grid 2, 6³ k, V = 56→80). Confirmed that only Ti–Fe use 1.5×.
   Found that the generator is **not reproducible across machines** for some elements (see D2).
+- 2026-09-25, Windows (Claude): **my decision: agree with applying the cap, with one reason
+  withdrawn.** Checked the evidence myself on a third machine: iron's E(V) with the capped (v5)
+  potential is −15.23, −0.61, +7.02 mHa/atom (bcc, h 0.24, xc_grid 2, 6³ k, V = 56→80), identical
+  to the Mac and Linux to 0.01 mHa, with its minimum inside the scan; the candidates reproduce
+  (Fe 1.25× s-local 73.2 meV, 1.5× 8.7 meV). What decides it for me is that measurement: a
+  potential whose bulk metal has no energy minimum cannot be used, and the rule that removes it
+  names no element.
+  The core-overlap argument in the outcome, however, does not hold up and should not be relied
+  on. Twice the s radius minus the nearest-neighbour distance is +2.21 bohr at 1.5× for bcc Fe but
+  still **+1.06 bohr at 1.25×**, and copper, at 1.25× with a sound E(V) and a 3.548 Å lattice
+  constant, overlaps by +0.76 bohr. Overlap therefore does not separate the stretch that fails
+  from the one that works; only iron's E(V) does. Read that way, 1.25× is the largest stretch
+  shown to work for one element, not a bound derived from physics, which is why the compressed-
+  solid check inside `generate` should replace it and why V–Mn stay out of solids until then
+  (see also D2: V's pass/fail currently depends on the machine).
 
 ### Copper's grid error: exchange–correlation on a 2× grid (not a softer partial core)
 

@@ -191,6 +191,11 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-25, Windows (Claude).** Reviewed D1 independently (DECISIONS.md): agree with the 1.25×
+  cap on the strength of iron's E(V), reproduced here to 0.01 mHa; the core-overlap reason does not
+  hold (1.25× still overlaps by 1.06 bohr in bcc Fe, copper by 0.76). Added Windows data to D2: the
+  reference atom converges here for Ti–Fe, V/Mn match Linux, Fe at 1.5× matches the Mac, so there
+  is a second cross-machine difference.
 - **2026-09-25, Mac (Claude).** Decided and applied D1 at the human's request, after reproducing
   iron's E(V) here (to 0.01 mHa). Pseudopotentials regenerated as v5: only Ti–Fe changed, copper
   bit for bit identical. Opened D2: the generator gives different V/Mn (Ti, Fe) pseudopotentials
