@@ -6,7 +6,10 @@ that iron is magnetic or that it is bcc: the starting moment is only a push, whi
 metal gives back (aluminium does). Each point is cached as it finishes, so this can be stopped and
 restarted at will. Writes results/fe_magnetism.json.
 
-    uv run python scripts/fe_magnetism.py [h] [k] [workers]
+    uv run python scripts/fe_magnetism.py [h] [k_bcc] [workers]
+
+h = 0.24 bohr is converged: FM − NM and the moment agree with h = 0.20 to 0.01 meV and 1e-4 μB
+(h = 0.30 leaves the absolute energy 39 meV/atom high). k_bcc = 8 is within ~3 meV and 0.02 μB of 12.
 
 Memory is small (2- and 4-atom cells); time is not: 2 spins x a transition metal's fine grid.
 """
@@ -38,9 +41,17 @@ PHASES = {
 }
 
 
+def kmesh(kind: str, k_bcc: int) -> int:
+    """The same k-point spacing for both structures at equal volume per atom: the conventional fcc
+    cell is 2^(1/3) longer than the bcc one. Fixed per structure, never per volume, so the sampling
+    error is the same smooth function along each energy curve."""
+    return k_bcc if kind == "bcc" else max(1, round(k_bcc / 2 ** (1 / 3)))
+
+
 def point(args):
     phase, v, h, k = args
     kind, moments = PHASES[phase]
+    k = kmesh(kind, k)
     key = CACHE / f"{phase}_v{v:.3f}_h{h}_k{k}.json"
     if key.exists():
         return json.loads(key.read_text())
@@ -68,7 +79,7 @@ def point(args):
     return rec
 
 
-def main(h: float = 0.2, k: int = 8, workers: int = 1) -> None:
+def main(h: float = 0.24, k: int = 8, workers: int = 1) -> None:
     t0 = time.time()
     jobs = [(p, round(float(v), 3), h, k) for p in PHASES for v in V_ATOM]
     rows = []
@@ -78,21 +89,33 @@ def main(h: float = 0.2, k: int = 8, workers: int = 1) -> None:
             print(f"{rec['phase']:22s} V={rec['v_atom']:6.2f}  E={rec['E_atom']:.6f}  "
                   f"M={rec['moment_atom']:+.3f}  conv={rec['converged']}  {rec['seconds']:.0f}s  "
                   f"[{time.time() - t0:.0f}s]", flush=True)
+            write(rows, h, k)            # after every point: a stopped run still leaves its finished phases
+    print(json.dumps(write(rows, h, k), indent=1))
+    print(f"wrote {OUT}  ({time.time() - t0:.0f}s)")
+
+
+def write(rows, h, k) -> dict:
     fits = {}
     for p in PHASES:
         pr = sorted((r for r in rows if r["phase"] == p and r["converged"]), key=lambda r: r["v_atom"])
         if len(pr) < 5:
             continue
-        f = fit([(r["v_atom"], r["E_atom"]) for r in pr])
+        try:
+            f = fit([(r["v_atom"], r["E_atom"]) for r in pr])
+        except RuntimeError as e:                 # curve_fit gave up: report, keep the points
+            fits[p] = {"error": str(e), "n_points": len(pr)}
+            continue
+        f["n_points"] = len(pr)
         f["a0"] = lattice_constant(PHASES[p][0], f["V0"])
         f["inside_scan"] = bool(pr[0]["v_atom"] < f["V0"] < pr[-1]["v_atom"])
         f["moment_at_V0"] = float(np.interp(f["V0"], [r["v_atom"] for r in pr], [r["abs_moment_atom"] for r in pr]))
         fits[p] = f
-    OUT.write_text(json.dumps({"h": h, "k": k, "smearing": "mp 0.01 Ha", "points": rows, "fits": fits}, indent=1))
-    print(json.dumps(fits, indent=1))
-    print(f"wrote {OUT}  ({time.time() - t0:.0f}s)")
+    kmeshes = {kind: kmesh(kind, k) for kind in ("bcc", "fcc")}
+    OUT.write_text(json.dumps({"h": h, "k": k, "kmesh": kmeshes, "smearing": "mp 0.01 Ha", "points": rows,
+                               "fits": fits}, indent=1))
+    return fits
 
 
 if __name__ == "__main__":
     a = sys.argv[1:]
-    main(float(a[0]) if a else 0.2, int(a[1]) if len(a) > 1 else 8, int(a[2]) if len(a) > 2 else 1)
+    main(float(a[0]) if a else 0.24, int(a[1]) if len(a) > 1 else 8, int(a[2]) if len(a) > 2 else 1)

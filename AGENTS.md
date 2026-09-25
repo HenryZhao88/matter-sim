@@ -57,7 +57,7 @@ result disagrees with nature, say so and leave it disagreeing.
 | Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, pp at 13.6 TeV |
 | Lattice QCD | working: confinement, deconfinement, hadron masses (pion as Goldstone boson, κ_c = 0.1695 vs 0.1694 published) |
 | Electrons and nuclei | working: H–Kr (Sc fails its own check and is greyed out), molecules, truth mode (VMC, MLX and PyTorch) |
-| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`) reaches 10⁶ atoms, tested equal to `md.py`, not yet used by the experiments |
+| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`) reaches 10⁶ atoms, tested equal to `md.py`, not yet used by the experiments. Spin-polarised periodic DFT (NumPy): iron comes out magnetic, 2.16 μB/atom |
 | Everyday matter | working: the 1 cm³ block, 6.3 × 10²² atoms, 2.83 g, 2.29 kJ to melt |
 
 Results both machines can read are in `results/`. `HANDOFF.md` carries the detail and the
@@ -75,6 +75,27 @@ hard-won lessons; read it too.
   the repo — commit it with the results so the other machine can rerun it). **Do not label copper until this lands**, and
   re-time one copper label afterwards: copper needs ~3× aluminium's grid points and has 11
   valence electrons against 3, so aluminium's 8-minute label is not the right estimate.
+- **Copper's grid error is its partial core, and a finer grid does not cure it (Linux cloud,
+  2026-09-25, `scripts/eggbox.py`, committed).** Independent egg-box: fcc Cu, a = 6.83, 4³ k, the
+  crystal slid half a grid step along x. Forces stay zero (a half step keeps atoms on grid mirror
+  planes, so this test cannot reproduce the Mac's forces; its method must differ):
+
+  | h (bohr) | 0.30 | 0.26 | 0.22 | 0.19 |
+  |---|---|---|---|---|
+  | current partial core, meV/atom | +31.7 | +7.2 | +5.3 | +8.2 |
+  | partial core off (diagnostic only) | | −0.21 | | |
+  | softer partial core (factor 1), meV/atom | −2.7 | +0.54 | +0.15 | |
+
+  With the core on, energy terms swing by ±500 meV/atom and nearly cancel; a full-step shift and a
+  new random start both give 0.00. Cause: `pseudo._partial_core` keeps the true core outside the
+  radius where it exceeds **2×** the valence density, which for copper keeps 11 core electrons with
+  4% of their Fourier weight beyond h = 0.30's cutoff (iron: 9 electrons, 100× smoother, egg-box
+  0.09 meV at h = 0.30). Using **1×** keeps 6.8 electrons, is ghost-free, and the engine's own
+  transferability check improves slightly (51.5 meV against 52.7; limit 150); 0.5× gives 45.6.
+  **Proposed:** soften the partial core (a construction choice, not a fit) and pick copper's h
+  from the egg-box with it; h ≈ 0.26 looks sufficient and fits both machines' memory. Not done
+  here: it changes every Z ≥ 19 pseudopotential (bump `CACHE_VERSION`, rerun the atoms
+  validation) and the pseudopotential is the Mac's area. Decide there.
 - **Memory decides which h is usable (Windows, 2026-09-24).** Both DFT paths keep every
   k-point's wavefunctions resident (fp32: on the GPU in complex64; NumPy: in RAM in complex128,
   plus every k-point's projectors). For copper's 8-atom cells (3×7×7 k → 98 after time reversal,
@@ -94,16 +115,26 @@ hard-won lessons; read it too.
   317 s). At h = 0.16 fp32 converged in 44 s; the NumPy comparison there was stopped by the
   low-memory guard and is still owed. The same cell's largest force is 0.109 Ha/bohr at h = 0.30
   and 0.0157 at h = 0.19 — independent support for the egg-box numbers above.
-- **Iron** needs spin-polarised periodic DFT (`periodic.py` calls `lda_xc(ρ/2, ρ/2)`). Its
-  pseudopotential passes. Decision taken: **copper first**, iron as its own piece of work —
-  ferromagnetism is not a tolerance change, and iron's structure and elasticity depend on it.
+- **Iron: spin-polarised periodic DFT exists now (NumPy path only; Linux cloud, 2026-09-25).**
+  `PeriodicDFT(spin=True, moments=...)`: LSDA, one Fermi level, so the magnetisation is free; the
+  starting moment is only a push. Unpolarised results are unchanged bit for bit. Aluminium pushed
+  to 1 μB/atom relaxes to 3e-5; bcc iron (a = 5.30 bohr) settles at **2.16 μB/atom** (measured
+  2.22), ferromagnetic **397 meV/atom** below non-magnetic. Converged: h = 0.24 agrees with 0.20 to
+  0.01 meV and 1e-4 μB (h = 0.30 is fine for the moment but 39 meV/atom off in absolute energy);
+  k = 8 is ~3 meV and 0.02 μB from 12. `PeriodicDFTTorch` refuses `spin=True` (not ported).
+  `scripts/fe_magnetism.py` (bcc/fcc × non-magnetic/FM/AFM, 7 volumes, h = 0.24) was running
+  when this was written; the validation rows read its `results/fe_magnetism.json`. Expect plain
+  LDA to get iron's structure wrong (it is known to favour close-packed non-magnetic iron): if it
+  does, record it and leave it.
 
 ## What would help most
 
 1. **Finish copper**: pick h from the egg-box numbers, run the equation of state on the Mac in
    float64 for copper's own lattice constant (it must come from our DFT, not from experiment),
    then label on the Windows machine with `solver="torch"`, with ~5% NumPy cross-checks.
-2. **Spin-polarised periodic DFT**, which unlocks iron, nickel and cobalt.
+2. **Iron, nickel, cobalt** on the new spin-polarised DFT: finish `fe_magnetism.py` if the
+   results file is missing or partial (it resumes from `.cache/fe_magnetism`; fcc AFM is the slow phase);
+   port spin to `periodic_torch.py` before labelling a magnetic metal on the GPU.
 3. **Use the GPU molecular dynamics.** `engine/materials/md_torch.py` (`EAMForceFieldTorch`,
    `MDTorch`) matches `md.py` to 1e-10 and reproduces its seeded trajectories; on the RTX 4050 a
    full step is 84 ms at 256 000 atoms and 321 ms at 10⁶ (float64, 2.9 GB VRAM). Nothing uses it
@@ -147,6 +178,12 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-25, Linux cloud container (Claude; 4 cores, 15 GB, no GPU, ephemeral).** Checked
+  this file against the code (it held; HANDOFF's copper note was stale, fixed). Built
+  spin-polarised periodic DFT and measured iron's magnetism. Found copper's grid error is its
+  partial core (numbers in In flight) and proposed a softer core; did not change `pseudo.py`.
+  Lesson: two NumPy jobs on 4 cores each start 4 BLAS threads and run **~10× slower** together
+  (a 90 s copper pair took 900 s); run one heavy job at a time or set `OMP_NUM_THREADS`.
 - **2026-09-24, Windows (Claude).** Did not label copper. Measured copper at finer grids on the fp32
   path (holds at h = 0.19; h = 0.16 NumPy check owed) and which spacings fit in memory (h = 0.16
   fits on neither machine for 8-atom cells). Built GPU molecular dynamics (`md_torch.py`: forces

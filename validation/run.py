@@ -117,8 +117,8 @@ def iron_section() -> None:
         print("\n(Iron checks skipped: run scripts/fe_magnetism.py first.)")
         return
     d = json.loads(path.read_text())
-    fits = d["fits"]
-    section(f"Iron: spin-polarised DFT (LSDA, h = {d['h']} bohr, {d['k']}³ k-mesh)")
+    fits = {p: f for p, f in d["fits"].items() if "error" not in f}
+    section(f"Iron: spin-polarised DFT (LSDA, h = {d['h']} bohr, k-mesh bcc {d['kmesh']['bcc']}³, fcc {d['kmesh']['fcc']}³)")
     fm = fits.get("bcc-ferromagnetic")
     if fm is None:
         print("  (bcc ferromagnetic scan incomplete)")
