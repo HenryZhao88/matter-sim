@@ -258,9 +258,11 @@ anything that is no longer true rather than appending a correction.
   was CPU contention, not only complex128. **During 8-atom labels the job holds ~11.6 of 12 GB
   of GPU memory** (the allocator's cache included; the 3.4 GB estimate was for wavefunctions), so
   nothing else fits on the GPU: a benchmark started alongside it hung in `eigh` and was stopped.
-  Taking the fp32 speed-up: fix (a) (`small_device="cpu"` in `lobpcg_dev`) is written and passes
-  the six `single_precision` tests (slow ones included); **not yet committed**, because the timing A/B
-  waits for the 8-atom cells to finish.
+  Took the fp32 speed-up and the spin port (`44fc2a9`): fix (a) (`small_device="cpu"` in
+  `lobpcg_dev`) and `PeriodicDFTTorch(spin=True)`. Fast `single_precision` tests pass on CUDA (5,
+  the new spin one included). **Still owed:** a timing A/B of fix (a) on a full label, and the slow
+  tests on the final code (`test_single_precision_spin_polarised_iron_matches_numpy`, the copper
+  ones). The copper run in progress uses the code it started with.
 - **2026-09-26, Windows (Claude).** Taking "Any machine": item 3 (GPU molecular dynamics at scale,
   starting with melting by coexistence at ~10⁵ atoms) and item 4 (one-loop amplitudes). Touching
   `engine/materials/md*.py`, `experiments.py` and the particle rung; will log what else.
