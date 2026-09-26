@@ -127,14 +127,17 @@ hard-won lessons; read it too.
 
 Take an item, say so in the log, and move it to the log when done. Items are ordered by value.
 
-**Downstairs PC** (copper labelling done: 66/71, 5 refused):
-- **Copper: the 5 refused labels** (why the SCF stalls), then the cross-check, seed fit and MD snapshots.
-- **Speed up the fp32 labeller.** Your profile shows 60 % of the time in complex128 `eigh` and gram
-  products on a GeForce GPU. Fix (a): move the small `eigh`s to the CPU (no precision change). Check
-  it against float64 first (the `test_single_precision_*` tests plus one copper label against the
-  NumPy path), and time one label before and after. (b), split complex64 grams, only if (a) is not
-  enough. Also look into the 15–42 SCF iteration spread.
-- ~~Port spin to `periodic_torch.py`~~ **done** (`44fc2a9`; see the log).
+**Downstairs PC** (running: copper's 5 retried labels, then its 18 MD snapshots on the GPU; the
+float64 cross-check on the CPU):
+- **Finish copper's training set**: the retries and MD labels (`scripts/label_md.py`, resumable),
+  the cross-check (`scripts/cross_check.py 29`), then the **final fit** on crystal + MD labels
+  (`scripts/seed_fit.py` is the template) and copper's experiments (melting etc., as aluminium).
+- ~~Speed up the fp32 labeller~~ **done, see the log**: (a) is in (−21 % per label); the refused labels
+  and the 15–56 iteration spread were one fault, fixed (`1cdae28`). (b), split complex64 grams, is
+  **not done**: the grams need complex128 accuracy (see `_overlap`), which a complex64 split does
+  not give without a precision study; worth it only if many more GPU labels are coming.
+- ~~Port spin to `periodic_torch.py`~~ **done** (`44fc2a9`; see the log). Next for magnetism: pass
+  `spin`/`moments` through the labeller.
 
 **Mac** (float64 reference work):
 - **A gradient-corrected functional (PBE)** — the next physics step for iron, where plain LDA gets
@@ -153,8 +156,9 @@ lower state?).
 - **GPU molecular dynamics at scale** (item 3), and **one-loop amplitudes** (item 4).
 
 1. **Label copper's crystal set — labelled on the downstairs PC (2026-09-26, 16 h on the RTX 3080 Ti):
-   66 of 71 converged, 5 refused** (fcc-volume at 1.00, 1.075 and 1.10 × a₀, two fcc-strain; SCF not
-   converged in 60 iterations). Being investigated downstairs.
+   66 of 71 converged, 5 refused** (fcc-volume at 1.00, 1.075 and 1.10 × a₀, two fcc-strain), from an
+   fp32 eigensolver fault since fixed (`1cdae28`); the 5 are being relabelled with the fix, which
+   agrees with the existing labels to 0.0002 meV/atom.
    - Command: `uv run python scripts/label_crystal.py 29 6.704 <solver> [workers]` — 71
      configurations (`initial_configurations(29, 6.704)` without sc/disordered), resumable through
      the cache, grid from `dataset.GRID` (h 0.19, xc_grid 2), provenance on every label.
@@ -166,9 +170,9 @@ lower state?).
      the 3080 Ti's 12 GB (allocator cache included).
    - Caches are per machine and not in git: all 66 copper labels are in the downstairs PC's
      `.cache/materials/dft/`. The fit and MD snapshots should run there.
-   - After it: `scripts/cross_check.py 29` in float64 (~5%, per tag), a seed fit, then
-     `md_snapshots(..., Z=29, mass_amu=63.546)` with temperatures chosen for copper (the defaults
-     were aluminium's).
+   - Seed fit done (`results/cu_eam_seed.json`: a₀ 3.554 Å vs DFT 3.548, B 169 vs 168 GPa); 18 MD
+     snapshots at 870/1450/2040 K in `results/cu_md_snapshots.json`, being labelled. Cross-check
+     running (float64, 6 labels, hours each).
 2. **Iron, then nickel and cobalt**, on the spin-polarised DFT. Iron is unblocked (D1 applied). Its
    grid is **h = 0.20, xc_grid = 2** (`scripts/fe_grid.py`, Linux: within 1.1 meV/atom of h = 0.16
    on volume energy, FM − NM and egg-box, 1e-4 μB on the moment; xc_grid moves it only 0.4 meV;
@@ -236,6 +240,18 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-26 16:30, Downstairs PC (Claude).** **The refused copper labels and the iteration spread
+  were one fp32 fault, now fixed** (`1cdae28`): LOBPCG kept Rayleigh–Ritz directions down to 1e-10
+  of the largest overlap, below complex64's resolution. On label #5 one kept direction (1.2e-10)
+  broke orthonormality (8e-5) and put the lowest band at −45.5 Ha (true +0.16); the SCF never
+  recovered. The drop threshold is now ε of the block precision. With the fix, #5 converges in 17
+  iterations, #1 takes 16 (42 before) and #33 takes 22 (56 before), and a recomputed label agrees
+  with its stored one to 0.0002 meV/atom. Timed fix (a): 486 → 384 s on one label, same iterations.
+  **`eam.py` is per element now**: z, r_min, core_in and core_out live on the model, aluminium's are
+  the defaults (its saved model is bit for bit unchanged), and `short_range_for` sets them by
+  aluminium's rule. Copper's data reaches 3.20 bohr, inside aluminium's splice, and the
+  repulsion had used Z = 13. Seed fit: test 3.5 meV/atom, 0.12 eV/Å; it misses one 3.20-bohr cell's
+  8.9 eV/Å force by 6.6. Relabelling the 5 refused cells, then 18 MD snapshots (~8 h of GPU).
 - **2026-09-26 15:10, Downstairs PC (Claude).** **Copper labelling finished**: 66 converged, 5 refused
   (#5, #8, #9 fcc-volume at 1.00/1.075/1.10 × a₀; #36, #44 fcc-strain), 57 690 s in all. **GPU spin
   verified:** all 8 `single_precision` tests pass on the final code (slow included). Displaced magnetic
