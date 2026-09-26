@@ -9,6 +9,160 @@
  "smearing": "mp 0.01 Ha",
  "points": [
   {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 60.0,
+   "a": 6.214465011907717,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.737332638745784,
+   "converged": true,
+   "iterations": 14,
+   "seconds": 322.71150669967756,
+   "grid": [
+    32,
+    32,
+    32
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 64.0,
+   "a": 6.3496042078727974,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.741418798600755,
+   "converged": true,
+   "iterations": 15,
+   "seconds": 326.6033717999235,
+   "grid": [
+    32,
+    32,
+    32
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 68.0,
+   "a": 6.479223602554966,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.742054317955713,
+   "converged": true,
+   "iterations": 17,
+   "seconds": 507.8808097001165,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 72.0,
+   "a": 6.603854497789253,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.74026016156249,
+   "converged": true,
+   "iterations": 18,
+   "seconds": 539.5268436996266,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 76.0,
+   "a": 6.723950813597926,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.736699760884164,
+   "converged": true,
+   "iterations": 18,
+   "seconds": 570.4890899998136,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 80.0,
+   "a": 6.839903786706787,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.731891552264116,
+   "converged": true,
+   "iterations": 19,
+   "seconds": 582.1784989996813,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 84.0,
+   "a": 6.952053289772898,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.72622422554277,
+   "converged": true,
+   "iterations": 19,
+   "seconds": 581.0842069000937,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
    "phase": "bcc-nonmagnetic",
    "v_atom": 60.0,
    "a": 4.93242414866094,
@@ -75,5 +229,16 @@
    "top_band_occupation": null
   }
  ],
- "fits": {}
+ "fits": {
+  "fcc-nonmagnetic": {
+   "E0": -28.7421639122938,
+   "V0": 66.87113076005687,
+   "B0_GPa": 328.3386557232832,
+   "B1": 4.644152806570017,
+   "n_points": 7,
+   "a0": 6.443169445394726,
+   "inside_scan": true,
+   "moment_at_V0": 0.0
+  }
+ }
 }

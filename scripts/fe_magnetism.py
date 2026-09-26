@@ -97,12 +97,19 @@ def main(h: float = 0.20, k: int = 8, workers: int = 1, phases=None, xc: int = 2
             print(f"{rec['phase']:22s} V={rec['v_atom']:6.2f}  E={rec['E_atom']:.6f}  "
                   f"M={rec['moment_atom']:+.3f}  conv={rec['converged']}  {rec['seconds']:.0f}s  "
                   f"[{time.time() - t0:.0f}s]", flush=True)
-            write(rows, h, k, xc)        # after every point: a stopped run still leaves its finished phases
-    print(json.dumps(write(rows, h, k, xc), indent=1))
+            write(rows, h, k, xc, phases)        # after every point: a stopped run still leaves its finished phases
+    print(json.dumps(write(rows, h, k, xc, phases), indent=1))
     print(f"wrote {OUT}  ({time.time() - t0:.0f}s)")
 
 
-def write(rows, h, k, xc) -> dict:
+def write(rows, h, k, xc, own=()) -> dict:
+    """Write the points and fits. Other phases are re-read from the file each time, so points another
+    machine committed (and a `git pull` brought in) while this runs are kept rather than overwritten."""
+    if OUT.exists():
+        old = json.loads(OUT.read_text())
+        if old.get("h") == h and old.get("xc_grid") == xc and old.get("k") == k:
+            seen = {(r["phase"], r["v_atom"]) for r in rows}
+            rows = rows + [r for r in old["points"] if r["phase"] not in own and (r["phase"], r["v_atom"]) not in seen]
     fits = {}
     for p in PHASES:
         pr = sorted((r for r in rows if r["phase"] == p and r["converged"]), key=lambda r: r["v_atom"])
