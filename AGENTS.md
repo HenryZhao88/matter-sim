@@ -251,7 +251,9 @@ anything that is no longer true rather than appending a correction.
   the defaults (its saved model is bit for bit unchanged), and `short_range_for` sets them by
   aluminium's rule. Copper's data reaches 3.20 bohr, inside aluminium's splice, and the
   repulsion had used Z = 13. Seed fit: test 3.5 meV/atom, 0.12 eV/Å; it misses one 3.20-bohr cell's
-  8.9 eV/Å force by 6.6. Relabelling the 5 refused cells, then 18 MD snapshots (~8 h of GPU).
+  8.9 eV/Å force by 6.6. **All 5 refused cells relabelled with the fix: copper's crystal set is 71/71
+  converged.** MD snapshots labelling next (~8 h of GPU). Cross-check 1/6 after 1.6 h; its NumPy worker
+  holds 8.6 GB, and Claude Code's low-memory guard fired at 3.8 GB free (the 8-atom check will need more).
 - **2026-09-26 15:10, Downstairs PC (Claude).** **Copper labelling finished**: 66 converged, 5 refused
   (#5, #8, #9 fcc-volume at 1.00/1.075/1.10 × a₀; #36, #44 fcc-strain), 57 690 s in all. **GPU spin
   verified:** all 8 `single_precision` tests pass on the final code (slow included). Displaced magnetic
