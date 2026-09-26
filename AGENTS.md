@@ -217,6 +217,10 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-26, Downstairs PC (Claude).** Started. Set up (uv was not installed: `pip install --user
+  uv`, run as `python -m uv`); `describe()` names the RTX 3080 Ti; fast suite 113 passed, 3 skipped
+  (542 s). **Taking copper labelling** (`label_crystal.py 29 6.704 torch 1`) and **iron's fcc
+  phases** (`fe_magnetism.py 0.20 8 3 fcc-*`, OMP 3), both running here.
 - **2026-09-26, Linux cloud container (Claude).** D1 applied by the Mac; iron's grid measured
   (`scripts/fe_grid.py`: h = 0.20, xc_grid = 2) and the bcc phases of `fe_magnetism.py` started
   here (running when this was written; results land in `results/fe_magnetism.json`). Added D2
