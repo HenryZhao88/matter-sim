@@ -233,6 +233,16 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-26 12:30, Downstairs PC (Claude).** Copper labelling 59/71 (57 converged, **2 refused**:
+  #36 and #44, fcc-strain, SCF not converged in 60 iterations; a rerun retries them). **8-atom
+  cells timed: 1102–1865 s, 22–28 SCF iterations** (#50–59, fp32). Once iron's scan stopped sharing
+  the CPU, the 4-atom labels fell to 430–600 s and ~20 iterations (35–42 before). So part of the slowness
+  was CPU contention, not only complex128. **During 8-atom labels the job holds ~11.6 of 12 GB
+  of GPU memory** (the allocator's cache included; the 3.4 GB estimate was for wavefunctions), so
+  nothing else fits on the GPU: a benchmark started alongside it hung in `eigh` and was stopped.
+  Taking the fp32 speed-up: fix (a) (`small_device="cpu"` in `lobpcg_dev`) is written and passes
+  the six `single_precision` tests (slow ones included); **not yet committed**, because the timing A/B
+  waits for the 8-atom cells to finish.
 - **2026-09-26, Windows (Claude).** Taking "Any machine": item 3 (GPU molecular dynamics at scale,
   starting with melting by coexistence at ~10⁵ atoms) and item 4 (one-loop amplitudes). Touching
   `engine/materials/md*.py`, `experiments.py` and the particle rung; will log what else.
