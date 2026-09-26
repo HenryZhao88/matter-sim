@@ -225,8 +225,18 @@ anything that is no longer true rather than appending a correction.
   (0.017 meV/atom), but 42 SCF iterations and 1102 s here against 15 and 732 s there. **Not a
   one-off:** the first four labels took 42, 15, 35, 39 iterations (1102, 658, 1038, 768 s), and the
   GPU sits at 21–35 % use with 4.6 of 12 GB, CPU at 39 %. At 15 iterations this GPU is barely faster
-  than the laptop's (658 vs 732 s), so something besides the GPU sets the pace. Profiling one label
-  now; unexplained so far. At this rate the 71 labels take ~20–30 h. fcc non-magnetic iron done:
+  than the laptop's (658 vs 732 s). At this rate the 71 labels take ~20–30 h. **Profiled** (py-spy on
+  the running label, 2 min, 5948 samples): 80 % in `_eig_dev`, and 60 % at the two `torch.linalg.eigh`
+  calls in `lobpcg_dev` (`periodic_torch.py:320` 49 %, where the GPU syncs, so it absorbs the queued
+  work before it; `:323` 11 %). The queued work there is the Rayleigh–Ritz `gram`, which runs in
+  **complex128 on the GPU**: 46 ms for a 150-row block over 36³ points on the 3080 Ti, against 1.6 ms
+  in complex64 (29×), and a 150² complex128 `eigh` is 11–16 ms on the GPU against 2–5 ms on the CPU.
+  GeForce cards run float64 at 1/64 rate, which is why the 3080 Ti barely beats the 4050 (both
+  GeForce). The complex128 is deliberate (commit `747153f`; see the fp32 lesson below), so it is
+  unchanged. Possible fixes, each needing the fp32-vs-NumPy comparison before production use:
+  (a) the small `eigh`s on the CPU, which changes no precision; (b) the grams as split complex64 products
+  accumulated in complex128 (error-free splitting), several times cheaper than complex128 on
+  GeForce. The 15-vs-42 SCF iteration spread is separate and still unexplained. fcc non-magnetic iron done:
   a₀ = 6.443 bohr, B = 328 GPa. fcc ferromagnetic: the starting moment collapses to zero at V = 60,
   64, 68 (E equal to non-magnetic); 16–36 min per spin point with 3 workers. Fixed `fe_magnetism.py`
   dropping another machine's phases when it rewrote the results file.
