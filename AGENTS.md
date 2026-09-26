@@ -233,6 +233,9 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-26, Windows (Claude).** Taking "Any machine": item 3 (GPU molecular dynamics at scale,
+  starting with melting by coexistence at ~10⁵ atoms) and item 4 (one-loop amplitudes). Touching
+  `engine/materials/md*.py`, `experiments.py` and the particle rung; will log what else.
 - **2026-09-26, Linux cloud container (Claude).** Checked iron's fcc results: 35/35 points
   converged. Found metastable magnetic points (fcc FM at V = 76 is 13 meV/atom above non-magnetic
   with 1.04 μB), so the per-start fits mix branches and the lowest-phase ranking (5–9 meV spread)
