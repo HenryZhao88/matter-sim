@@ -335,7 +335,7 @@ class PeriodicDFTTorch(PeriodicDFT):
         return F + self._core_forces(rho, v_core)
 
 
-def lobpcg_dev(apply_H, X, precond, maxiter, floor: float, keep_tol: float = 1e-10, wide=None, small="cpu"):
+def lobpcg_dev(apply_H, X, precond, maxiter, floor: float, keep_tol: float | None = None, wide=None, small="cpu"):
     """lobpcg_complex from periodic.py with the blocks in complex64 on X's device and the small
     Rayleigh–Ritz matrices accumulated in complex128 on ``wide`` (default: the same device) and
     diagonalised in complex128 on ``small`` (default: the CPU; a 150² complex128 eigh takes 11–16 ms
@@ -346,8 +346,17 @@ def lobpcg_dev(apply_H, X, precond, maxiter, floor: float, keep_tol: float = 1e-
     fallen to ``floor`` gets no further search direction, and the solve stops when every band is
     there. Below that floor a residual is complex64 rounding noise; fed back as a search direction
     it makes the subspace nearly singular, Rayleigh–Ritz amplifies the rounding, and eigenvalues
-    appear far below the true spectrum (measured: −91 Ha against −0.06 on fcc Al, 1 k-point)."""
+    appear far below the true spectrum (measured: −91 Ha against −0.06 on fcc Al, 1 k-point).
+
+    The same limit applies to the subspace: a direction whose overlap eigenvalue is below the
+    blocks' own resolution (ε of their precision, relative to the largest) is rounding, not a search
+    direction, and is dropped (``keep_tol``; float64 LOBPCG can keep 1e-10). Kept at 1e-10 in complex64,
+    one such direction (1.2e-10) on perfect fcc copper broke the bands' orthonormality (8e-5) and put the
+    lowest band at −45.5 Ha against +0.16; the SCF never recovered, and 5 of copper's 71 labels were
+    refused that way."""
     nb = X.shape[0]
+    if keep_tol is None:
+        keep_tol = torch.finfo(X.real.dtype).eps
     dev = X.device
     wide = wide or dev
     small = torch.device(small or wide)

@@ -22,11 +22,26 @@ from pathlib import Path
 import numpy as np
 
 R_CUT = 10.0        # bohr (≈ 5.3 Å): first three neighbour shells of fcc aluminium
-R_MIN = 3.6
 N_BASIS = 12
-Z_NUC = 13.0        # aluminium: the nuclear charge the cores repel with at short range
 RHO_FLOOR = 0.02    # the embedding energy's √ρ slope is capped below this density
+# Aluminium's values, the defaults (every model saved before these were per model is aluminium's).
+# Another metal takes its own from short_range_for(): the element's nuclear charge, and the basis
+# and the splice set by where its training data stops, by the same rule these follow.
+R_MIN = 3.6         # bohr: first basis centre, the shortest distance aluminium's data sampled
+Z_NUC = 13.0        # aluminium: the nuclear charge the cores repel with at short range
 CORE_IN, CORE_OUT = 2.2, 3.4     # bohr: pure nuclear repulsion below, pure learned fit above
+SPLICE_GAP, SPLICE_WIDTH = R_MIN - CORE_OUT, CORE_OUT - CORE_IN     # 0.2 and 1.2 bohr
+
+
+def short_range_for(configs, z: float) -> dict:
+    """The per-element short-range settings, by aluminium's rule: the basis starts at the shortest
+    distance the training data sampled, the learned part ends SPLICE_GAP below it, and the nuclear
+    repulsion of charge z takes over across SPLICE_WIDTH below that. Nothing is fitted here: the
+    data only says where it stops being evidence."""
+    r_min = min(float(np.linalg.norm(pairs_with_images(c["cell"], c["positions"], rc=6.0)[2], axis=1).min())
+                for c in configs)
+    core_out = r_min - SPLICE_GAP
+    return {"z": float(z), "r_min": r_min, "core_in": core_out - SPLICE_WIDTH, "core_out": core_out}
 
 
 def cutoff(r):
@@ -34,18 +49,18 @@ def cutoff(r):
     return (1 - x * x) ** 3
 
 
-def basis(r):
+def basis(r, r_min=R_MIN):
     """(len(r), N_BASIS) smooth radial functions that vanish at the cutoff."""
-    centres = np.linspace(R_MIN, R_CUT - 0.8, N_BASIS)
+    centres = np.linspace(r_min, R_CUT - 0.8, N_BASIS)
     width = (centres[1] - centres[0]) * 1.1
     return np.exp(-((r[:, None] - centres[None, :]) / width) ** 2) * cutoff(r)[:, None]
 
 
-def basis_deriv(r, eps=1e-5):
-    return (basis(r + eps) - basis(r - eps)) / (2 * eps)
+def basis_deriv(r, eps=1e-5, r_min=R_MIN):
+    return (basis(r + eps, r_min) - basis(r - eps, r_min)) / (2 * eps)
 
 
-def _zbl(r):
+def _zbl(r, z=Z_NUC):
     """Ziegler–Biersack–Littmark screened nuclear repulsion (Hartree, bohr).
 
     Two nuclei of charge Z pushed close together repel as Z²/r, screened by the electrons that
@@ -53,23 +68,23 @@ def _zbl(r):
     is what keeps atoms from passing through each other at high temperature. The training
     configurations never sample distances this short, so nothing here is fitted: it is the part
     of the physics the data could not teach."""
-    a = 0.8853 / (2 * Z_NUC ** 0.23)
+    a = 0.8853 / (2 * z ** 0.23)
     x = r / a
     c, d = (0.18175, 0.50986, 0.28022, 0.02817), (3.19980, 0.94229, 0.40290, 0.20162)
     phi = sum(ci * np.exp(-di * x) for ci, di in zip(c, d))
     dphi = sum(-ci * di / a * np.exp(-di * x) for ci, di in zip(c, d))
-    return Z_NUC ** 2 / r * phi, Z_NUC ** 2 * (dphi / r - phi / r ** 2)
+    return z ** 2 / r * phi, z ** 2 * (dphi / r - phi / r ** 2)
 
 
-def _blend(r):
-    """0 below CORE_IN (all nuclear repulsion), 1 above CORE_OUT (all learned), smooth between."""
-    t = np.clip((np.asarray(r, float) - CORE_IN) / (CORE_OUT - CORE_IN), 0.0, 1.0)
+def _blend(r, core_in=CORE_IN, core_out=CORE_OUT):
+    """0 below core_in (all nuclear repulsion), 1 above core_out (all learned), smooth between."""
+    t = np.clip((np.asarray(r, float) - core_in) / (core_out - core_in), 0.0, 1.0)
     w = t * t * (3 - 2 * t)
-    dw = np.where((t > 0) & (t < 1), 6 * t * (1 - t) / (CORE_OUT - CORE_IN), 0.0)
+    dw = np.where((t > 0) & (t < 1), 6 * t * (1 - t) / (core_out - core_in), 0.0)
     return w, dw
 
 
-def dens_with_core(r, b):
+def dens_with_core(r, b, core_out=CORE_OUT, r_min=R_MIN):
     """The background density an atom sits in, held flat below the shortest distance the training
     data sampled.
 
@@ -81,22 +96,22 @@ def dens_with_core(r, b):
     dynamics here — through a cubic embedding function it produced forces a thousand times
     stiffer than the nuclear repulsion itself."""
     r = np.atleast_1d(np.asarray(r, float))
-    f = basis(r) @ b
-    df = basis_deriv(r) @ b
-    f0 = float((basis(np.array([CORE_OUT])) @ b)[0])
-    inner = r < CORE_OUT
+    f = basis(r, r_min) @ b
+    df = basis_deriv(r, r_min=r_min) @ b
+    f0 = float((basis(np.array([core_out]), r_min) @ b)[0])
+    inner = r < core_out
     f = np.where(inner, f0, f)
     df = np.where(inner, 0.0, df)
     return np.maximum(f, 0.0), np.where(f > 0, df, 0.0)
 
 
-def core_pair(r):
+def core_pair(r, z=Z_NUC, core_in=CORE_IN, core_out=CORE_OUT):
     """The short-range part of the pair term, and its derivative: nuclear repulsion faded out
     before the first distance the training data ever sampled."""
     r = np.atleast_1d(np.asarray(r, float))
-    z, dz = _zbl(np.maximum(r, 1e-6))
-    w, dw = _blend(r)
-    return (1 - w) * z, (1 - w) * dz - dw * z
+    e, de = _zbl(np.maximum(r, 1e-6), z)
+    w, dw = _blend(r, core_in, core_out)
+    return (1 - w) * e, (1 - w) * de - dw * e
 
 
 @dataclass
@@ -105,14 +120,34 @@ class EAM:
     b: np.ndarray          # density coefficients
     c: np.ndarray          # embedding: F(ρ) = c0 √ρ + c1 ρ + c2 ρ² + c3 ρ³
     e0: float              # energy per atom offset (sets the zero; physics unaffected)
+    # short range (see short_range_for); the defaults are aluminium's, so older pickles load as they were
+    z: float = Z_NUC
+    r_min: float = R_MIN
+    core_in: float = CORE_IN
+    core_out: float = CORE_OUT
 
     # ------------------------------------------------------------ functions
+    def short_range(self) -> dict:
+        return {"z": self.z, "r_min": self.r_min, "core_in": self.core_in, "core_out": self.core_out}
+
+    def B(self, r):
+        return basis(r, self.r_min)
+
+    def dB(self, r):
+        return basis_deriv(r, r_min=self.r_min)
+
+    def core(self, r):
+        return core_pair(r, self.z, self.core_in, self.core_out)
+
+    def dens_core(self, r):
+        return dens_with_core(r, self.b, self.core_out, self.r_min)
+
     def phi(self, r):
         r = np.atleast_1d(r)
-        return basis(r) @ self.a + core_pair(r)[0]
+        return self.B(r) @ self.a + self.core(r)[0]
 
     def dens(self, r):
-        return dens_with_core(r, self.b)[0]
+        return self.dens_core(r)[0]
 
     def F(self, rho):
         rho = np.maximum(rho, RHO_FLOOR)
@@ -130,8 +165,8 @@ class EAM:
     def tabulate(self, n: int = 4000):
         """Dense tables for fast molecular dynamics."""
         r = np.linspace(0.5, R_CUT, n)
-        f, df = dens_with_core(r, self.b)
-        return {"r": r, "phi": self.phi(r), "dphi": basis_deriv(r) @ self.a + core_pair(r)[1],
+        f, df = self.dens_core(r)
+        return {"r": r, "phi": self.phi(r), "dphi": self.dB(r) @ self.a + self.core(r)[1],
                 "f": f, "df": df}
 
     def save(self, path: Path) -> None:
@@ -164,11 +199,11 @@ def energy_forces(model: EAM, cell, positions):
     I, J, D = pairs_with_images(cell, positions)
     r = np.linalg.norm(D, axis=1)
     n = len(positions)
-    B = basis(r)
-    dB = basis_deriv(r)
-    f_pair, df_pair = dens_with_core(r, model.b)
+    B = model.B(r)
+    dB = model.dB(r)
+    f_pair, df_pair = model.dens_core(r)
     rho = np.bincount(I, weights=f_pair, minlength=n)
-    core, dcore = core_pair(r)
+    core, dcore = model.core(r)
     E = float(np.sum(model.F(rho)) + 0.5 * np.sum(B @ model.a + core)) + model.e0 * n
     dE_dr = 0.5 * (dB @ model.a + dcore) + (model.dF(rho)[I] + model.dF(rho)[J]) * df_pair / 2
     # each unordered pair appears twice (i→j and j→i); dE/dr_ij per ordered entry:
@@ -181,7 +216,7 @@ def energy_forces(model: EAM, cell, positions):
 
 # ------------------------------------------------------------------ fitting (MLX autodiff)
 def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=None,
-        e_scale_eV: float | None = 0.3) -> EAM:
+        e_scale_eV: float | None = 0.3, short_range: dict | None = None) -> EAM:
     """configs: list of dicts {cell, positions, energy, forces} (Hartree, bohr).
 
     All configurations are packed into one graph (atoms numbered globally, energies summed
@@ -191,13 +226,18 @@ def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=No
 
     ``e_scale_eV`` weights each configuration by 1 / (1 + (ΔE / e_scale)²), ΔE its energy per
     atom above the lowest one: the potential should be most accurate where the metal actually
-    spends its time (solid and liquid near melting lie within a few tenths of an eV)."""
+    spends its time (solid and liquid near melting lie within a few tenths of an eV).
+
+    ``short_range``: the element's settings from :func:`short_range_for` (default: aluminium's).
+    The fit sees only the learned part, so every training distance must lie above core_out."""
     from ..core.accel import have_mlx
+    sr = short_range or {}
+    r_min = sr.get("r_min", R_MIN)
     rng0 = np.random.default_rng(seed)
     if not have_mlx():
         return EAM(rng0.normal(0, 1e-3, N_BASIS), np.abs(rng0.normal(0.05, 0.01, N_BASIS)),
                    np.array([-0.2, 0.0, 0.0, 0.0]),
-                   float(np.mean([c["energy"] / len(c["positions"]) for c in configs])))
+                   float(np.mean([c["energy"] / len(c["positions"]) for c in configs])), **sr)
 
     import mlx.core as mx
     import mlx.optimizers as optim
@@ -210,7 +250,7 @@ def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=No
         r = np.linalg.norm(D, axis=1)
         n = len(c["positions"])
         I_all.append(I + off); J_all.append(J + off)
-        B_all.append(basis(r)); dB_all.append(basis_deriv(r)); U_all.append(D / r[:, None])
+        B_all.append(basis(r, r_min)); dB_all.append(basis_deriv(r, r_min=r_min)); U_all.append(D / r[:, None])
         cfg_of_atom.append(np.full(n, k)); n_at.append(n)
         E_ref.append(float(c["energy"]) / n); F_ref.append(np.asarray(c["forces"]))
         off += n
@@ -264,12 +304,14 @@ def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=No
             opt.learning_rate = 3e-4
     to_np = lambda x: np.array(x, dtype=np.float64)
     return EAM(to_np(params["a"]), np.abs(to_np(params["b"])), to_np(params["c"]),
-               float(to_np(params["e0"])[0]) + e_mean)
+               float(to_np(params["e0"])[0]) + e_mean, **sr)
 
 
 def refine(model: EAM, configs, w_force: float = 30.0, e_scale_eV: float | None = 0.3, log=None) -> EAM:
     """Polish a fit in float64 with Levenberg–Marquardt least squares (29 parameters: small
-    enough for exact second-order convergence, which a stochastic optimiser does not reach)."""
+    enough for exact second-order convergence, which a stochastic optimiser does not reach).
+    The model's short-range settings are kept; the residuals are the learned part alone, which is
+    the whole model only while every training distance lies above core_out (checked)."""
     from scipy.optimize import least_squares
 
     pre = []
@@ -277,7 +319,10 @@ def refine(model: EAM, configs, w_force: float = 30.0, e_scale_eV: float | None 
     for c in configs:
         I, J, D = pairs_with_images(c["cell"], c["positions"])
         r = np.linalg.norm(D, axis=1)
-        pre.append((len(c["positions"]), I, J, basis(r), basis_deriv(r), D / r[:, None], np.asarray(c["forces"])))
+        if r.min() < model.core_out:
+            raise ValueError(f"a training distance {r.min():.3f} bohr lies inside the splice (core_out "
+                             f"{model.core_out:.3f}): take the settings from short_range_for(configs, z)")
+        pre.append((len(c["positions"]), I, J, model.B(r), model.dB(r), D / r[:, None], np.asarray(c["forces"])))
         E_ref.append(float(c["energy"]) / len(c["positions"]))
     E_ref = np.array(E_ref)
     dE = (E_ref - E_ref.min()) * 27.211386
@@ -316,4 +361,4 @@ def refine(model: EAM, configs, w_force: float = 30.0, e_scale_eV: float | None 
     if log:
         log(f"least squares: cost {res.cost:.4g} after {res.nfev} evaluations ({res.message})")
     a, b, cc, e0 = unpack(res.x)
-    return EAM(a, b, cc, float(e0))
+    return EAM(a, b, cc, float(e0), **model.short_range())
