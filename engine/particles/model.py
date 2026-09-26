@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 # ------------------------------------------------------------------ measured inputs (PDG 2024)
+ALPHA_0 = 1 / 137.035999177    # electromagnetic coupling at zero momentum transfer (CODATA 2022)
 ALPHA_MZ = 1 / 127.951          # electromagnetic coupling at the Z mass
 G_FERMI = 1.1663788e-5          # GeV⁻² (muon decay)
 M_Z_INPUT = 91.1876             # GeV

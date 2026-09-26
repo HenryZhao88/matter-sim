@@ -105,3 +105,33 @@ def test_conservation_filter_only_skips_true_zeros():
         assert not conserves(("e-", "e+"), final)
         assert not _nonzero("e-", "e+", final[0], final[1], 200.0)
     assert conserves(("u", "d~"), ("W+", "g"))
+
+
+def test_one_loop_vertex_gives_the_anomalous_magnetic_moment():
+    """The one-loop QED vertex, from Dirac matrices and Feynman parameters: F₂(0) is the same for
+    every lepton (it cannot depend on the mass), the current is conserved (no q^μ term), and it
+    equals Schwinger's α/2π — a check of the machinery, not an input."""
+    from engine.particles.loops import anomalous_moment, vertex_form_factors
+    from engine.particles.model import ALPHA_0
+    ae, amu = anomalous_moment(0.51099895e-3), anomalous_moment(0.1056583755)
+    assert abs(ae - amu) < 1e-9 * ae
+    assert abs(ae / (ALPHA_0 / (2 * math.pi)) - 1) < 1e-6
+    r = vertex_form_factors(0.1056583755, 1e-2)
+    assert abs(r["C"]) < 1e-10 and abs(r["F2_imag"]) < 1e-12
+
+
+def test_one_loop_vacuum_polarisation_screens_and_runs():
+    """Π̂(0) = 0; above threshold Im Π̂ is pair creation, −(α/3)√(1−4m²/q²)(1+2m²/q²); far above the
+    mass Π̂ grows by αQ²N_c/3π per unit of ln q² (the one-loop β-function), so α increases."""
+    from engine.particles.loops import delta_alpha, vacuum_polarisation
+    from engine.particles.model import ALPHA_0
+    from engine.particles.process import model
+    m = 0.1056583755
+    assert abs(vacuum_polarisation(0.0, m, -1, 1)) < 1e-14
+    q2 = 1.0
+    r = math.sqrt(1 - 4 * m * m / q2)
+    assert abs(vacuum_polarisation(q2, m, -1, 1).imag + ALPHA_0 / 3 * r * (1 + 2 * m * m / q2)) < 1e-12
+    a, b = vacuum_polarisation(1e4, m, 2 / 3, 3).real, vacuum_polarisation(1e6, m, 2 / 3, 3).real
+    assert abs((b - a) / math.log(100) / (ALPHA_0 * (4 / 9) * 3 / (3 * math.pi)) - 1) < 1e-4
+    lep = sum(delta_alpha(91.1876 ** 2, model(), which=("e", "mu", "tau")).values())
+    assert 0.030 < lep < 0.033                                  # positive: α grows toward m_Z

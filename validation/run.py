@@ -225,6 +225,24 @@ def particles_section(quick: bool) -> None:
     record("particles", "Running α_s(10 GeV) from α_s(m_Z)", alpha_s(10.0), 0.178, "", "one loop, β₀ from the group",
            abs(alpha_s(10.0) - 0.178) < 0.012)
 
+    section("Standard Model: one loop (QED vertex and vacuum polarisation, from the same Feynman rules)")
+    from engine.particles.loops import anomalous_moment, delta_alpha
+    from engine.particles.model import ALPHA_0, M_Z_INPUT
+    ae = anomalous_moment(m.fermion("e").mass)
+    amu = anomalous_moment(m.fermion("mu").mass)
+    record("particles", "Electron g−2: a_e (one loop)", ae, 0.00115965218, "", "next order (α²) is −0.15%",
+           abs(ae / 0.00115965218 - 1) < 0.01)
+    record("particles", "Muon g−2: a_μ (one loop)", amu, 0.00116592059, "", "α², hadronic, weak loops: +0.4%",
+           abs(amu / 0.00116592059 - 1) < 0.01)
+    da = delta_alpha(M_Z_INPUT ** 2, m)
+    lep = sum(da[k] for k in ("e", "mu", "tau"))
+    inv_lep = (1 - lep) / ALPHA_0
+    record("particles", "1/α(m_Z) from α(0): lepton loops", inv_lep, 127.951, "",
+           f"Δα_lep = {lep:.5f}; hadrons missing (non-perturbative)", abs(inv_lep / 127.951 - 1) < 0.005)
+    inv_all = (1 - sum(da.values())) / ALPHA_0
+    record("particles", "…adding quark loops at Lagrangian masses", inv_all, 127.951, "",
+           "perturbative quarks below ~2 GeV: not trustworthy")
+
     from engine.particles.hadron import CACHE as HCACHE, HadronCollider
     probe = HadronCollider.__new__(HadronCollider)
     probe.sqrt_s = 13600.0
