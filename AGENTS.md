@@ -41,11 +41,11 @@ result disagrees with nature, say so and leave it disagreeing.
 
 ## Machines
 
-| | Mac (M4, 16 GB) | Windows (Ryzen 5, 7.8 GB, RTX 4050 6 GB) |
-|---|---|---|
-| Accelerator | MLX (Metal) | CUDA through PyTorch |
-| Best at | float64 reference work, MLX paths, the viewer | fp32 DFT labelling: **~12× NumPy** (Al label 95 s vs 1121 s) |
-| Avoid | fp32 DFT (MPS is 8.7× *slower* than NumPy here) | long GPU jobs from a Claude Code session: idle RAM is ~2 GB and the low-memory guard stops them (copper's 8-atom labels included) |
+| | Mac (M4, 16 GB) | Windows laptop (Ryzen 5, 7.8 GB, RTX 4050 6 GB) | **Downstairs PC** (Ryzen 9 5900X 12-core, 32 GB, RTX 3080 Ti 12 GB) | Linux cloud container (4 cores, 15 GB, no GPU) |
+|---|---|---|---|---|
+| Accelerator | MLX (Metal) | CUDA through PyTorch | CUDA through PyTorch | NumPy |
+| Best at | float64 reference work, MLX paths, the viewer | fp32 DFT labelling: **~12× NumPy** (Al label 95 s vs 1121 s) | the heavy jobs: copper labelling on the GPU, iron's fcc scans on the CPU at the same time | short checks, watched by the human; ephemeral, so push everything |
+| Avoid | fp32 DFT (MPS is 8.7× *slower* than NumPy here) | long GPU jobs from a Claude Code session: idle RAM is ~2 GB and the low-memory guard stops them (copper's 8-atom labels included) | not yet measured: time the first label and write it here | anything over a few hours |
 
 `engine/core/accel.py` decides what a machine uses: MLX, else CUDA, else MPS, else NumPy.
 `MATTER_SIM_ACCEL=torch` forces the torch path (that is how the Mac tests MPS).
@@ -123,6 +123,29 @@ hard-won lessons; read it too.
 
 ## What would help most
 
+### Downstairs PC: start here (new machine, 2026-09-26)
+
+You are the agent on the downstairs PC (Ryzen 9 5900X, 32 GB, RTX 3080 Ti). Read this file,
+`DECISIONS.md` and `HANDOFF.md` first. Then:
+
+1. **Set up.** `git pull`, then `uv sync --extra gpu` (the lock pulls CUDA PyTorch on Windows and
+   Linux, see `pyproject.toml`). Check the GPU is seen:
+   `uv run python -c "from engine.core.accel import describe; print(describe())"` should name the
+   3080 Ti. Run the fast tests: `uv run pytest -m "not slow"`. Add a log line saying you've started.
+2. **Label copper (item 1 below) on the GPU.** `uv run python scripts/label_crystal.py 29 6.704 torch 1`
+   (71 configurations, resumable, 1 worker: the GPU does the work). Time the first 4-atom and the
+   first 8-atom label and put the numbers in the Machines table. 8-atom cells are estimated at
+   ~3.4 GB of GPU memory, which fits in 12 GB. The laptop could never run them.
+3. **At the same time, on the CPU: iron's fcc phases (item 2).** The spin-polarised code is
+   NumPy-only, so it doesn't compete with the GPU job:
+   `OMP_NUM_THREADS=3 uv run python scripts/fe_magnetism.py 0.20 8 3 fcc-nonmagnetic,fcc-ferromagnetic,fcc-antiferromagnetic`
+   (3 workers × 3 threads leaves cores for the GPU job; bound workers by RAM, and a 4-atom
+   AFM point may need ~3 GB). The Linux container is running the bcc phases at the same grid;
+   `git pull` before you finish and the script keeps their points in `results/fe_magnetism.json`.
+   Commit that file as phases complete.
+4. After both: `scripts/cross_check.py 29` (float64, ~5 %), the copper seed fit and MD snapshots
+   (item 1's last bullet), then `uv run matter-sim validate --part materials` for iron's rows.
+
 1. **Label copper's crystal set — open, needs a machine with more memory than the Windows laptop.**
    The human is finding an agent/machine for it; whoever takes it, say so in the log first.
    - Command: `uv run python scripts/label_crystal.py 29 6.704 <solver> [workers]` — 71
@@ -140,11 +163,14 @@ hard-won lessons; read it too.
    - After it: `scripts/cross_check.py 29` in float64 (~5%, per tag), a seed fit, then
      `md_snapshots(..., Z=29, mass_amu=63.546)` with temperatures chosen for copper (the defaults
      were aluminium's).
-2. **Iron, then nickel and cobalt**, on the spin-polarised DFT. Iron's pseudopotential now has a
-   minimum in the solid (D1). First converge iron's grid, then run `scripts/fe_magnetism.py` (resumable, all phases;
-   clear `.cache/fe_magnetism` first) and the validation rows it feeds. Choose iron's grid like
-   copper's (egg-box and strain energies against h). Port spin to `periodic_torch.py` before
-   labelling a magnetic metal on the GPU.
+2. **Iron, then nickel and cobalt**, on the spin-polarised DFT. Iron is unblocked (D1 applied). Its
+   grid is **h = 0.20, xc_grid = 2** (`scripts/fe_grid.py`, Linux: within 1.1 meV/atom of h = 0.16
+   on volume energy, FM − NM and egg-box, 1e-4 μB on the moment; xc_grid moves it only 0.4 meV;
+   below h ≈ 0.2 the volume energy scatters ±1.5 meV with no trend, as HANDOFF describes).
+   `scripts/fe_magnetism.py` runs the scan; phases can be split across machines (bcc on the Linux
+   container, fcc on the downstairs PC). Nickel and cobalt then need their own E(V) check
+   (`scripts/pp_check.py eos`) and grid. Port spin to `periodic_torch.py` before labelling a
+   magnetic metal on the GPU.
 3. **Use the GPU molecular dynamics.** `engine/materials/md_torch.py` (`EAMForceFieldTorch`,
    `MDTorch`) matches `md.py` to 1e-10 and reproduces its seeded trajectories; on the RTX 4050 a
    full step is 84 ms at 256 000 atoms and 321 ms at 10⁶ (float64, 2.9 GB VRAM). Nothing uses it
@@ -191,6 +217,10 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-26, Linux cloud container (Claude).** D1 applied by the Mac; iron's grid measured
+  (`scripts/fe_grid.py`: h = 0.20, xc_grid = 2) and the bcc phases of `fe_magnetism.py` started
+  here (running when this was written; results land in `results/fe_magnetism.json`). Added D2
+  data for Linux. Wrote the downstairs PC's start-up instructions (What would help most).
 - **2026-09-25, Windows (Claude).** Reviewed D1 independently (DECISIONS.md): agree with the 1.25×
   cap on the strength of iron's E(V), reproduced here to 0.01 mHa; the core-overlap reason does not
   hold (1.25× still overlaps by 1.06 bohr in bcc Fe, copper by 0.76). Added Windows data to D2: the

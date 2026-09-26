@@ -6,10 +6,11 @@ that iron is magnetic or that it is bcc: the starting moment is only a push, whi
 metal gives back (aluminium does). Each point is cached as it finishes, so this can be stopped and
 restarted at will. Writes results/fe_magnetism.json.
 
-    uv run python scripts/fe_magnetism.py [h] [k_bcc] [workers]
+    uv run python scripts/fe_magnetism.py [h] [k_bcc] [workers] [phase,phase,...]
 
-h = 0.24 bohr is converged: FM − NM and the moment agree with h = 0.20 to 0.01 meV and 1e-4 μB
-(h = 0.30 leaves the absolute energy 39 meV/atom high). k_bcc = 8 is within ~3 meV and 0.02 μB of 12.
+Grid h = 0.20 bohr, xc_grid = 2 (scripts/fe_grid.py, v5 potential): within 1.1 meV/atom of h = 0.16 on
+volume energy, FM − NM and egg-box, and 1e-4 μB on the moment. k_bcc = 8 is within ~3 meV and 0.02 μB
+of 12. Phases can be split across machines; each machine caches its own points.
 
 Memory is small (2- and 4-atom cells); time is not: 2 spins x a transition metal's fine grid.
 """
@@ -49,15 +50,15 @@ def kmesh(kind: str, k_bcc: int) -> int:
 
 
 def point(args):
-    phase, v, h, k = args
+    phase, v, h, k, xc = args
     kind, moments = PHASES[phase]
     k = kmesh(kind, k)
-    key = CACHE / f"{phase}_v{v:.3f}_h{h}_k{k}.json"
+    key = CACHE / f"{phase}_v{v:.3f}_h{h}_x{xc}_k{k}.json"
     if key.exists():
         return json.loads(key.read_text())
     n = ATOMS_PER_CELL[kind]
     a = lattice_constant(kind, v)
-    kw = dict(h=h, kmesh=k, smearing="mp", T_e=0.01)
+    kw = dict(h=h, kmesh=k, smearing="mp", T_e=0.01, xc_grid=xc)
     dft = PeriodicDFT(cubic(kind, a, Z), spin=moments is not None, moments=moments, **kw)
     r = dft.run(max_iter=100)
     per_atom = None
@@ -70,7 +71,7 @@ def point(args):
         for R in dft.c.positions:
             d = (idx - R + dft.c.cell / 2) % dft.c.cell - dft.c.cell / 2
             per_atom.append(float(m.ravel()[np.linalg.norm(d, axis=1) < rad].sum()))
-    rec = dict(phase=phase, v_atom=v, a=a, h=h, k=k, E_atom=r.energy / n, converged=r.converged,
+    rec = dict(phase=phase, v_atom=v, a=a, h=h, xc_grid=xc, k=k, E_atom=r.energy / n, converged=r.converged,
                iterations=r.iterations, seconds=r.seconds, grid=list(dft.N), n_k=len(dft.kpts),
                moment_atom=r.moment / n, abs_moment_atom=r.abs_moment / n, sphere_moments=per_atom,
                top_band_occupation=r.notes.get("top_band_occupation"))
@@ -79,22 +80,29 @@ def point(args):
     return rec
 
 
-def main(h: float = 0.24, k: int = 8, workers: int = 1) -> None:
+def main(h: float = 0.20, k: int = 8, workers: int = 1, phases=None, xc: int = 2) -> None:
     t0 = time.time()
-    jobs = [(p, round(float(v), 3), h, k) for p in PHASES for v in V_ATOM]
-    rows = []
+    phases = phases or list(PHASES)
+    jobs = [(p, round(float(v), 3), h, k, xc) for p in phases for v in V_ATOM]
+    rows = [json.loads(f.read_text()) for f in CACHE.glob(f"*_h{h}_x{xc}_*.json")] if CACHE.exists() else []
+    if OUT.exists():                  # phases another machine computed and committed, same grid
+        old = json.loads(OUT.read_text())
+        if old.get("h") == h and old.get("xc_grid") == xc and old.get("k") == k:
+            seen = {(r["phase"], r["v_atom"]) for r in rows}
+            rows += [r for r in old["points"] if (r["phase"], r["v_atom"]) not in seen]
+    rows = [r for r in rows if r["phase"] not in phases]      # other phases, kept in the file
     with cf.ProcessPoolExecutor(max_workers=workers) as pool:
         for rec in pool.map(point, jobs):
             rows.append(rec)
             print(f"{rec['phase']:22s} V={rec['v_atom']:6.2f}  E={rec['E_atom']:.6f}  "
                   f"M={rec['moment_atom']:+.3f}  conv={rec['converged']}  {rec['seconds']:.0f}s  "
                   f"[{time.time() - t0:.0f}s]", flush=True)
-            write(rows, h, k)            # after every point: a stopped run still leaves its finished phases
-    print(json.dumps(write(rows, h, k), indent=1))
+            write(rows, h, k, xc)        # after every point: a stopped run still leaves its finished phases
+    print(json.dumps(write(rows, h, k, xc), indent=1))
     print(f"wrote {OUT}  ({time.time() - t0:.0f}s)")
 
 
-def write(rows, h, k) -> dict:
+def write(rows, h, k, xc) -> dict:
     fits = {}
     for p in PHASES:
         pr = sorted((r for r in rows if r["phase"] == p and r["converged"]), key=lambda r: r["v_atom"])
@@ -111,11 +119,12 @@ def write(rows, h, k) -> dict:
         f["moment_at_V0"] = float(np.interp(f["V0"], [r["v_atom"] for r in pr], [r["abs_moment_atom"] for r in pr]))
         fits[p] = f
     kmeshes = {kind: kmesh(kind, k) for kind in ("bcc", "fcc")}
-    OUT.write_text(json.dumps({"h": h, "k": k, "kmesh": kmeshes, "smearing": "mp 0.01 Ha", "points": rows,
+    OUT.write_text(json.dumps({"h": h, "xc_grid": xc, "k": k, "kmesh": kmeshes, "smearing": "mp 0.01 Ha", "points": rows,
                                "fits": fits}, indent=1))
     return fits
 
 
 if __name__ == "__main__":
     a = sys.argv[1:]
-    main(float(a[0]) if a else 0.24, int(a[1]) if len(a) > 1 else 8, int(a[2]) if len(a) > 2 else 1)
+    main(float(a[0]) if a else 0.20, int(a[1]) if len(a) > 1 else 8, int(a[2]) if len(a) > 2 else 1,
+         a[3].split(",") if len(a) > 3 else None)
