@@ -143,11 +143,10 @@ Take an item, say so in the log, and move it to the log when done. Items are ord
   pseudopotentials regenerated with it (they must use the same functional as the solid), so it
   goes through `DECISIONS.md` first. The success test is not written in: rerun
   `fe_magnetism.py` and see whether bcc ferromagnetic comes out lowest.
-- **D2:** a deterministic all-electron reference configuration, then compare pseudopotentials
-  across machines by max |Δv_ion|, not by hash.
+- ~~D2~~ done 2026-09-26 (pseudopotential cache v6; see DECISIONS.md).
 
 **Linux cloud container** (short checks):
-- **The E(V) check for Co and Ni (and V, Cr, Mn, which D1 requires)** with `scripts/pp_check.py
+- **The E(V) check for Co and Ni (and V, Cr, Mn, which D1 requires)** — on the v6 pseudopotentials (Ni, V, Mn changed in D2) — with `scripts/pp_check.py
   eos` at coarse settings. Co's ground state is hcp, which needs an orthorhombic hcp cell (the
   `Crystal` class is orthorhombic only); start with fcc Co and Ni.
 - **Iron's phase ranking by lower envelope.** At each volume, take each structure's lowest
@@ -233,6 +232,12 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-26, Mac (Claude).** Fixed D2. The reference atom's 4s/3d sloshing made its SCF
+  converge by chance, after an iteration count rounding decides (Mac: V 432, Mn 814, Ni 838, Ti
+  347; the cap is 400). `pseudo.reference_atom` anneals the smearing when the plain SCF fails, and
+  the cache is now v6. Mac V/Mn now equal the other machines (77.0, 58.0 meV). Ni moved 49.9 →
+  129.8 meV (still passes; its solid E(V) is unchecked, now on v6). Every other element is bit for
+  bit unchanged, copper included.
 - **2026-09-26 12:30, Downstairs PC (Claude).** Copper labelling 59/71 (57 converged, **2 refused**:
   #36 and #44, fcc-strain, SCF not converged in 60 iterations; a rerun retries them). **8-atom
   cells timed: 1102–1865 s, 22–28 SCF iterations** (#50–59, fp32). Once iron's scan stopped sharing

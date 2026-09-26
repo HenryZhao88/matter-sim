@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.special import erf
 
-from .radial import AtomResult, RadialAtom, RadialGrid, hartree_potential, scattering_state
+from .radial import AtomResult, RadialAtom, RadialGrid, hartree_potential, scattering_state, settled
 from ..electrons.xc import lda_xc
 
 # Core radii (bohr), close to Troullier & Martins' published choices.
@@ -273,9 +273,7 @@ def generate(Z: int, rc: dict[int, float] | None = None, l_local: int | None = N
     of (default, s, p, d) whose separable form has no ghost states (see :func:`ghost_check`);
     for Z ≤ 18 the default is ghost-free and is kept."""
     grid = RadialGrid(r_min=2e-6 / math.sqrt(Z), r_max=60.0, dx=0.004)
-    ref: AtomResult = RadialAtom(Z, spin=0.0, grid=grid).solve()
-    if not ref.converged:
-        ref = _lowest_configuration(Z, grid, ref)
+    ref = reference_atom(Z, grid)
     if l_local is not None:
         return _build(Z, ref, grid, rc, l_local)
     first = default_local_channel(Z)
@@ -312,6 +310,23 @@ def generate(Z: int, rc: dict[int, float] | None = None, l_local: int | None = N
     if ghostly:
         return min(ghostly, key=lambda x: x[0])[1]
     raise RuntimeError(f"no pseudopotential could be built for Z={Z}")
+
+
+def reference_atom(Z: int, grid: RadialGrid) -> AtomResult:
+    """The all-electron atom a pseudopotential is built from.
+
+    Filled by energy and self-consistent. If the plain SCF does not settle within its iterations
+    (the 4s/3d sloshing of Ti, V, Mn, Ni), the same state is reached by annealing the smearing
+    (radial.settled): the plain SCF settles only by chance, after a number of iterations that
+    rounding decides, so the Mac fell back for V and Mn where Linux and Windows converged, and
+    built different pseudopotentials from the same code (DECISIONS.md D2). Integer configurations
+    remain the last resort."""
+    ref: AtomResult = RadialAtom(Z, spin=0.0, grid=grid).solve()
+    if not ref.converged:
+        ref = settled(RadialAtom(Z, spin=0.0, grid=grid))
+    if not ref.converged:
+        ref = _lowest_configuration(Z, grid, ref)
+    return ref
 
 
 def _lowest_configuration(Z: int, grid: RadialGrid, trial: AtomResult) -> AtomResult:

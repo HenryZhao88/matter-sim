@@ -321,7 +321,8 @@ class RadialAtom:
         # partial core density seen only by exchange–correlation (pseudo-atoms with core correction)
         self.rc_half = 0.0 if rho_core is None else 0.5 * np.asarray(rho_core)
 
-    def solve(self, max_iter: int = 400, tol: float = 1e-9) -> AtomResult:
+    def solve(self, max_iter: int = 400, tol: float = 1e-9, start: tuple | None = None) -> AtomResult:
+        """Self-consistent atom. ``start`` = (ρ↑, ρ↓) to begin from instead of the default cloud."""
         g, r = self.grid, self.grid.r
         ne = self.n_up + self.n_dn
         # Start from a hydrogen-like cloud; converged result does not depend on it.
@@ -329,12 +330,14 @@ class RadialAtom:
         zeff = 0.7 if self.z0[0] < 1e-6 else max(self.Z, 1) ** (1 / 3)
         rho0 = ne * zeff ** 3 * np.exp(-2 * zeff * r) / np.pi
         rho = [rho0 * self.n_up / max(ne, 1e-12), rho0 * self.n_dn / max(ne, 1e-12)]
+        if start is not None:
+            rho = [np.asarray(start[0], float).copy(), np.asarray(start[1], float).copy()]
         mixer = PulayMixer(beta=0.3, history=8)
         E_prev = np.inf
         converged = False
         n_per_l = int(math.ceil(max(ne, 1) / 2)) + 3
 
-        bare = self.z0[0] > 1e-6 and self.charge == 0 and self.Z > 2
+        bare = self.z0[0] > 1e-6 and self.charge == 0 and self.Z > 2 and start is None
         for it in range(1, max_iter + 1):
             if it == 1 and bare:
                 # first pass: the Thomas–Fermi atom with Latter's −1/r tail, so every occupied
@@ -405,6 +408,27 @@ class RadialAtom:
             "hartree": 0.5 * g.integrate(w * vH * rt),
             "exchange_correlation": g.integrate(w * e_xc),
         }
+
+
+def settled(atom: "RadialAtom", temperatures=(0.03, 0.01, 3e-3, 1e-3, 3e-4, 2e-4, 1.5e-4),
+            max_iter: int = 400) -> AtomResult:
+    """The atom's self-consistent state reached by annealing the electronic temperature.
+
+    With the fine default smearing, two nearly degenerate shells (4s and 3d in the transition
+    metals) trade their electrons back and forth: the filling is almost a step, so each iteration
+    empties one shell into the other, and the SCF settles only when the mixing happens to land
+    near the fractional fixed point. When that happens is chaotic, and rounding decides it: Mn took
+    814 iterations on one machine and fewer than 400 on another, so the same code built different
+    pseudopotentials. At a larger temperature the filling is smooth and the SCF converges; each
+    cooler stage then starts at the previous fixed point, and the last runs at the atom's own
+    temperature, so the answer is the same state, reached the same way everywhere."""
+    T_final = atom.T_e
+    res = None
+    for T in tuple(t for t in temperatures if t > T_final) + (T_final,):
+        atom.T_e = T
+        res = atom.solve(max_iter=max_iter, start=None if res is None else (res.rho_up, res.rho_dn))
+    atom.T_e = T_final
+    return res
 
 
 def ground_state(Z: int, charge: int = 0, max_spin: int = 5, **kw) -> AtomResult:

@@ -14,7 +14,33 @@ the human decides when agents disagree. Read this with `AGENTS.md` at the start 
 
 ## Open
 
-### D2 — Pseudopotentials differ between machines (V, Mn, and probably Ti, Fe)
+(none)
+
+## Decided
+
+### D2 — Pseudopotentials differ between machines (V, Mn, and probably Ti, Fe) — **fixed**
+
+- **Outcome:** fixed by the Mac, 2026-09-26, in the commit that adds this line (pseudopotential
+  cache v6). The cause was the reference atom's SCF, not the machines' arithmetic. Where 4s and 3d
+  are nearly degenerate, the occupations slosh between them at the atom's fine smearing (T_e 1e-4)
+  and the plain SCF settles only by chance. On the Mac, V needs 432 iterations, Mn 814, Ni 838 and
+  Ti 347, against a cap of 400. Given room, the Mac converges to **exactly** Linux's values
+  (V −941.67465238, 4s 1.6800; Mn −1148.46643671, 4s 1.2441). `pseudo.reference_atom` now
+  falls back to `radial.settled` when the plain SCF does not converge: smearing annealed
+  0.03 → 1.5e-4 → 1e-4 Ha, each stage starting from the last. It reaches the same state in 24–90
+  final iterations, V through Ni and Ti, matching the long plain runs to every printed digit.
+  Integer configurations remain only as a last resort.
+- **Mac, v5 → v6:** V 274 → **77.0** meV (passes; matches Linux, Windows, downstairs), Mn 79 →
+  **58.0** (matches). **Ni 49.9 → 129.8** (still passes): its v5 used the integer 3d⁹4s¹ fallback;
+  from the self-consistent 4s 0.80 / 3d 9.20 reference the generator's own rule now picks the
+  unstretched s radius (2.31 bohr, was 2.89). Every other element is bit for bit v5, copper
+  included. Machines that used the fallback for Ti (Linux, downstairs: 279.5) should now get the
+  Mac's converged-reference Ti (264.8): confirm on your next regeneration. Fast suite 120 passed,
+  pseudopotential tests 25 passed (new: `test_annealed_reference_atom_is_the_converged_one`).
+- **Comparing across machines:** by largest |Δv_ion| and the checks, not by hash (Linux's
+  proposal, adopted). Bits differ between Python builds at a level no result sees.
+- **Still unexplained, no longer used:** Fe's 1.5× candidate is 21.9 meV on Linux and 8.7 on the
+  Mac and Windows; D1 removed 1.5×.
 
 - **Found:** 2026-09-25, Mac (Claude), while checking D1. For the *same* candidate, the free-atom
   error differs by machine: V 1.25× s-local 274 meV on the Mac vs 77 on Linux (and 137 vs 36 at
@@ -75,8 +101,6 @@ the human decides when agents disagree. Read this with `AGENTS.md` at the start 
   separate that from a real difference. Proposal: compare pickled pseudopotentials by the largest
   |Δv_ion| per channel (and the checks), not by hash. The Mac's unconverged V/Mn reference atom
   remains the only difference big enough to change a result.
-
-## Decided
 
 ### D1 — Cap the pseudopotential ghost-avoidance stretch at 1.25× (unblocks iron) — **applied**
 

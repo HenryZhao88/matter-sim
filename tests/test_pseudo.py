@@ -78,3 +78,18 @@ def test_pseudo_forces_match_energy_slope():
     slope = (Ep - Em) / (2 * dR)
     assert F[1, 0] == pytest.approx(-slope, rel=0.05, abs=1e-3)
     assert F[0, 0] == pytest.approx(slope, rel=0.05, abs=1e-3)
+
+
+def test_annealed_reference_atom_is_the_converged_one():
+    """Manganese's 4s and 3d trade electrons for hundreds of iterations at the atom's fine
+    smearing; the plain SCF settles only by chance (814 iterations on the Mac, under 400 on Linux
+    and Windows), which gave different machines different pseudopotentials. Annealing the smearing
+    reaches the same state every time: the energy and 4s/3d occupations the long plain run finds."""
+    import math
+    from engine.atoms.radial import RadialAtom, RadialGrid, settled
+    grid = RadialGrid(r_min=2e-6 / math.sqrt(25), r_max=60.0, dx=0.004)
+    res = settled(RadialAtom(25, spin=0.0, grid=grid))
+    assert res.converged
+    assert abs(res.energy - (-1148.46643671)) < 2e-8
+    s4 = [2 * lv.occupation for lv in res.levels if lv.spin == 0 and lv.n == 4 and lv.l == 0][0]
+    assert abs(s4 - 1.2441) < 1e-3

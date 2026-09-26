@@ -23,12 +23,10 @@ CACHE = Path(__file__).resolve().parents[1] / ".cache" / "pp_check"
 
 def candidates(Z: int) -> None:
     from engine.atoms import pseudo
-    from engine.atoms.radial import RadialAtom, RadialGrid
+    from engine.atoms.radial import RadialGrid
     CACHE.mkdir(parents=True, exist_ok=True)
     grid = RadialGrid(r_min=2e-6 / math.sqrt(Z), r_max=60.0, dx=0.004)
-    ref = RadialAtom(Z, spin=0.0, grid=grid).solve()
-    if not ref.converged:
-        ref = pseudo._lowest_configuration(Z, grid, ref)
+    ref = pseudo.reference_atom(Z, grid)
     base = pseudo.DEFAULT_RC[Z]
     base = base if isinstance(base, dict) else {0: base, 1: base, 2: base}
     for scale in (1.0, 1.25, 1.5):
