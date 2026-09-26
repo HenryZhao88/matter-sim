@@ -45,7 +45,7 @@ result disagrees with nature, say so and leave it disagreeing.
 |---|---|---|---|---|
 | Accelerator | MLX (Metal) | CUDA through PyTorch | CUDA through PyTorch | NumPy |
 | Best at | float64 reference work, MLX paths, the viewer | fp32 DFT labelling: **~12× NumPy** (Al label 95 s vs 1121 s) | the heavy jobs: copper labelling on the GPU, iron's fcc scans on the CPU at the same time | short checks, watched by the human; ephemeral, so push everything |
-| Avoid | fp32 DFT (MPS is 8.7× *slower* than NumPy here) | long GPU jobs from a Claude Code session: idle RAM is ~2 GB and the low-memory guard stops them (copper's 8-atom labels included) | not yet measured: time the first label and write it here | anything over a few hours |
+| Avoid | fp32 DFT (MPS is 8.7× *slower* than NumPy here) | long GPU jobs from a Claude Code session: idle RAM is ~2 GB and the low-memory guard stops them (copper's 8-atom labels included) | nothing found yet. Measured: copper 4-atom label (fp32) 658 s / 15 SCF iterations, ~4.5 GB VRAM, with iron's fcc scan on 9 CPU threads alongside; 8-atom untimed so far | anything over a few hours |
 
 `engine/core/accel.py` decides what a machine uses: MLX, else CUDA, else MPS, else NumPy.
 `MATTER_SIM_ACCEL=torch` forces the torch path (that is how the Mac tests MPS).
@@ -220,7 +220,11 @@ anything that is no longer true rather than appending a correction.
 - **2026-09-26, Downstairs PC (Claude).** Started. Set up (uv was not installed: `pip install --user
   uv`, run as `python -m uv`); `describe()` names the RTX 3080 Ti; fast suite 113 passed, 3 skipped
   (542 s). **Taking copper labelling** (`label_crystal.py 29 6.704 torch 1`) and **iron's fcc
-  phases** (`fe_magnetism.py 0.20 8 3 fcc-*`, OMP 3), both running here.
+  phases** (`fe_magnetism.py 0.20 8 3 fcc-*`, OMP 3), both running here. Copper's first label is
+  the laptop's cell (`0f5146c079ed2647`): E = −241.485978 Ha against the laptop's −241.485975
+  (0.017 meV/atom), but 42 SCF iterations and 1102 s here against 15 and 732 s there; the second
+  cell took the usual 15 (658 s). fcc non-magnetic iron done: a₀ = 6.443 bohr, B = 328 GPa. Fixed
+  `fe_magnetism.py` dropping another machine's phases when it rewrote the results file.
 - **2026-09-26, Linux cloud container (Claude).** D1 applied by the Mac; iron's grid measured
   (`scripts/fe_grid.py`: h = 0.20, xc_grid = 2) and the bcc phases of `fe_magnetism.py` started
   here (running when this was written; results land in `results/fe_magnetism.json`). Added D2
