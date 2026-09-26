@@ -146,15 +146,41 @@ def iron_section() -> None:
     if nm is not None:
         record("materials", "Iron: magnetic energy (bcc, FM − NM)", (fm["E0"] - nm["E0"]) * HARTREE_EV * 1000,
                "< 0", "meV/atom", "negative: iron chooses to be a magnet", fm["E0"] < nm["E0"])
-    ranked = sorted(fits, key=lambda p: fits[p]["E0"])
+    env = _lower_envelopes(d["points"])
+    if len(env) < 2:
+        return
+    ranked = sorted(env, key=lambda s: env[s]["E0"])
+    best = ranked[0]
+    record("materials", "Iron: lowest-energy crystal", f"{best} {env[best]['state']}", "bcc ferromagnetic", "",
+           " < ".join(f"{s} {env[s]['state']} {(env[s]['E0'] - env[best]['E0']) * HARTREE_EV * 1000:+.0f}"
+                      for s in ranked[1:]) + " meV (each structure's lowest state at every volume)",
+           best == "bcc" and env[best]["state"] == "ferromagnetic")
 
-    def named(p):
-        # a phase is named by its starting moment, which is only a push: say when it came back to zero
-        return p + (" (moment → 0)" if "magnetic" in p and "non" not in p and fits[p]["moment_at_V0"] < 0.1 else "")
 
-    record("materials", "Iron: lowest-energy phase", named(ranked[0]), "bcc-ferromagnetic", "",
-           " < ".join(f"{named(p)} {(fits[p]['E0'] - fits[ranked[0]]['E0']) * HARTREE_EV * 1000:+.0f}" for p in ranked[1:]) + " meV",
-           ranked[0] == "bcc-ferromagnetic")
+def _lower_envelopes(points) -> dict:
+    """Per structure, the lowest energy at each volume over every magnetic start, fitted.
+
+    A magnetic start is only a push: some relax to zero moment and some stop in a metastable state
+    above the non-magnetic one (fcc ferromagnetic at V = 76 bohr³ held 1.04 μB, 13 meV/atom above).
+    Fitting each start as its own curve mixes those branches, so the crystal's energy is the lowest
+    state found at each volume, and the state is named by the moment it ended with, not its start."""
+    from engine.crystal.eos import fit
+    out = {}
+    for struct in ("bcc", "fcc"):
+        by_v: dict = {}
+        for r in points:
+            if r["phase"].startswith(struct) and r["converged"]:
+                if r["v_atom"] not in by_v or r["E_atom"] < by_v[r["v_atom"]]["E_atom"]:
+                    by_v[r["v_atom"]] = r
+        rows = [by_v[v] for v in sorted(by_v)]
+        if len(rows) < 5:
+            continue
+        f = fit([(r["v_atom"], r["E_atom"]) for r in rows])
+        near = min(rows, key=lambda r: abs(r["v_atom"] - f["V0"]))
+        m = near["abs_moment_atom"]
+        kind = "non-magnetic" if m < 0.1 else near["phase"].split("-", 1)[1]
+        out[struct] = dict(f, state=kind, moment=m, inside=rows[0]["v_atom"] < f["V0"] < rows[-1]["v_atom"])
+    return out
 
 
 def particles_section(quick: bool) -> None:
