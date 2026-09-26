@@ -240,6 +240,40 @@ def test_single_precision_eigensolver_is_stable_far_past_convergence():
 
 
 @requires_torch
+def test_single_precision_spin_without_a_moment_is_the_unpolarised_one():
+    """The device's spin-polarised path (periodic_torch.py) with no starting moment: both spins start
+    from the same state and do the same arithmetic, so the moment stays zero and the energy is the
+    unpolarised NumPy one, to the single-precision bound used for aluminium above."""
+    from engine.crystal.periodic_torch import PeriodicDFTTorch
+    c = cubic("fcc", 7.6, 13)
+    kw = dict(h=0.45, kmesh=2, T_e=0.01)
+    ref = PeriodicDFT(c, **kw).run()
+    got = PeriodicDFTTorch(c, spin=True, **kw).run()
+    assert got.converged and got.moment == 0 and got.abs_moment == 0
+    assert abs(got.free_energy - ref.free_energy) / 4 * 27.211386 < 1e-4
+
+
+@requires_torch
+@pytest.mark.slow
+def test_single_precision_spin_polarised_iron_matches_numpy():
+    """Magnetic iron, displaced, on the device against the NumPy LSDA: energy, forces (each spin's
+    nonlocal term and the partial core's share of both spins' XC) and the moment itself. Bounds as
+    for copper in single precision below: 1 meV/atom and 3e-4 Ha/bohr."""
+    from engine.crystal.periodic_torch import PeriodicDFTTorch
+    rng = np.random.default_rng(5)
+    base = cubic("bcc", 5.3, 26)
+    c = Crystal(base.cell, base.charges, base.positions + rng.normal(0, 0.15, base.positions.shape))
+    kw = dict(h=0.35, kmesh=2, T_e=0.01, symmetry=False, spin=True, moments=2.5, xc_grid=2)
+    ref = PeriodicDFT(c, **kw).run(forces=True)
+    got = PeriodicDFTTorch(c, **kw).run(forces=True)
+    assert ref.converged and got.converged
+    assert ref.abs_moment / 2 > 1.0                       # it is a magnet, or this tests nothing
+    assert abs(got.free_energy - ref.free_energy) / 2 * 27.211386 < 1e-3
+    assert np.abs(got.forces - ref.forces).max() < 3e-4
+    assert abs(got.moment - ref.moment) / 2 < 0.01
+
+
+@requires_torch
 @pytest.mark.slow
 @pytest.mark.parametrize("xc_grid", [1, 2])
 def test_single_precision_dft_on_a_transition_metal(xc_grid):
