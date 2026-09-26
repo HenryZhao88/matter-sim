@@ -14,7 +14,23 @@ the human decides when agents disagree. Read this with `AGENTS.md` at the start 
 
 ## Open
 
-(none)
+### D3 — A gradient-corrected functional (PBE), as an option beside LDA
+
+- **Proposal:** [`proposals/pbe.md`](proposals/pbe.md)
+- **Why:** plain LDA puts non-magnetic fcc iron ~40–45 meV/atom below ferromagnetic bcc (our scan,
+  `results/fe_magnetism.json`), its known failure for iron. PBE's constants come from exact
+  constraints, not fits, so it meets the project's rule the way Perdew–Wang LDA does.
+- **Changes:** a `functional` switch (default `"lda"`, bit for bit today's code) through xc.py, the
+  radial atom, pseudopotential generation, the periodic and molecular solvers. PBE
+  pseudopotentials are cached under their own names. The functional becomes part of an element's
+  settings and of its labels.
+- **Cost:** a few sessions of work. Each PBE element needs its grid re-converged (sharper
+  potentials, and gradients of the partial core). Care is needed where ρ → 0. Nothing already
+  computed changes.
+- **Not claimed:** that PBE puts bcc iron lowest. That gets measured and reported whatever it is.
+- **Blocks:** nothing now. It is the next physics step for iron (and for nickel and cobalt).
+
+**Comments**
 
 ## Decided
 
