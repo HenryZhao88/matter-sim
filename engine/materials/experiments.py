@@ -33,13 +33,15 @@ def thermal_curve(model: EAM, a0: float, temps, n=(4, 4, 4), steps: int = 4000, 
     return rows
 
 
-def melting_point(model: EAM, a_of_T, lo: float, hi: float, iters: int = 5, log=None) -> dict:
+def melting_point(model: EAM, a_of_T, lo: float, hi: float, iters: int = 5, log=None,
+                  n=(5, 5, 12), engine: str = "numpy") -> dict:
     """Bisection on the direction a half-solid, half-liquid box moves: the crystal grows below
-    the melting point (potential energy falls) and melts above it (potential energy rises)."""
+    the melting point (potential energy falls) and melts above it (potential energy rises).
+    ``n`` is the box in fcc cells (4 atoms each); ``engine="torch"`` runs it on a GPU."""
     trail = []
     for _ in range(iters):
         T = 0.5 * (lo + hi)
-        r = coexistence(model, a_of_T(T) / BOHR_A, T)
+        r = coexistence(model, a_of_T(T) / BOHR_A, T, n=n, engine=engine)
         trail.append({"T": T, "slope": r["slope"]})
         if log:
             log(trail[-1])

@@ -257,3 +257,16 @@ def test_gpu_md_reproduces_the_numpy_trajectory():
     assert np.abs(b.box.cpu().numpy() - a.s.box).max() < 1e-12
     for x, y in zip(ra, rb):
         assert abs(x["E"] - y["E"]) < 1e-9 * abs(x["E"]) and abs(x["T"] - y["T"]) < 1e-8 * x["T"]
+
+
+@requires_torch
+def test_experiments_run_on_either_md_engine():
+    """make_md's torch engine through the experiment functions (npt_lattice_constant uses .s and
+    run): a short seeded run gives the same lattice constant and enthalpy as the NumPy engine."""
+    from engine.materials.md import npt_lattice_constant
+    m = toy_model(4)
+    a = npt_lattice_constant(m, 7.6, 300.0, n=(3, 3, 3), steps=40, seed=2)
+    b = npt_lattice_constant(m, 7.6, 300.0, n=(3, 3, 3), steps=40, seed=2, engine="torch")
+    assert abs(a["a"] - b["a"]) < 1e-9 and abs(a["H_per_atom"] - b["H_per_atom"]) < 1e-9 * abs(a["H_per_atom"])
+    with pytest.raises(ValueError):
+        npt_lattice_constant(m, 7.6, 300.0, n=(3, 3, 3), steps=1, engine="fortran")

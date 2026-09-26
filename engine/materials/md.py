@@ -171,14 +171,26 @@ class MD:
 
 
 # ------------------------------------------------------------------ experiments
+def make_md(model: EAM, state: State, seed: int = 0, engine: str = "numpy", dt_fs: float = 2.0):
+    """The integrator for ``engine``: "numpy" (md.MD, the reference) or "torch" (md_torch.MDTorch,
+    the same dynamics on a GPU, reproducing md.MD's seeded trajectories; for 10⁵–10⁶ atoms)."""
+    if engine == "torch":
+        from .md_torch import MDTorch
+        return MDTorch(model, state, dt_fs=dt_fs, seed=seed)
+    if engine != "numpy":
+        raise ValueError(f"unknown MD engine {engine!r}")
+    return MD(model, state, dt_fs=dt_fs, seed=seed)
+
+
 def al_state(model: EAM, a: float, n=(6, 6, 6)) -> State:
     pos, box = fcc_lattice(a, n)
     return State(pos, np.zeros_like(pos), box, 26.9815385 * AMU_ME)
 
 
-def npt_lattice_constant(model: EAM, a0: float, T: float, n=(6, 6, 6), steps=3000, seed=0) -> dict:
+def npt_lattice_constant(model: EAM, a0: float, T: float, n=(6, 6, 6), steps=3000, seed=0,
+                         engine: str = "numpy") -> dict:
     """Mean lattice constant and enthalpy per atom at temperature T and zero pressure."""
-    md = MD(model, al_state(model, a0, n), seed=seed)
+    md = make_md(model, al_state(model, a0, n), seed=seed, engine=engine)
     md.thermalise(T)
     rows = md.run(steps, T=T, P_GPa=0.0, sample_every=10)
     tail = rows[len(rows) // 2:]
@@ -189,7 +201,8 @@ def npt_lattice_constant(model: EAM, a0: float, T: float, n=(6, 6, 6), steps=300
             "T_measured": float(np.mean([r["T"] for r in tail]))}
 
 
-def coexistence(model: EAM, a_T: float, T: float, n=(5, 5, 12), steps=6000, seed=0) -> dict:
+def coexistence(model: EAM, a_T: float, T: float, n=(5, 5, 12), steps=6000, seed=0,
+                engine: str = "numpy") -> dict:
     """Half crystal, half liquid at temperature T, at fixed volume.
 
     The solid and the liquid share a box whose density is the solid's at T, opened by the few
@@ -200,7 +213,7 @@ def coexistence(model: EAM, a_T: float, T: float, n=(5, 5, 12), steps=6000, seed
     state = al_state(model, a_T, n)
     state.box = state.box * (1 + 0.02)                 # liquid is a few per cent less dense
     state.pos = state.pos * (1 + 0.02)
-    md = MD(model, state, seed=seed)
+    md = make_md(model, state, seed=seed, engine=engine)
     N = len(state.pos)
     top = state.pos[:, 2] > state.box[2] / 2
     # melt the top half while holding the bottom half fixed, then release at T

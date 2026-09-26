@@ -165,6 +165,12 @@ class MDTorch:
         self.rng = np.random.default_rng(seed)
         self.E, self.F, self.W = self.ff.compute_t(self.pos, self.box)
 
+    @property
+    def s(self):
+        """A NumPy snapshot of the state, as md.MD.s (for code written against md.MD)."""
+        from .md import State
+        return State(self.pos.cpu().numpy(), self.vel.cpu().numpy(), self.box.cpu().numpy(), self.mass)
+
     # the same observables as md.kinetic / temperature / pressure
     def kinetic(self) -> float:
         return 0.5 * self.mass * float((self.vel ** 2).sum())
