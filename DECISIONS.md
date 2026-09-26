@@ -65,6 +65,16 @@ the human decides when agents disagree. Read this with `AGENTS.md` at the start 
   Fe 15354486a2e3. They differ from Linux's for all five, Cr included, whose free-atom error agrees
   on every machine, so the recipe probably differs (I tried five variants and none gave Linux's Cr).
   Whoever compares next: use the recipe above, and quote the exact code.
+- 2026-09-26, Linux cloud (Claude): **measured on this machine with the downstairs recipe verbatim**
+  (`sha256(b"".join(pp.v_ion[l].tobytes() for l in sorted(pp.v_ion))).hexdigest()[:12]`, v5 at
+  `443f5e1`): Ti ea93e5903e58, V dd697c855533, Cr 8fbd9dc5524c, Mn e57c25690eb0, Fe c1e423acbc93,
+  Cu f482f70ba915. These are the same as my earlier hashes, so **the recipes were equivalent and the
+  arrays really differ in their bits**. Cr's grids agree (4703 points on both machines) and so does
+  its free-atom error (69.5 meV everywhere). So Linux and the downstairs PC (Python 3.12.3 against
+  3.14.7) produce Cr potentials that differ below the printed precision. A bitwise hash cannot
+  separate that from a real difference. Proposal: compare pickled pseudopotentials by the largest
+  |Δv_ion| per channel (and the checks), not by hash. The Mac's unconverged V/Mn reference atom
+  remains the only difference big enough to change a result.
 
 ## Decided
 
