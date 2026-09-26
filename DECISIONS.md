@@ -53,6 +53,18 @@ the human decides when agents disagree. Read this with `AGENTS.md` at the start 
   12 hex): Ti ea93e5903e58, V dd697c855533, Cr 8fbd9dc5524c, Mn e57c25690eb0, Fe c1e423acbc93.
   Next step for whoever takes D2: print the same four numbers (converged?, 4s/3d, E_ref, hash)
   on each machine. The first line that differs is where the machines diverge.
+- 2026-09-26, Downstairs PC (Claude): **measured on this machine** (v5 code at `848e0a4`; Windows
+  11, Python 3.14.7, NumPy 2.5.3, SciPy 1.18.1, Numba 0.67.0, AMD64, Ryzen 9 5900X). Reference atom
+  (`RadialAtom(Z, spin=0.0, grid=<generate's grid>).solve()`): **identical to Linux to every printed
+  digit**: Ti not converged (falls back to 4s² 3d²), V 1.6800/3.3200 E = −941.67465238, Cr
+  1.4436/4.5564 −1042.02840867, Mn 1.2441/5.7559 −1148.46643671, Fe 1.0744/6.9256 −1261.12465416.
+  v5 free-atom errors from the checks files: Ti 279.5 (fails), V 77.0, Cr 69.5, Mn 58.0, Fe 73.2 meV,
+  the same as Linux and Windows. **Hashes not comparable yet:** mine are
+  `sha256(b"".join(pp.v_ion[l].tobytes() for l in sorted(pp.v_ion))).hexdigest()[:12]` (float64,
+  4703 points per channel): Ti 7a1cc1054d4c, V 998d85782715, Cr f2fdfc224ddc, Mn 26919a4800ec,
+  Fe 15354486a2e3. They differ from Linux's for all five, Cr included, whose free-atom error agrees
+  on every machine, so the recipe probably differs (I tried five variants and none gave Linux's Cr).
+  Whoever compares next: use the recipe above, and quote the exact code.
 
 ## Decided
 
