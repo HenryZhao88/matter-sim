@@ -9,6 +9,538 @@
  "smearing": "mp 0.01 Ha",
  "points": [
   {
+   "phase": "fcc-antiferromagnetic",
+   "v_atom": 60.0,
+   "a": 6.214465011907717,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.73733263334158,
+   "converged": true,
+   "iterations": 23,
+   "seconds": 1697.3259895998053,
+   "grid": [
+    32,
+    32,
+    32
+   ],
+   "n_k": 18,
+   "moment_atom": 4.785902121499393e-06,
+   "abs_moment_atom": 9.692462920188858e-05,
+   "sphere_moments": [
+    -0.0001719234325392333,
+    2.036409476881195e-05,
+    2.0364094768856384e-05,
+    0.00015096095930800316
+   ],
+   "top_band_occupation": -1.7469892669379096e-150
+  },
+  {
+   "phase": "fcc-antiferromagnetic",
+   "v_atom": 64.0,
+   "a": 6.3496042078727974,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.74141879531959,
+   "converged": true,
+   "iterations": 39,
+   "seconds": 2597.2303610998206,
+   "grid": [
+    32,
+    32,
+    32
+   ],
+   "n_k": 18,
+   "moment_atom": 5.932960693865573e-06,
+   "abs_moment_atom": 0.00023828546985778788,
+   "sphere_moments": [
+    0.00048272074789547636,
+    -0.00012821204272156554,
+    -0.00012821204272159172,
+    -0.0002018707972664576
+   ],
+   "top_band_occupation": -1.4544864998838867e-128
+  },
+  {
+   "phase": "fcc-antiferromagnetic",
+   "v_atom": 68.0,
+   "a": 6.479223602554966,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.741828927827612,
+   "converged": true,
+   "iterations": 36,
+   "seconds": 3487.492025699932,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 18,
+   "moment_atom": -1.0853991268614063e-06,
+   "abs_moment_atom": 0.5838952142439148,
+   "sphere_moments": [
+    0.5786113340269623,
+    -0.577875766076297,
+    -0.577875766076297,
+    0.5770644980467806
+   ],
+   "top_band_occupation": -1.6913274082308499e-108
+  },
+  {
+   "phase": "fcc-antiferromagnetic",
+   "v_atom": 72.0,
+   "a": 6.603854497789253,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.740393532458075,
+   "converged": true,
+   "iterations": 36,
+   "seconds": 3341.736684499774,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 18,
+   "moment_atom": 1.7770666645836892e-05,
+   "abs_moment_atom": 1.008642629995138,
+   "sphere_moments": [
+    0.9985194459652875,
+    -0.9985138723243037,
+    -0.9985138723243038,
+    0.9987541315895139
+   ],
+   "top_band_occupation": -4.0570424482591335e-90
+  },
+  {
+   "phase": "fcc-antiferromagnetic",
+   "v_atom": 76.0,
+   "a": 6.723950813597926,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.73779238838,
+   "converged": true,
+   "iterations": 26,
+   "seconds": 2586.2989953998476,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 18,
+   "moment_atom": -2.1082885029856417e-05,
+   "abs_moment_atom": 1.3273476554515293,
+   "sphere_moments": [
+    1.3134644040803842,
+    -1.3144034807135678,
+    -1.3144034807135676,
+    1.3152560010828451
+   ],
+   "top_band_occupation": -8.829333869298376e-76
+  },
+  {
+   "phase": "fcc-antiferromagnetic",
+   "v_atom": 80.0,
+   "a": 6.839903786706787,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.73421278548512,
+   "converged": true,
+   "iterations": 26,
+   "seconds": 2433.3249747999944,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 18,
+   "moment_atom": -8.139619528863108e-05,
+   "abs_moment_atom": 1.6253404428668026,
+   "sphere_moments": [
+    1.6106248736659357,
+    -1.6104420931966867,
+    -1.6104420931966867,
+    1.6101733287672806
+   ],
+   "top_band_occupation": -1.5796641977085824e-64
+  },
+  {
+   "phase": "fcc-antiferromagnetic",
+   "v_atom": 84.0,
+   "a": 6.952053289772898,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.730001935600157,
+   "converged": true,
+   "iterations": 35,
+   "seconds": 2977.743500699755,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 18,
+   "moment_atom": -0.00026181785084546366,
+   "abs_moment_atom": 1.9228675379402753,
+   "sphere_moments": [
+    1.9059304523640517,
+    -1.9061993498543484,
+    -1.9061993498543481,
+    1.9057089543598522
+   ],
+   "top_band_occupation": -1.0203644841180317e-55
+  },
+  {
+   "phase": "fcc-ferromagnetic",
+   "v_atom": 60.0,
+   "a": 6.214465011907717,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.737332639284404,
+   "converged": true,
+   "iterations": 23,
+   "seconds": 960.6129652000964,
+   "grid": [
+    32,
+    32,
+    32
+   ],
+   "n_k": 10,
+   "moment_atom": -1.1214125132672338e-06,
+   "abs_moment_atom": 3.760948333510996e-05,
+   "sphere_moments": [
+    -7.583201123924666e-05,
+    2.4210628545445218e-05,
+    2.421062854557415e-05,
+    2.421062854554651e-05
+   ],
+   "top_band_occupation": -1.74715339948029e-150
+  },
+  {
+   "phase": "fcc-ferromagnetic",
+   "v_atom": 64.0,
+   "a": 6.3496042078727974,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.7414187993571,
+   "converged": true,
+   "iterations": 30,
+   "seconds": 1221.0096710999496,
+   "grid": [
+    32,
+    32,
+    32
+   ],
+   "n_k": 10,
+   "moment_atom": -2.167186527810568e-06,
+   "abs_moment_atom": 2.5184632860006284e-05,
+   "sphere_moments": [
+    -5.4336509737572264e-05,
+    1.4824321004753295e-05,
+    1.4824321004875668e-05,
+    1.4824321004897326e-05
+   ],
+   "top_band_occupation": -1.4551753292679004e-128
+  },
+  {
+   "phase": "fcc-ferromagnetic",
+   "v_atom": 68.0,
+   "a": 6.479223602554966,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.742054318121845,
+   "converged": true,
+   "iterations": 39,
+   "seconds": 2139.946764800232,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 3.4869994607167115e-05,
+   "abs_moment_atom": 0.00017456308045351758,
+   "sphere_moments": [
+    0.00041533830974236637,
+    -9.093430772344196e-05,
+    -9.093430772342433e-05,
+    -9.09303920350157e-05
+   ],
+   "top_band_occupation": -3.0122800596912658e-111
+  },
+  {
+   "phase": "fcc-ferromagnetic",
+   "v_atom": 72.0,
+   "a": 6.603854497789253,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.740260160885533,
+   "converged": true,
+   "iterations": 45,
+   "seconds": 2491.024587099906,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": -3.821222646504337e-05,
+   "abs_moment_atom": 4.1265045093426645e-05,
+   "sphere_moments": [
+    -6.996771014091632e-05,
+    -2.8876954665012176e-05,
+    -2.8876954665085997e-05,
+    -2.8876954665113163e-05
+   ],
+   "top_band_occupation": -2.465928212139707e-97
+  },
+  {
+   "phase": "fcc-ferromagnetic",
+   "v_atom": 76.0,
+   "a": 6.723950813597926,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.736224001118842,
+   "converged": true,
+   "iterations": 29,
+   "seconds": 1613.9944265997037,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 1.0113454134952615,
+   "abs_moment_atom": 1.0357888509211224,
+   "sphere_moments": [
+    1.021842103217734,
+    1.0219280049143586,
+    1.0219280049143586,
+    1.0219280049143586
+   ],
+   "top_band_occupation": -3.615247569875214e-99
+  },
+  {
+   "phase": "fcc-ferromagnetic",
+   "v_atom": 80.0,
+   "a": 6.839903786706787,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.733137342970043,
+   "converged": true,
+   "iterations": 24,
+   "seconds": 1409.2754605002701,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 2.4311854542378906,
+   "abs_moment_atom": 2.482082665315033,
+   "sphere_moments": [
+    2.4542966699590356,
+    2.4543120200291444,
+    2.4543120200291444,
+    2.4543120200291444
+   ],
+   "top_band_occupation": 0.8231034538748108
+  },
+  {
+   "phase": "fcc-ferromagnetic",
+   "v_atom": 84.0,
+   "a": 6.952053289772898,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.73159841594849,
+   "converged": true,
+   "iterations": 19,
+   "seconds": 1163.9040084001608,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 2.531554802542067,
+   "abs_moment_atom": 2.5944525901680224,
+   "sphere_moments": [
+    2.56034955587093,
+    2.5605009212380487,
+    2.5605009212380487,
+    2.5604986446237
+   ],
+   "top_band_occupation": 1.0351897950324507
+  },
+  {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 60.0,
+   "a": 6.214465011907717,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.737332638745784,
+   "converged": true,
+   "iterations": 14,
+   "seconds": 322.71150669967756,
+   "grid": [
+    32,
+    32,
+    32
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 64.0,
+   "a": 6.3496042078727974,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.741418798600755,
+   "converged": true,
+   "iterations": 15,
+   "seconds": 326.6033717999235,
+   "grid": [
+    32,
+    32,
+    32
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 68.0,
+   "a": 6.479223602554966,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.742054317955713,
+   "converged": true,
+   "iterations": 17,
+   "seconds": 507.8808097001165,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 72.0,
+   "a": 6.603854497789253,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.74026016156249,
+   "converged": true,
+   "iterations": 18,
+   "seconds": 539.5268436996266,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 76.0,
+   "a": 6.723950813597926,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.736699760884164,
+   "converged": true,
+   "iterations": 18,
+   "seconds": 570.4890899998136,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 80.0,
+   "a": 6.839903786706787,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.731891552264116,
+   "converged": true,
+   "iterations": 19,
+   "seconds": 582.1784989996813,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
+   "phase": "fcc-nonmagnetic",
+   "v_atom": 84.0,
+   "a": 6.952053289772898,
+   "h": 0.2,
+   "xc_grid": 2,
+   "k": 6,
+   "E_atom": -28.72622422554277,
+   "converged": true,
+   "iterations": 19,
+   "seconds": 581.0842069000937,
+   "grid": [
+    36,
+    36,
+    36
+   ],
+   "n_k": 10,
+   "moment_atom": 0.0,
+   "abs_moment_atom": 0.0,
+   "sphere_moments": null,
+   "top_band_occupation": null
+  },
+  {
    "phase": "bcc-nonmagnetic",
    "v_atom": 60.0,
    "a": 4.93242414866094,
@@ -336,295 +868,6 @@
     2.384229250411794
    ],
    "top_band_occupation": 0.0
-  },
-  {
-   "phase": "fcc-ferromagnetic",
-   "v_atom": 60.0,
-   "a": 6.214465011907717,
-   "h": 0.2,
-   "xc_grid": 2,
-   "k": 6,
-   "E_atom": -28.737332639284404,
-   "converged": true,
-   "iterations": 23,
-   "seconds": 960.6129652000964,
-   "grid": [
-    32,
-    32,
-    32
-   ],
-   "n_k": 10,
-   "moment_atom": -1.1214125132672338e-06,
-   "abs_moment_atom": 3.760948333510996e-05,
-   "sphere_moments": [
-    -7.583201123924666e-05,
-    2.4210628545445218e-05,
-    2.421062854557415e-05,
-    2.421062854554651e-05
-   ],
-   "top_band_occupation": -1.74715339948029e-150
-  },
-  {
-   "phase": "fcc-ferromagnetic",
-   "v_atom": 64.0,
-   "a": 6.3496042078727974,
-   "h": 0.2,
-   "xc_grid": 2,
-   "k": 6,
-   "E_atom": -28.7414187993571,
-   "converged": true,
-   "iterations": 30,
-   "seconds": 1221.0096710999496,
-   "grid": [
-    32,
-    32,
-    32
-   ],
-   "n_k": 10,
-   "moment_atom": -2.167186527810568e-06,
-   "abs_moment_atom": 2.5184632860006284e-05,
-   "sphere_moments": [
-    -5.4336509737572264e-05,
-    1.4824321004753295e-05,
-    1.4824321004875668e-05,
-    1.4824321004897326e-05
-   ],
-   "top_band_occupation": -1.4551753292679004e-128
-  },
-  {
-   "phase": "fcc-ferromagnetic",
-   "v_atom": 68.0,
-   "a": 6.479223602554966,
-   "h": 0.2,
-   "xc_grid": 2,
-   "k": 6,
-   "E_atom": -28.742054318121845,
-   "converged": true,
-   "iterations": 39,
-   "seconds": 2139.946764800232,
-   "grid": [
-    36,
-    36,
-    36
-   ],
-   "n_k": 10,
-   "moment_atom": 3.4869994607167115e-05,
-   "abs_moment_atom": 0.00017456308045351758,
-   "sphere_moments": [
-    0.00041533830974236637,
-    -9.093430772344196e-05,
-    -9.093430772342433e-05,
-    -9.09303920350157e-05
-   ],
-   "top_band_occupation": -3.0122800596912658e-111
-  },
-  {
-   "phase": "fcc-ferromagnetic",
-   "v_atom": 72.0,
-   "a": 6.603854497789253,
-   "h": 0.2,
-   "xc_grid": 2,
-   "k": 6,
-   "E_atom": -28.740260160885533,
-   "converged": true,
-   "iterations": 45,
-   "seconds": 2491.024587099906,
-   "grid": [
-    36,
-    36,
-    36
-   ],
-   "n_k": 10,
-   "moment_atom": -3.821222646504337e-05,
-   "abs_moment_atom": 4.1265045093426645e-05,
-   "sphere_moments": [
-    -6.996771014091632e-05,
-    -2.8876954665012176e-05,
-    -2.8876954665085997e-05,
-    -2.8876954665113163e-05
-   ],
-   "top_band_occupation": -2.465928212139707e-97
-  },
-  {
-   "phase": "fcc-ferromagnetic",
-   "v_atom": 76.0,
-   "a": 6.723950813597926,
-   "h": 0.2,
-   "xc_grid": 2,
-   "k": 6,
-   "E_atom": -28.736224001118842,
-   "converged": true,
-   "iterations": 29,
-   "seconds": 1613.9944265997037,
-   "grid": [
-    36,
-    36,
-    36
-   ],
-   "n_k": 10,
-   "moment_atom": 1.0113454134952615,
-   "abs_moment_atom": 1.0357888509211224,
-   "sphere_moments": [
-    1.021842103217734,
-    1.0219280049143586,
-    1.0219280049143586,
-    1.0219280049143586
-   ],
-   "top_band_occupation": -3.615247569875214e-99
-  },
-  {
-   "phase": "fcc-nonmagnetic",
-   "v_atom": 60.0,
-   "a": 6.214465011907717,
-   "h": 0.2,
-   "xc_grid": 2,
-   "k": 6,
-   "E_atom": -28.737332638745784,
-   "converged": true,
-   "iterations": 14,
-   "seconds": 322.71150669967756,
-   "grid": [
-    32,
-    32,
-    32
-   ],
-   "n_k": 10,
-   "moment_atom": 0.0,
-   "abs_moment_atom": 0.0,
-   "sphere_moments": null,
-   "top_band_occupation": null
-  },
-  {
-   "phase": "fcc-nonmagnetic",
-   "v_atom": 64.0,
-   "a": 6.3496042078727974,
-   "h": 0.2,
-   "xc_grid": 2,
-   "k": 6,
-   "E_atom": -28.741418798600755,
-   "converged": true,
-   "iterations": 15,
-   "seconds": 326.6033717999235,
-   "grid": [
-    32,
-    32,
-    32
-   ],
-   "n_k": 10,
-   "moment_atom": 0.0,
-   "abs_moment_atom": 0.0,
-   "sphere_moments": null,
-   "top_band_occupation": null
-  },
-  {
-   "phase": "fcc-nonmagnetic",
-   "v_atom": 68.0,
-   "a": 6.479223602554966,
-   "h": 0.2,
-   "xc_grid": 2,
-   "k": 6,
-   "E_atom": -28.742054317955713,
-   "converged": true,
-   "iterations": 17,
-   "seconds": 507.8808097001165,
-   "grid": [
-    36,
-    36,
-    36
-   ],
-   "n_k": 10,
-   "moment_atom": 0.0,
-   "abs_moment_atom": 0.0,
-   "sphere_moments": null,
-   "top_band_occupation": null
-  },
-  {
-   "phase": "fcc-nonmagnetic",
-   "v_atom": 72.0,
-   "a": 6.603854497789253,
-   "h": 0.2,
-   "xc_grid": 2,
-   "k": 6,
-   "E_atom": -28.74026016156249,
-   "converged": true,
-   "iterations": 18,
-   "seconds": 539.5268436996266,
-   "grid": [
-    36,
-    36,
-    36
-   ],
-   "n_k": 10,
-   "moment_atom": 0.0,
-   "abs_moment_atom": 0.0,
-   "sphere_moments": null,
-   "top_band_occupation": null
-  },
-  {
-   "phase": "fcc-nonmagnetic",
-   "v_atom": 76.0,
-   "a": 6.723950813597926,
-   "h": 0.2,
-   "xc_grid": 2,
-   "k": 6,
-   "E_atom": -28.736699760884164,
-   "converged": true,
-   "iterations": 18,
-   "seconds": 570.4890899998136,
-   "grid": [
-    36,
-    36,
-    36
-   ],
-   "n_k": 10,
-   "moment_atom": 0.0,
-   "abs_moment_atom": 0.0,
-   "sphere_moments": null,
-   "top_band_occupation": null
-  },
-  {
-   "phase": "fcc-nonmagnetic",
-   "v_atom": 80.0,
-   "a": 6.839903786706787,
-   "h": 0.2,
-   "xc_grid": 2,
-   "k": 6,
-   "E_atom": -28.731891552264116,
-   "converged": true,
-   "iterations": 19,
-   "seconds": 582.1784989996813,
-   "grid": [
-    36,
-    36,
-    36
-   ],
-   "n_k": 10,
-   "moment_atom": 0.0,
-   "abs_moment_atom": 0.0,
-   "sphere_moments": null,
-   "top_band_occupation": null
-  },
-  {
-   "phase": "fcc-nonmagnetic",
-   "v_atom": 84.0,
-   "a": 6.952053289772898,
-   "h": 0.2,
-   "xc_grid": 2,
-   "k": 6,
-   "E_atom": -28.72622422554277,
-   "converged": true,
-   "iterations": 19,
-   "seconds": 581.0842069000937,
-   "grid": [
-    36,
-    36,
-    36
-   ],
-   "n_k": 10,
-   "moment_atom": 0.0,
-   "abs_moment_atom": 0.0,
-   "sphere_moments": null,
-   "top_band_occupation": null
   }
  ],
  "fits": {
@@ -659,14 +902,24 @@
    "moment_at_V0": 0.0
   },
   "fcc-ferromagnetic": {
-   "E0": -28.742201780385514,
-   "V0": 66.97990013785542,
-   "B0_GPa": 341.8211535383994,
-   "B1": 2.906279586189426,
-   "n_points": 5,
-   "a0": 6.446660936633138,
+   "E0": -28.742335281432034,
+   "V0": 65.86584808858856,
+   "B0_GPa": 408.12426813687955,
+   "B1": 10.96952167573783,
+   "n_points": 7,
+   "a0": 6.410719278859404,
    "inside_scan": true,
-   "moment_at_V0": 0.00013646784700413966
+   "moment_at_V0": 9.486400558967627e-05
+  },
+  "fcc-antiferromagnetic": {
+   "E0": -28.741995716672132,
+   "V0": 67.01217346073801,
+   "B0_GPa": 283.37788622265055,
+   "B1": 6.278742553780681,
+   "n_points": 7,
+   "a0": 6.447696181347268,
+   "inside_scan": true,
+   "moment_at_V0": 0.4397572632271254
   }
  }
 }
