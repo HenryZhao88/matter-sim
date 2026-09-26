@@ -136,13 +136,8 @@ You are the agent on the downstairs PC (Ryzen 9 5900X, 32 GB, RTX 3080 Ti). Read
    (71 configurations, resumable, 1 worker: the GPU does the work). Time the first 4-atom and the
    first 8-atom label and put the numbers in the Machines table. 8-atom cells are estimated at
    ~3.4 GB of GPU memory, which fits in 12 GB. The laptop could never run them.
-3. **At the same time, on the CPU: iron's fcc phases (item 2).** The spin-polarised code is
-   NumPy-only, so it doesn't compete with the GPU job:
-   `OMP_NUM_THREADS=3 uv run python scripts/fe_magnetism.py 0.20 8 3 fcc-nonmagnetic,fcc-ferromagnetic,fcc-antiferromagnetic`
-   (3 workers × 3 threads leaves cores for the GPU job; bound workers by RAM, and a 4-atom
-   AFM point may need ~3 GB). The Linux container is running the bcc phases at the same grid;
-   `git pull` before you finish and the script keeps their points in `results/fe_magnetism.json`.
-   Commit that file as phases complete.
+3. ~~Iron's fcc phases on the CPU~~ **done (2026-09-26)**: all 21 points, merged with Linux's bcc
+   in `results/fe_magnetism.json`; see the log.
 4. After both: `scripts/cross_check.py 29` (float64, ~5 %), the copper seed fit and MD snapshots
    (item 1's last bullet), then `uv run matter-sim validate --part materials` for iron's rows.
 
@@ -167,8 +162,13 @@ You are the agent on the downstairs PC (Ryzen 9 5900X, 32 GB, RTX 3080 Ti). Read
    grid is **h = 0.20, xc_grid = 2** (`scripts/fe_grid.py`, Linux: within 1.1 meV/atom of h = 0.16
    on volume energy, FM − NM and egg-box, 1e-4 μB on the moment; xc_grid moves it only 0.4 meV;
    below h ≈ 0.2 the volume energy scatters ±1.5 meV with no trend, as HANDOFF describes).
-   `scripts/fe_magnetism.py` runs the scan; phases can be split across machines (bcc on the Linux
-   container, fcc on the downstairs PC). Nickel and cobalt then need their own E(V) check
+   `scripts/fe_magnetism.py` runs the scan; **all five phases are done** (bcc Linux, fcc downstairs):
+   `matter-sim validate --part materials` gives 4/5 iron checks, the miss being plain LDA putting
+   fcc below bcc ferromagnetic (by 48 meV/atom), left disagreeing. Caveats: the fcc ferromagnetic
+   fit spans a moment collapse (zero for V ≤ 72, 1.0–2.6 μB above), so its minimum is the
+   non-magnetic branch's; the fcc AFM point at V = 68 is a metastable solution 6.2 meV/atom above
+   non-magnetic. The next physics step for iron is a gradient-corrected functional, not more
+   LDA points. Nickel and cobalt then need their own E(V) check
    (`scripts/pp_check.py eos`) and grid. Port spin to `periodic_torch.py` before labelling a
    magnetic metal on the GPU.
 3. **Use the GPU molecular dynamics.** `engine/materials/md_torch.py` (`EAMForceFieldTorch`,
@@ -217,6 +217,12 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-26 02:45, Downstairs PC (Claude).** Iron's fcc phases done (21/21 converged, 16–58 min per
+  spin point): fcc FM moment zero for V ≤ 72, 1.0/2.5/2.6 μB at 76/80/84; layered AFM ±0.6–1.9 μB
+  from V = 68 and the lowest fcc state for V = 72–80. `validation/run.py`'s lowest-phase row now
+  says when a "magnetic" phase's moment returned to zero (it had printed fcc-ferromagnetic as the
+  winner with 0.0001 μB). Materials validation: iron 4/5, as Linux found. D2 data added. Copper
+  labelling still running (15/71 at 02:33).
 - **2026-09-26, Downstairs PC (Claude).** Started. Set up (uv was not installed: `pip install --user
   uv`, run as `python -m uv`); `describe()` names the RTX 3080 Ti; fast suite 113 passed, 3 skipped
   (542 s). **Taking copper labelling** (`label_crystal.py 29 6.704 torch 1`) and **iron's fcc

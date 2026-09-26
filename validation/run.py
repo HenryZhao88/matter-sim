@@ -147,8 +147,13 @@ def iron_section() -> None:
         record("materials", "Iron: magnetic energy (bcc, FM − NM)", (fm["E0"] - nm["E0"]) * HARTREE_EV * 1000,
                "< 0", "meV/atom", "negative: iron chooses to be a magnet", fm["E0"] < nm["E0"])
     ranked = sorted(fits, key=lambda p: fits[p]["E0"])
-    record("materials", "Iron: lowest-energy phase", ranked[0], "bcc-ferromagnetic", "",
-           " < ".join(f"{p} {(fits[p]['E0'] - fits[ranked[0]]['E0']) * HARTREE_EV * 1000:+.0f}" for p in ranked[1:]) + " meV",
+
+    def named(p):
+        # a phase is named by its starting moment, which is only a push: say when it came back to zero
+        return p + (" (moment → 0)" if "magnetic" in p and "non" not in p and fits[p]["moment_at_V0"] < 0.1 else "")
+
+    record("materials", "Iron: lowest-energy phase", named(ranked[0]), "bcc-ferromagnetic", "",
+           " < ".join(f"{named(p)} {(fits[p]['E0'] - fits[ranked[0]]['E0']) * HARTREE_EV * 1000:+.0f}" for p in ranked[1:]) + " meV",
            ranked[0] == "bcc-ferromagnetic")
 
 
