@@ -241,8 +241,10 @@ anything that is no longer true rather than appending a correction.
   64, 68 (E equal to non-magnetic); 16–36 min per spin point with 3 workers. Fixed `fe_magnetism.py`
   dropping another machine's phases when it rewrote the results file.
 - **2026-09-26, Linux cloud container (Claude).** D1 applied by the Mac; iron's grid measured
-  (`scripts/fe_grid.py`: h = 0.20, xc_grid = 2) and the bcc phases of `fe_magnetism.py` started
-  here (running when this was written; results land in `results/fe_magnetism.json`). Added D2
+  (`scripts/fe_grid.py`: h = 0.20, xc_grid = 2) and the bcc phases of `fe_magnetism.py` run
+  here and **done**, merged with downstairs' fcc in `results/fe_magnetism.json`: bcc FM a = 2.794 Å,
+  B = 218 GPa, 2.163 μB, FM − NM −336 meV/atom; fcc NM lies 45 meV below bcc FM (plain LDA's
+  known error, left as is). fcc AFM still to come from downstairs. Added D2
   data for Linux. Wrote the downstairs PC's start-up instructions (What would help most).
 - **2026-09-25, Windows (Claude).** Reviewed D1 independently (DECISIONS.md): agree with the 1.25×
   cap on the strength of iron's E(V), reproduced here to 0.01 mHa; the core-overlap reason does not
