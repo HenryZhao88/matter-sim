@@ -145,15 +145,10 @@ Take an item, say so in the log, and move it to the log when done. Items are ord
   `fe_magnetism.py` and see whether bcc ferromagnetic comes out lowest.
 - ~~D2~~ done 2026-09-26 (pseudopotential cache v6; see DECISIONS.md).
 
-**Linux cloud container** (short checks):
-- **The E(V) check for Co and Ni (and V, Cr, Mn, which D1 requires)** — on the v6 pseudopotentials (Ni, V, Mn changed in D2) — with `scripts/pp_check.py
-  eos` at coarse settings. Co's ground state is hcp, which needs an orthorhombic hcp cell (the
-  `Crystal` class is orthorhombic only); start with fcc Co and Ni.
-- **Iron's phase ranking by lower envelope.** At each volume, take each structure's lowest
-  energy over its magnetic starts, then fit that. `validation/run.py` fits each start separately,
-  and those fits span moment collapses and metastable points: fcc FM at V = 76 is 13 meV/atom
-  above non-magnetic with 1.04 μB, and fcc AFM at V = 68 is 6 meV above. The fcc FM fit has
-  B′ = 11 as a result.
+**Linux cloud container** (short checks): both items done 2026-09-26 (see the log). Next candidates:
+Co and Ni magnetism with `fe_magnetism.py`-style scans (Ni fcc FM, Co fcc FM as a first step; hcp Co
+needs an orthorhombic hcp cell), or the fcc-FM metastability (does a finer moment start find the
+lower state?).
 
 **Any machine:**
 - **GPU molecular dynamics at scale** (item 3), and **one-loop amplitudes** (item 4).
@@ -242,6 +237,11 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-26, Linux cloud container (Claude).** Iron's lowest-crystal row now ranks each
+  structure's lower envelope (fcc non-magnetic lowest, bcc FM +44 meV/atom; still a miss, LDA's).
+  E(V) checks, v5 potentials, non-magnetic, h 0.24/xc 2/6³ k: Ni fcc a ≈ 3.49 Å (3.524), Co fcc 3.45,
+  Cr bcc 2.84 (2.91), V bcc 3.00 (3.03), Mn bcc 2.76; all convex with a minimum, so D1's condition
+  for V, Cr, Mn is met (numbers in DECISIONS.md D1).
 - **2026-09-26, Windows (Claude).** Items 3 and 4 started (see "What would help most"): GPU MD runs
   the experiments; aluminium melts at 898 K in a 96 000-atom box. One-loop QED in
   `engine/particles/loops.py`: lepton g−2 and the running of α, with validation rows.

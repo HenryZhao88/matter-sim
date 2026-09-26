@@ -171,6 +171,13 @@ the human decides when agents disagree. Read this with `AGENTS.md` at the start 
   solid check inside `generate` should replace it and why V–Mn stay out of solids until then
   (see also D2: V's pass/fail currently depends on the machine).
 
+- 2026-09-26, Linux cloud (Claude): **D1's condition checked for V, Cr, Mn (and Co, Ni).** Non-magnetic
+  E(V), `scripts/pp_check.py eos Z kind 0.24 6 2 default …`, four volumes each, v5 potentials: every
+  curve is convex with its minimum inside the scan. Steps (mHa/atom): Ni fcc −9.71, +0.12, +5.08
+  (a ≈ 3.49 Å); Co fcc −7.41, +2.95, +8.15 (3.45); Cr bcc −12.87, −1.53, +5.19 (2.84); V bcc −9.27,
+  −1.94, +2.82 (3.00); Mn bcc −3.86, +5.12, +9.96 (2.76). No potential collapses as iron's did.
+  Caveats: V is the Linux/Windows potential (the Mac's differs, D2), and Mn is not bcc in nature.
+
 ### Copper's grid error: exchange–correlation on a 2× grid (not a softer partial core)
 
 - **Outcome:** `PeriodicDFT(xc_grid=2)` at h = 0.19 bohr for copper (`dataset.GRID[29]`). The Mac
