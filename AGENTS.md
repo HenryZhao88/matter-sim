@@ -127,15 +127,14 @@ hard-won lessons; read it too.
 
 Take an item, say so in the log, and move it to the log when done. Items are ordered by value.
 
-**Downstairs PC** (setup done; copper labelling running):
-- **Finish copper labelling** (item 1), then its cross-check, seed fit and MD snapshots.
+**Downstairs PC** (copper labelling done: 66/71, 5 refused):
+- **Copper: the 5 refused labels** (why the SCF stalls), then the cross-check, seed fit and MD snapshots.
 - **Speed up the fp32 labeller.** Your profile shows 60 % of the time in complex128 `eigh` and gram
   products on a GeForce GPU. Fix (a): move the small `eigh`s to the CPU (no precision change). Check
   it against float64 first (the `test_single_precision_*` tests plus one copper label against the
   NumPy path), and time one label before and after. (b), split complex64 grams, only if (a) is not
   enough. Also look into the 15–42 SCF iteration spread.
-- **Port spin to `periodic_torch.py`** (item 2), tested like `test_spin_polarised_*`, so magnetic
-  metals can be labelled on the GPU.
+- ~~Port spin to `periodic_torch.py`~~ **done** (`44fc2a9`; see the log).
 
 **Mac** (float64 reference work):
 - **A gradient-corrected functional (PBE)** — the next physics step for iron, where plain LDA gets
@@ -153,20 +152,20 @@ lower state?).
 **Any machine:**
 - **GPU molecular dynamics at scale** (item 3), and **one-loop amplitudes** (item 4).
 
-1. **Label copper's crystal set — taken by the downstairs PC (running since 2026-09-26; 15/71 at
-   02:33).**
+1. **Label copper's crystal set — labelled on the downstairs PC (2026-09-26, 16 h on the RTX 3080 Ti):
+   66 of 71 converged, 5 refused** (fcc-volume at 1.00, 1.075 and 1.10 × a₀, two fcc-strain; SCF not
+   converged in 60 iterations). Being investigated downstairs.
    - Command: `uv run python scripts/label_crystal.py 29 6.704 <solver> [workers]` — 71
      configurations (`initial_configurations(29, 6.704)` without sc/disordered), resumable through
      the cache, grid from `dataset.GRID` (h 0.19, xc_grid 2), provenance on every label.
    - Solver: `torch` on a CUDA GPU (fp32, measured against float64 at h 0.19: −0.147 meV/atom,
      1.1e-5 Ha/bohr; run it with 1 worker, the GPU does the work). `numpy` anywhere else (float64;
      bound workers by RAM). Not `torch` on a Mac: MPS is slower than NumPy.
-   - Cost, measured (Windows, fp32, RTX 4050): a 4-atom label 732 s, peak 2.0 GB VRAM, 1.3 GB RAM.
-     8-atom cells (16 of the 71) are **untimed**: the only attempt was stopped by the low-memory
-     guard. Estimated from sizes: ~3.4 GB VRAM on fp32; ~11 GB RAM per worker on NumPy.
-   - Caches are per machine and not in git. The one finished label (the compressed fcc-volume cell,
-     key `0f5146c079ed2647`) exists only in the Windows laptop's `.cache/materials/dft/`; another
-     machine will simply recompute it.
+   - Cost, measured (fp32): 4-atom 430–600 s on the RTX 3080 Ti when the CPU is free (732 s on the
+     laptop's 4050), 8-atom 1100–1900 s, 2-atom bcc 330–540 s. An 8-atom cell holds ~11.6 GB of
+     the 3080 Ti's 12 GB (allocator cache included).
+   - Caches are per machine and not in git: all 66 copper labels are in the downstairs PC's
+     `.cache/materials/dft/`. The fit and MD snapshots should run there.
    - After it: `scripts/cross_check.py 29` in float64 (~5%, per tag), a seed fit, then
      `md_snapshots(..., Z=29, mass_amu=63.546)` with temperatures chosen for copper (the defaults
      were aluminium's).
@@ -179,8 +178,8 @@ lower state?).
    checks. The miss is plain LDA putting fcc about 40 meV/atom below bcc ferromagnetic, left
    disagreeing. Caveat: the per-start fits span moment collapses and metastable points (see the
    Linux work queue). Nickel and cobalt then need their own E(V) check
-   (`scripts/pp_check.py eos`) and grid. Port spin to `periodic_torch.py` before labelling a
-   magnetic metal on the GPU.
+   (`scripts/pp_check.py eos`) and grid. Spin now runs on the GPU too (`PeriodicDFTTorch(spin=True)`,
+   checked against NumPy on magnetic iron); the labeller does not pass `spin` yet.
 3. **GPU molecular dynamics at scale — started (Windows, 2026-09-26).** `md.make_md(engine="torch")`
    runs the experiments on `md_torch.MDTorch` (tested equal to `md.py`); `scripts/melting_large.py`
    gives aluminium's melting point by coexistence at **898.4 K in a 96 000-atom box** (bracket
@@ -237,6 +236,11 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-26 15:10, Downstairs PC (Claude).** **Copper labelling finished**: 66 converged, 5 refused
+  (#5, #8, #9 fcc-volume at 1.00/1.075/1.10 × a₀; #36, #44 fcc-strain), 57 690 s in all. **GPU spin
+  verified:** all 8 `single_precision` tests pass on the final code (slow included). Displaced magnetic
+  bcc Fe (h 0.35, 2³ k, xc_grid 2): GPU against NumPy −0.064 meV/atom, max |ΔF| 1.9e-5 Ha/bohr,
+  moment 1.9228 μB/atom on both, 19 SCF iterations each.
 - **2026-09-26, Linux cloud container (Claude).** Iron's lowest-crystal row now ranks each
   structure's lower envelope (fcc non-magnetic lowest, bcc FM +44 meV/atom; still a miss, LDA's).
   E(V) checks, v5 potentials, non-magnetic, h 0.24/xc 2/6³ k: Ni fcc a ≈ 3.49 Å (3.524), Co fcc 3.45,
