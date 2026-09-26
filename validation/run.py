@@ -109,6 +109,13 @@ def materials_section() -> None:
     ref = {k: v[0] for k, v in REFERENCE.items()}
     record("materials", "Melting point (solid–liquid coexistence)", d.T_melt, ref["T_melt"], "K",
            "LDA over-binds; ±60 K is the usual spread", abs(d.T_melt - ref["T_melt"]) < 150)
+    big = sorted(Path(__file__).resolve().parents[1].glob("results/al_melting_*.json"),
+                 key=lambda f: json.loads(f.read_text())["atoms"])
+    if big and json.loads(big[-1].read_text())["atoms"] > 10000:
+        mb = json.loads(big[-1].read_text())
+        record("materials", f"…in a {mb['atoms']:,}-atom box (GPU MD)", mb["T_melt"], ref["T_melt"], "K",
+               f"same method, bracket {mb['bracket'][0]:.0f}–{mb['bracket'][1]:.0f} K",
+               abs(mb["T_melt"] - ref["T_melt"]) < 150)
     record("materials", "Latent heat of fusion", d.latent_eV * 1000, ref["latent_eV"] * 1000, "meV/atom",
            "", abs(d.latent_eV - ref["latent_eV"]) < 0.04)
     record("materials", "Density at 293 K", b.density() / 1000, ref["density"] / 1000, "g/cm³",

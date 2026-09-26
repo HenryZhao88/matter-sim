@@ -54,10 +54,10 @@ result disagrees with nature, say so and leave it disagreeing.
 
 | Rung | State |
 |---|---|
-| Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, pp at 13.6 TeV |
+| Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, pp at 13.6 TeV; one loop: lepton g−2 (a = 0.0011614 vs 0.0011597 measured) and α's running from α(0) |
 | Lattice QCD | working: confinement, deconfinement, hadron masses (pion as Goldstone boson, κ_c = 0.1695 vs 0.1694 published) |
 | Electrons and nuclei | working: H–Kr (Sc fails its own check and is greyed out), molecules, truth mode (VMC, MLX and PyTorch) |
-| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`) reaches 10⁶ atoms, tested equal to `md.py`, not yet used by the experiments. **Iron** (spin-polarised DFT, all five phases): bcc FM a = 2.794 Å (2.866), B = 218 GPa (170), 2.16 μB (2.22); plain LDA puts fcc ~40 meV/atom below bcc FM (known LDA error, left disagreeing). **Copper**: grid converged, DFT lattice constant 3.548 Å; labelling running downstairs |
+| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`, 10⁶ atoms) now runs the experiments (`engine="torch"`): melting in a 96 000-atom box gives **898 K** (1 200 atoms: 852–867 K). **Iron** (spin-polarised DFT, all five phases): bcc FM a = 2.794 Å (2.866), B = 218 GPa (170), 2.16 μB (2.22); plain LDA puts fcc ~40 meV/atom below bcc FM (known LDA error, left disagreeing). **Copper**: grid converged, DFT lattice constant 3.548 Å; labelling running downstairs |
 | Everyday matter | working: the 1 cm³ block, 6.3 × 10²² atoms, 2.83 g, 2.29 kJ to melt |
 
 Results both machines can read are in `results/`. `HANDOFF.md` carries the detail and the
@@ -186,13 +186,23 @@ Take an item, say so in the log, and move it to the log when done. Items are ord
    Linux work queue). Nickel and cobalt then need their own E(V) check
    (`scripts/pp_check.py eos`) and grid. Port spin to `periodic_torch.py` before labelling a
    magnetic metal on the GPU.
-3. **Use the GPU molecular dynamics.** `engine/materials/md_torch.py` (`EAMForceFieldTorch`,
-   `MDTorch`) matches `md.py` to 1e-10 and reproduces its seeded trajectories; on the RTX 4050 a
-   full step is 84 ms at 256 000 atoms and 321 ms at 10⁶ (float64, 2.9 GB VRAM). Nothing uses it
-   yet: `experiments.py` still runs a few hundred atoms. Next: melting by coexistence at 10⁵
-   atoms (smaller finite-size error than today's 1 500), then grains, vacancies and a crack.
-   Possible 2–4× more from float32 pair arithmetic, if it passes the same test.
-4. **One-loop amplitudes** in the particle rung; the running coupling is in, the loops are not.
+3. **GPU molecular dynamics at scale — started (Windows, 2026-09-26).** `md.make_md(engine="torch")`
+   runs the experiments on `md_torch.MDTorch` (tested equal to `md.py`); `scripts/melting_large.py`
+   gives aluminium's melting point by coexistence at **898.4 K in a 96 000-atom box** (bracket
+   890.6–906.2; 6 × ~290 s on the RTX 4050) against 851.6 K (Mac) and 867.2 K (Windows) at 1 200
+   atoms, measured 933.5. The small box is biased low, not only noisy: at 875 K it melted and the
+   large box froze. `results/al_melting_96000.json`; validation shows it as an extra row, while the
+   headline melting point and the continuum block still use the 1 200-atom value — whether to
+   switch them (and redo the latent heat at scale) is open. Next: grains, vacancies, a crack;
+   float32 pair arithmetic for 2–4× if it passes the same tests.
+4. **One-loop amplitudes — started (Windows, 2026-09-26).** `engine/particles/loops.py` does loops
+   the way `amplitudes.py` does trees (numeric Dirac algebra, Feynman parameters, nothing written
+   in). The QED vertex gives the lepton g−2: a = 0.00116141 for e and μ alike (α/2π to 1e-9);
+   measured 0.00115965 (e) and 0.00116592 (μ), the rest being higher orders. Vacuum polarisation
+   runs α from α(0) (new measured input `ALPHA_0`): leptons give 1/α(m_Z) = 132.7 against 127.95,
+   the gap being hadronic vacuum polarisation, which perturbation theory cannot give (quark loops
+   at Lagrangian masses land at 127.8, shown without a pass mark). Next: loops with W/Z/Higgs
+   (the W-mass shift, the weak part of a_μ), and QCD corrections that need real emission (R ratio).
 
 ## Lessons that cost real time
 
@@ -232,6 +242,9 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-26, Windows (Claude).** Items 3 and 4 started (see "What would help most"): GPU MD runs
+  the experiments; aluminium melts at 898 K in a 96 000-atom box. One-loop QED in
+  `engine/particles/loops.py`: lepton g−2 and the running of α, with validation rows.
 - **2026-09-26, Mac (Claude).** Fixed D2. The reference atom's 4s/3d sloshing made its SCF
   converge by chance, after an iteration count rounding decides (Mac: V 432, Mn 814, Ni 838, Ti
   347; the cap is 400). `pseudo.reference_atom` anneals the smearing when the plain SCF fails, and
