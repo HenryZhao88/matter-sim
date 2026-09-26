@@ -57,7 +57,7 @@ result disagrees with nature, say so and leave it disagreeing.
 | Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, pp at 13.6 TeV |
 | Lattice QCD | working: confinement, deconfinement, hadron masses (pion as Goldstone boson, κ_c = 0.1695 vs 0.1694 published) |
 | Electrons and nuclei | working: H–Kr (Sc fails its own check and is greyed out), molecules, truth mode (VMC, MLX and PyTorch) |
-| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`) reaches 10⁶ atoms, tested equal to `md.py`, not yet used by the experiments. Spin-polarised periodic DFT built; iron's pseudopotential fixed (D1), its grid not yet converged. **Copper**: grid converged, DFT lattice constant 3.548 Å; not yet labelled |
+| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`) reaches 10⁶ atoms, tested equal to `md.py`, not yet used by the experiments. **Iron** (spin-polarised DFT, all five phases): bcc FM a = 2.794 Å (2.866), B = 218 GPa (170), 2.16 μB (2.22); plain LDA puts fcc ~40 meV/atom below bcc FM (known LDA error, left disagreeing). **Copper**: grid converged, DFT lattice constant 3.548 Å; labelling running downstairs |
 | Everyday matter | working: the 1 cm³ block, 6.3 × 10²² atoms, 2.83 g, 2.29 kJ to melt |
 
 Results both machines can read are in `results/`. `HANDOFF.md` carries the detail and the
@@ -123,26 +123,44 @@ hard-won lessons; read it too.
 
 ## What would help most
 
-### Downstairs PC: start here (new machine, 2026-09-26)
+### Work queue by machine (updated 2026-09-26, Linux)
 
-You are the agent on the downstairs PC (Ryzen 9 5900X, 32 GB, RTX 3080 Ti). Read this file,
-`DECISIONS.md` and `HANDOFF.md` first. Then:
+Take an item, say so in the log, and move it to the log when done. Items are ordered by value.
 
-1. **Set up.** `git pull`, then `uv sync --extra gpu` (the lock pulls CUDA PyTorch on Windows and
-   Linux, see `pyproject.toml`). Check the GPU is seen:
-   `uv run python -c "from engine.core.accel import describe; print(describe())"` should name the
-   3080 Ti. Run the fast tests: `uv run pytest -m "not slow"`. Add a log line saying you've started.
-2. **Label copper (item 1 below) on the GPU.** `uv run python scripts/label_crystal.py 29 6.704 torch 1`
-   (71 configurations, resumable, 1 worker: the GPU does the work). Time the first 4-atom and the
-   first 8-atom label and put the numbers in the Machines table. 8-atom cells are estimated at
-   ~3.4 GB of GPU memory, which fits in 12 GB. The laptop could never run them.
-3. ~~Iron's fcc phases on the CPU~~ **done (2026-09-26)**: all 21 points, merged with Linux's bcc
-   in `results/fe_magnetism.json`; see the log.
-4. After both: `scripts/cross_check.py 29` (float64, ~5 %), the copper seed fit and MD snapshots
-   (item 1's last bullet), then `uv run matter-sim validate --part materials` for iron's rows.
+**Downstairs PC** (setup done; copper labelling running):
+- **Finish copper labelling** (item 1), then its cross-check, seed fit and MD snapshots.
+- **Speed up the fp32 labeller.** Your profile shows 60 % of the time in complex128 `eigh` and gram
+  products on a GeForce GPU. Fix (a): move the small `eigh`s to the CPU (no precision change). Check
+  it against float64 first (the `test_single_precision_*` tests plus one copper label against the
+  NumPy path), and time one label before and after. (b), split complex64 grams, only if (a) is not
+  enough. Also look into the 15–42 SCF iteration spread.
+- **Port spin to `periodic_torch.py`** (item 2), tested like `test_spin_polarised_*`, so magnetic
+  metals can be labelled on the GPU.
 
-1. **Label copper's crystal set — open, needs a machine with more memory than the Windows laptop.**
-   The human is finding an agent/machine for it; whoever takes it, say so in the log first.
+**Mac** (float64 reference work):
+- **A gradient-corrected functional (PBE)** — the next physics step for iron, where plain LDA gets
+  the structure wrong. It needs the functional in `electrons/xc.py` (atoms and crystals), and
+  pseudopotentials regenerated with it (they must use the same functional as the solid), so it
+  goes through `DECISIONS.md` first. The success test is not written in: rerun
+  `fe_magnetism.py` and see whether bcc ferromagnetic comes out lowest.
+- **D2:** a deterministic all-electron reference configuration, then compare pseudopotentials
+  across machines by max |Δv_ion|, not by hash.
+
+**Linux cloud container** (short checks):
+- **The E(V) check for Co and Ni (and V, Cr, Mn, which D1 requires)** with `scripts/pp_check.py
+  eos` at coarse settings. Co's ground state is hcp, which needs an orthorhombic hcp cell (the
+  `Crystal` class is orthorhombic only); start with fcc Co and Ni.
+- **Iron's phase ranking by lower envelope.** At each volume, take each structure's lowest
+  energy over its magnetic starts, then fit that. `validation/run.py` fits each start separately,
+  and those fits span moment collapses and metastable points: fcc FM at V = 76 is 13 meV/atom
+  above non-magnetic with 1.04 μB, and fcc AFM at V = 68 is 6 meV above. The fcc FM fit has
+  B′ = 11 as a result.
+
+**Any machine:**
+- **GPU molecular dynamics at scale** (item 3), and **one-loop amplitudes** (item 4).
+
+1. **Label copper's crystal set — taken by the downstairs PC (running since 2026-09-26; 15/71 at
+   02:33).**
    - Command: `uv run python scripts/label_crystal.py 29 6.704 <solver> [workers]` — 71
      configurations (`initial_configurations(29, 6.704)` without sc/disordered), resumable through
      the cache, grid from `dataset.GRID` (h 0.19, xc_grid 2), provenance on every label.
@@ -162,13 +180,11 @@ You are the agent on the downstairs PC (Ryzen 9 5900X, 32 GB, RTX 3080 Ti). Read
    grid is **h = 0.20, xc_grid = 2** (`scripts/fe_grid.py`, Linux: within 1.1 meV/atom of h = 0.16
    on volume energy, FM − NM and egg-box, 1e-4 μB on the moment; xc_grid moves it only 0.4 meV;
    below h ≈ 0.2 the volume energy scatters ±1.5 meV with no trend, as HANDOFF describes).
-   `scripts/fe_magnetism.py` runs the scan; **all five phases are done** (bcc Linux, fcc downstairs):
-   `matter-sim validate --part materials` gives 4/5 iron checks, the miss being plain LDA putting
-   fcc below bcc ferromagnetic (by 48 meV/atom), left disagreeing. Caveats: the fcc ferromagnetic
-   fit spans a moment collapse (zero for V ≤ 72, 1.0–2.6 μB above), so its minimum is the
-   non-magnetic branch's; the fcc AFM point at V = 68 is a metastable solution 6.2 meV/atom above
-   non-magnetic. The next physics step for iron is a gradient-corrected functional, not more
-   LDA points. Nickel and cobalt then need their own E(V) check
+   `scripts/fe_magnetism.py` runs the scan; **all five phases are done** (bcc on Linux, fcc
+   downstairs; 35/35 points converged). `matter-sim validate --part materials` gives 4/5 iron
+   checks. The miss is plain LDA putting fcc about 40 meV/atom below bcc ferromagnetic, left
+   disagreeing. Caveat: the per-start fits span moment collapses and metastable points (see the
+   Linux work queue). Nickel and cobalt then need their own E(V) check
    (`scripts/pp_check.py eos`) and grid. Port spin to `periodic_torch.py` before labelling a
    magnetic metal on the GPU.
 3. **Use the GPU molecular dynamics.** `engine/materials/md_torch.py` (`EAMForceFieldTorch`,
@@ -217,6 +233,12 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-26, Linux cloud container (Claude).** Checked iron's fcc results: 35/35 points
+  converged. Found metastable magnetic points (fcc FM at V = 76 is 13 meV/atom above non-magnetic
+  with 1.04 μB), so the per-start fits mix branches and the lowest-phase ranking (5–9 meV spread)
+  is within that noise; the robust fact is fcc ≈ 40 meV below bcc FM. Replaced the downstairs
+  start-up section (done) with a work queue by machine. D2: the hashes differ even with the same
+  recipe, so compare by max |Δv_ion|.
 - **2026-09-26 02:45, Downstairs PC (Claude).** Iron's fcc phases done (21/21 converged, 16–58 min per
   spin point): fcc FM moment zero for V ≤ 72, 1.0/2.5/2.6 μB at 76/80/84; layered AFM ±0.6–1.9 μB
   from V = 68 and the lowest fcc state for V = 72–80. `validation/run.py`'s lowest-phase row now
