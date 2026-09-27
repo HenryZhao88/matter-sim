@@ -1,0 +1,55 @@
+{
+ "labels": 66,
+ "checked": 6,
+ "rows": [
+  {
+   "key": "0148ac1e1c3bd926",
+   "tag": "fcc-8",
+   "solver": "torch",
+   "dE_meV_per_atom": -0.11085864991363985,
+   "max_dF_Ha_per_bohr": 1.917493486647677e-05
+  },
+  {
+   "key": "07ee21415dee3d3a",
+   "tag": "fcc-strain",
+   "solver": "torch",
+   "dE_meV_per_atom": 0.013803322615245832,
+   "max_dF_Ha_per_bohr": 2.4837819065969338e-05
+  },
+  {
+   "key": "0f5146c079ed2647",
+   "tag": "fcc-volume",
+   "solver": "torch",
+   "dE_meV_per_atom": -0.6217850517792115,
+   "max_dF_Ha_per_bohr": 1.0657252243577921e-05
+  },
+  {
+   "key": "22d292017fb4246d",
+   "tag": "fcc-thermal",
+   "solver": "torch",
+   "dE_meV_per_atom": -0.16731817042915864,
+   "max_dF_Ha_per_bohr": 2.8965339037213822e-05
+  },
+  {
+   "key": "28f63163cf22b211",
+   "tag": "fcc-thermal",
+   "solver": "torch",
+   "dE_meV_per_atom": -0.16183841835414906,
+   "max_dF_Ha_per_bohr": 7.413232908488887e-06
+  },
+  {
+   "key": "42cf74bdce0b3d0e",
+   "tag": "bcc",
+   "solver": "torch",
+   "dE_meV_per_atom": 0.0006802925369023285,
+   "max_dF_Ha_per_bohr": 1.8090911223666873e-06
+  }
+ ],
+ "max_abs_dE_meV_per_atom": 0.6217850517792115,
+ "max_dF_Ha_per_bohr": 2.8965339037213822e-05,
+ "element": "Cu",
+ "solvers": [
+  "torch"
+ ],
+ "over_budget": 0
+}

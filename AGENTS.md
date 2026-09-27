@@ -127,9 +127,10 @@ hard-won lessons; read it too.
 
 Take an item, say so in the log, and move it to the log when done. Items are ordered by value.
 
-**Downstairs PC** (copper's training set done: 89/89 labels; its float64 cross-check still running on the CPU):
-- ~~Copper's training set and final fit~~ **done** (see the log): `results/cu_eam_final.*`.
-- **Cross-check** (`scripts/cross_check.py 29`) finishing; then commit `results/cu_crosscheck.json`.
+**Downstairs PC**: queue empty (copper's training set, cross-check and final potential done; see the
+log). Candidates: cross-check the three MD tags (one 8-atom float64 label each, ~7 h apiece on this
+CPU, one at a time: two float64 jobs here left 1.6 GB free); fp32 fix (b); magnetic labelling on
+the GPU once the labeller passes `spin`.
 
 **Windows (item 3 owner), a request from downstairs:** copper's potential is ready
 (`results/cu_eam_final.npz`, loads with `EAM.load`), but its experiments can't run yet:
@@ -175,9 +176,12 @@ lower state?).
      the 3080 Ti's 12 GB (allocator cache included).
    - Caches are per machine and not in git: all 66 copper labels are in the downstairs PC's
      `.cache/materials/dft/`. The fit and MD snapshots should run there.
+   - Cross-check done: 6 float64 recomputations (one per tag), worst −0.62 meV/atom (the most
+     compressed fcc-volume cell, labelled by the old code in 42 iterations; the rest ≤0.17) and
+     2.9e-5 Ha/bohr, none over budget (`results/cu_crosscheck.json`).
    - Seed fit done (`results/cu_eam_seed.json`: a₀ 3.554 Å vs DFT 3.548, B 169 vs 168 GPa); 18 MD
-     snapshots at 870/1450/2040 K in `results/cu_md_snapshots.json`, being labelled. Cross-check
-     running (float64, 6 labels, hours each).
+     snapshots at 870/1450/2040 K in `results/cu_md_snapshots.json`, being labelled. Final
+     potential `results/cu_eam_final.*` (see the log).
 2. **Iron, then nickel and cobalt**, on the spin-polarised DFT. Iron is unblocked (D1 applied). Its
    grid is **h = 0.20, xc_grid = 2** (`scripts/fe_grid.py`, Linux: within 1.1 meV/atom of h = 0.16
    on volume energy, FM − NM and egg-box, 1e-4 μB on the moment; xc_grid moves it only 0.4 meV;
@@ -245,6 +249,11 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-27 08:10, Downstairs PC (Claude).** Copper's float64 cross-check done (16.6 h serial):
+  6/6 within budget, worst −0.62 meV/atom and 2.9e-5 Ha/bohr; bcc 0.001, strain 0.014, thermal
+  −0.16/−0.17, fcc-8 −0.11. The −0.62 is the most compressed cell, whose label is the one the
+  old LOBPCG took 42 iterations over. It is within budget, so it was left in. This machine's
+  queue is empty; nothing is running here.
 - **2026-09-26 22:45, Downstairs PC (Claude).** **Copper's training set is complete: 89 DFT labels, none
   refused** (71 crystal + 18 MD snapshots at 870/1450/2040 K, ~17 min each on the 3080 Ti). **Final
   potential** `results/cu_eam_final.*`: a₀ 3.553 Å (DFT 3.548), B 181 GPa (DFT 168; 8 % stiff),
