@@ -234,6 +234,8 @@ def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=No
     sr = short_range or {}
     r_min = sr.get("r_min", R_MIN)
     rng0 = np.random.default_rng(seed)
+    if not have_mlx() and _have_torch():
+        return _fit_torch(configs, iters, w_force, seed, log, e_scale_eV, sr)
     if not have_mlx():
         return EAM(rng0.normal(0, 1e-3, N_BASIS), np.abs(rng0.normal(0.05, 0.01, N_BASIS)),
                    np.array([-0.2, 0.0, 0.0, 0.0]),
@@ -305,6 +307,83 @@ def fit(configs, iters: int = 4000, w_force: float = 30.0, seed: int = 0, log=No
     to_np = lambda x: np.array(x, dtype=np.float64)
     return EAM(to_np(params["a"]), np.abs(to_np(params["b"])), to_np(params["c"]),
                float(to_np(params["e0"])[0]) + e_mean, **sr)
+
+
+def _have_torch() -> bool:
+    try:
+        import torch  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+def _fit_torch(configs, iters, w_force, seed, log, e_scale_eV, sr) -> EAM:
+    """fit()'s MLX stage in PyTorch (CUDA if present, else CPU): the same graph, loss, float32
+    precision, initial values and learning-rate schedule. Without it a machine with no MLX went
+    straight to least squares from a rough guess, which on copper stopped after 12 evaluations."""
+    import torch
+    from ..core.accel import torch_device
+    dev = torch.device(torch_device())
+    if dev.type == "mps":                  # scatter-add in float32 is fine on MPS, but keep it simple
+        dev = torch.device("cpu")
+    torch.manual_seed(seed)
+    r_min = sr.get("r_min", R_MIN)
+    I_all, J_all, B_all, dB_all, U_all, cfg_of_atom, E_ref, F_ref, n_at = [], [], [], [], [], [], [], [], []
+    off = 0
+    for k, c in enumerate(configs):
+        I, J, D = pairs_with_images(c["cell"], c["positions"])
+        r = np.linalg.norm(D, axis=1)
+        n = len(c["positions"])
+        I_all.append(I + off); J_all.append(J + off)
+        B_all.append(basis(r, r_min)); dB_all.append(basis_deriv(r, r_min=r_min)); U_all.append(D / r[:, None])
+        cfg_of_atom.append(np.full(n, k)); n_at.append(n)
+        E_ref.append(float(c["energy"]) / n); F_ref.append(np.asarray(c["forces"]))
+        off += n
+    t32 = lambda x: torch.tensor(np.concatenate(x), dtype=torch.float32, device=dev)
+    I = torch.tensor(np.concatenate(I_all), device=dev)
+    J = torch.tensor(np.concatenate(J_all), device=dev)
+    B, dB, U = t32(B_all), t32(dB_all), t32(U_all)
+    cfg = torch.tensor(np.concatenate(cfg_of_atom), device=dev)
+    n_at_t = torch.tensor(np.array(n_at, np.float32), device=dev)
+    e_mean = float(np.mean(E_ref))
+    E_t = torch.tensor((np.array(E_ref) - e_mean).astype(np.float32), device=dev)
+    F_t = t32(F_ref)
+    n_atoms, n_cfg = off, len(configs)
+    dE = (np.array(E_ref) - min(E_ref)) * 27.211386
+    w_np = np.ones(n_cfg) if e_scale_eV is None else 1 / (1 + (dE / e_scale_eV) ** 2)
+    w_cfg = torch.tensor((w_np / w_np.mean()).astype(np.float32), device=dev)
+    w_atom = w_cfg[cfg][:, None]
+    rng = np.random.default_rng(seed)
+    p = {"a": rng.normal(0, 1e-3, N_BASIS), "b": np.abs(rng.normal(0.05, 0.01, N_BASIS)),
+         "c": np.array([-0.2, 0.0, 0.0, 0.0]), "e0": np.array([0.0])}
+    p = {k: torch.tensor(v.astype(np.float32), device=dev, requires_grad=True) for k, v in p.items()}
+
+    def loss_fn():
+        b = p["b"].abs()
+        rho = torch.clamp(torch.zeros(n_atoms, device=dev).index_add(0, I, B @ b), min=1e-8)
+        c = p["c"]
+        Femb = c[0] * torch.sqrt(rho) + c[1] * rho + c[2] * rho ** 2 + c[3] * rho ** 3
+        dF = 0.5 * c[0] / torch.sqrt(rho) + c[1] + 2 * c[2] * rho + 3 * c[3] * rho ** 2
+        pair_atom = torch.zeros(n_atoms, device=dev).index_add(0, I, 0.5 * (B @ p["a"]))
+        E = torch.zeros(n_cfg, device=dev).index_add(0, cfg, Femb + pair_atom) / n_at_t + p["e0"][0]
+        dEdr = 0.5 * (dB @ p["a"]) + 0.5 * (dF[I] + dF[J]) * (dB @ b)
+        vec = dEdr[:, None] * U
+        F = torch.zeros(n_atoms, 3, device=dev).index_add(0, I, vec).index_add(0, J, -vec)
+        return torch.mean(w_cfg * (E - E_t) ** 2) * 1e4 + w_force * torch.mean(w_atom * (F - F_t) ** 2) * 1e2
+
+    opt = torch.optim.Adam(list(p.values()), lr=3e-3)
+    for it in range(iters):
+        opt.zero_grad()
+        loss = loss_fn()
+        loss.backward()
+        opt.step()
+        if log and it % 500 == 0:
+            log(it, float(loss))
+        if it in (iters // 2, (3 * iters) // 4):
+            for g in opt.param_groups:
+                g["lr"] = 1e-3 if it == iters // 2 else 3e-4
+    to_np = lambda x: x.detach().cpu().numpy().astype(np.float64)
+    return EAM(to_np(p["a"]), np.abs(to_np(p["b"])), to_np(p["c"]), float(to_np(p["e0"])[0]) + e_mean, **sr)
 
 
 def refine(model: EAM, configs, w_force: float = 30.0, e_scale_eV: float | None = 0.3, log=None) -> EAM:

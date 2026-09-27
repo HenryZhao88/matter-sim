@@ -1,6 +1,9 @@
 """A seed potential for an element from its crystal labels, checked against the element's own DFT.
 
-    uv run python scripts/seed_fit.py 29 6.704 [force_weight]
+    uv run python scripts/seed_fit.py 29 6.704 [force_weight] [name]
+
+``name`` (default "seed") names the output: the same fit on crystal + MD labels is the final potential
+(``... 3.0 final``).
 
 The seed is what md_snapshots runs to find the configurations the metal visits when hot; those
 are labelled with DFT in turn, and the final potential is fitted to everything. It is not a
@@ -9,7 +12,7 @@ result, so nothing here compares with experiment: the checks are against this en
 (eam.short_range_for): the element's nuclear charge, and a splice below the shortest distance
 the labels sampled.
 
-Writes results/<el>_eam_seed.npz (the model, pickled like aluminium's) and <el>_eam_seed.json.
+Writes results/<el>_eam_<name>.npz (the model, pickled like aluminium's) and <el>_eam_<name>.json.
 """
 
 import glob
@@ -30,7 +33,7 @@ HA_EV, BOHR_A, GPA = 27.211386245988, 0.529177210903, 29421.02648438959
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def main(Z: int, a0: float, w_force: float = 3.0) -> None:
+def main(Z: int, a0: float, w_force: float = 3.0, name: str = "seed") -> None:
     el = ELEMENTS[Z].symbol
     data = []
     for f in sorted(glob.glob(str(CACHE / "dft/*.pkl"))):
@@ -80,11 +83,12 @@ def main(Z: int, a0: float, w_force: float = 3.0) -> None:
            "E_meV_train": etr, "F_eVA_train": ftr, "E_meV_test": ete, "F_eVA_test": fte,
            "a0_A": amin * BOHR_A, "a0_A_dft": a0 * BOHR_A, "B_GPa": float(B),
            "bcc_minus_fcc_meV": float(dE_bcc), "bcc_minus_fcc_meV_dft_labels": float(dE_bcc_dft),
-           "w_force": w_force}
+           "w_force": w_force, "tags": {t: sum(d["tag"] == t for d in data) for t in sorted({d["tag"] for d in data})}}
     print(json.dumps(out, indent=1), flush=True)
-    m.save(ROOT / "results" / f"{el.lower()}_eam_seed.npz")
-    (ROOT / "results" / f"{el.lower()}_eam_seed.json").write_text(json.dumps(out, indent=1))
+    m.save(ROOT / "results" / f"{el.lower()}_eam_{name}.npz")
+    (ROOT / "results" / f"{el.lower()}_eam_{name}.json").write_text(json.dumps(out, indent=1))
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3]) if len(sys.argv) > 3 else 3.0)
+    main(int(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3]) if len(sys.argv) > 3 else 3.0,
+         sys.argv[4] if len(sys.argv) > 4 else "seed")
