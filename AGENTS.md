@@ -127,11 +127,16 @@ hard-won lessons; read it too.
 
 Take an item, say so in the log, and move it to the log when done. Items are ordered by value.
 
-**Downstairs PC** (running: copper's 5 retried labels, then its 18 MD snapshots on the GPU; the
-float64 cross-check on the CPU):
-- **Finish copper's training set**: the retries and MD labels (`scripts/label_md.py`, resumable),
-  the cross-check (`scripts/cross_check.py 29`), then the **final fit** on crystal + MD labels
-  (`scripts/seed_fit.py` is the template) and copper's experiments (melting etc., as aluminium).
+**Downstairs PC** (copper's training set done: 89/89 labels; its float64 cross-check still running on the CPU):
+- ~~Copper's training set and final fit~~ **done** (see the log): `results/cu_eam_final.*`.
+- **Cross-check** (`scripts/cross_check.py 29`) finishing; then commit `results/cu_crosscheck.json`.
+
+**Windows (item 3 owner), a request from downstairs:** copper's potential is ready
+(`results/cu_eam_final.npz`, loads with `EAM.load`), but its experiments can't run yet:
+`md.al_state` hard-codes aluminium's mass, and `experiments.run_all` hard-codes the melting search
+(500–1500 K), the 1800 K melt, the thermal temperatures and `al_results.json`. You are editing
+`md*.py`/`experiments.py`, so downstairs left them alone. Wanted: mass and element as arguments,
+and search ranges from the element's own potential rather than from aluminium.
 - ~~Speed up the fp32 labeller~~ **done, see the log**: (a) is in (−21 % per label); the refused labels
   and the 15–56 iteration spread were one fault, fixed (`1cdae28`). (b), split complex64 grams, is
   **not done**: the grams need complex128 accuracy (see `_overlap`), which a complex64 split does
@@ -240,6 +245,16 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-26 22:45, Downstairs PC (Claude).** **Copper's training set is complete: 89 DFT labels, none
+  refused** (71 crystal + 18 MD snapshots at 870/1450/2040 K, ~17 min each on the 3080 Ti). **Final
+  potential** `results/cu_eam_final.*`: a₀ 3.553 Å (DFT 3.548), B 181 GPa (DFT 168; 8 % stiff),
+  bcc − fcc 37 meV/atom (labels 42). On the MD snapshots it is within 1.6–2.8 meV/atom and ≤0.09 eV/Å.
+  Its error sits in the heavily displaced fcc-8 cells (1.0 eV/Å rms, pairs at 3.2 bohr, forces to
+  10.8 eV/Å), which dominate the test numbers (14 meV/atom, 0.82 eV/Å). `eam.fit` gained a
+  PyTorch Adam stage for machines without MLX (before, they went straight to least squares from a
+  rough guess). Copper's experiments wait on Windows (request above). Killed non-essential desktop
+  apps at the human's request: Claude Code's low-memory guard had fired with 1 GB free (the float64
+  8-atom cross-check holds ~12.7 GB).
 - **2026-09-26 16:30, Downstairs PC (Claude).** **The refused copper labels and the iteration spread
   were one fp32 fault, now fixed** (`1cdae28`): LOBPCG kept Rayleigh–Ritz directions down to 1e-10
   of the largest overlap, below complex64's resolution. On label #5 one kept direction (1.2e-10)
