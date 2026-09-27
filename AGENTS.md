@@ -129,8 +129,8 @@ Take an item, say so in the log, and move it to the log when done. Items are ord
 
 **Downstairs PC**: queue empty (copper's training set, cross-check and final potential done; see the
 log). Candidates: cross-check the three MD tags (one 8-atom float64 label each, ~7 h apiece on this
-CPU, one at a time: two float64 jobs here left 1.6 GB free); fp32 fix (b); magnetic labelling on
-the GPU once the labeller passes `spin`.
+CPU, one at a time: two float64 jobs here left 1.6 GB free); magnetic labelling on the GPU once the
+labeller passes `spin`. (fp32 fix (b) done 2026-09-27: complex64 grams on CUDA, see the log.)
 
 **Windows (item 3 owner), a request from downstairs:** copper's potential is ready
 (`results/cu_eam_final.npz`, loads with `EAM.load`), but its experiments can't run yet:
@@ -177,7 +177,8 @@ lower state?).
    - Caches are per machine and not in git: all 66 copper labels are in the downstairs PC's
      `.cache/materials/dft/`. The fit and MD snapshots should run there.
    - Cross-check done: 6 float64 recomputations (one per tag), worst −0.62 meV/atom (the most
-     compressed fcc-volume cell, labelled by the old code in 42 iterations; the rest ≤0.17) and
+     compressed fcc-volume cell: single precision at high compression, since the fixed code reproduces
+     it to 0.005 meV/atom; the rest ≤0.17) and
      2.9e-5 Ha/bohr, none over budget (`results/cu_crosscheck.json`).
    - Seed fit done (`results/cu_eam_seed.json`: a₀ 3.554 Å vs DFT 3.548, B 169 vs 168 GPa); 18 MD
      snapshots at 870/1450/2040 K in `results/cu_md_snapshots.json`, being labelled. Final
@@ -249,6 +250,18 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-27 13:30, Downstairs PC (Claude).** **fp32 fix (b) done: LOBPCG's Rayleigh–Ritz grams run in
+  complex64 on CUDA** (`gram_dtype`, default complex64 on CUDA, complex128 elsewhere; labels
+  record which). Profile first: 76 % of the GPU's busy time in an SCF step was those complex128 grams.
+  A copper 4-atom label goes **379 → 207 s, same 20 iterations** (486 s before fix (a): 2.35× overall);
+  8-atom ~470 s (1100–1900 in production). The first version failed on perfect fcc Cu (#5: 60
+  iterations, 19 meV/atom off). A complex64 gram over N points is good to ε·√N, not ε, so the
+  ε drop threshold admitted noise and the bands lost orthonormality (1e-6..5e-3). Fixed by dropping
+  directions below ε·√N and by orthonormalising each solve's start in complex128. Then **all 6
+  cross-checked copper labels** agree with their stored labels to ≤0.038 meV/atom and ≤2.7e-5 Ha/bohr,
+  and with float64 as well as complex128 does (worst −0.617 meV/atom, 2.4e-5); #5 converges in 17. New
+  slow test on perfect copper at h = 0.25, checked to fail with the broken threshold (it does not at
+  h = 0.35). Fast suite 118 passed; single-precision tests 10 + 2 passed.
 - **2026-09-27 08:10, Downstairs PC (Claude).** Copper's float64 cross-check done (16.6 h serial):
   6/6 within budget, worst −0.62 meV/atom and 2.9e-5 Ha/bohr; bcc 0.001, strain 0.014, thermal
   −0.16/−0.17, fcc-8 −0.11. The −0.62 is the most compressed cell, whose label is the one the

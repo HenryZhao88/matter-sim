@@ -57,13 +57,17 @@ def _harmonics(l: int, x, y, z):
 
 class PeriodicDFTTorch(PeriodicDFT):
     def __init__(self, crystal, *args, device: str | None = None, wide_device: str | None = None,
-                 small_device: str | None = "cpu", cache_projectors: bool = False, **kw) -> None:
+                 small_device: str | None = "cpu", gram_dtype=None, cache_projectors: bool = False, **kw) -> None:
         super().__init__(crystal, *args, **kw)
         self.dev = torch.device(device or torch_device())
         # float64 work stays on the device unless it cannot do float64 (MPS)
         self.wdev = torch.device(wide_device or ("cpu" if self.dev.type == "mps" else self.dev.type))
         # the small Rayleigh–Ritz eigenproblems (complex128, ~150²): faster on the CPU than on a GPU
         self.sdev = torch.device(small_device or self.wdev)
+        # LOBPCG's block inner products (see lobpcg_dev): complex64 on a CUDA device, where they were
+        # measured against float64 (copper: 1.8x faster labels, same answers to 0.01 meV/atom), and
+        # complex128 on the wide device elsewhere
+        self.gram_dtype = gram_dtype or (C64 if self.dev.type == "cuda" else C128)
         self.cache_projectors = cache_projectors
         w = self.wdev
         self._Gt = torch.tensor(self.G, dtype=F64, device=w)                   # (Nx,Ny,Nz,3)
@@ -149,7 +153,8 @@ class PeriodicDFTTorch(PeriodicDFT):
         # strongly repulsive projector; used as the scale it froze copper's bands 500x too early
         h_norm = float(x.max()) + float(Veff32.abs().max()) + self._nonlocal_scale(U0, B, E)
         floor = RESIDUAL_FLOOR * torch.finfo(F32).eps * h_norm
-        return lobpcg_dev(lambda X: self._apply_dev(X, kin32, Veff32, B, E), U0, precond, iters, floor, wide=self.wdev, small=self.sdev)
+        return lobpcg_dev(lambda X: self._apply_dev(X, kin32, Veff32, B, E), U0, precond, iters, floor, wide=self.wdev, small=self.sdev,
+                          gram_dtype=self.gram_dtype)
 
     def _nonlocal_scale(self, U, B, E):
         """Largest ‖Σ_p E_p ⟨b_p|u⟩ b_p‖ over the (normalised) vectors u: the nonlocal term's real size."""
@@ -335,7 +340,8 @@ class PeriodicDFTTorch(PeriodicDFT):
         return F + self._core_forces(rho, v_core)
 
 
-def lobpcg_dev(apply_H, X, precond, maxiter, floor: float, keep_tol: float | None = None, wide=None, small="cpu"):
+def lobpcg_dev(apply_H, X, precond, maxiter, floor: float, keep_tol: float | None = None, wide=None, small="cpu",
+               gram_dtype=C128):
     """lobpcg_complex from periodic.py with the blocks in complex64 on X's device and the small
     Rayleigh–Ritz matrices accumulated in complex128 on ``wide`` (default: the same device) and
     diagonalised in complex128 on ``small`` (default: the CPU; a 150² complex128 eigh takes 11–16 ms
@@ -356,12 +362,19 @@ def lobpcg_dev(apply_H, X, precond, maxiter, floor: float, keep_tol: float | Non
     refused that way."""
     nb = X.shape[0]
     if keep_tol is None:
-        keep_tol = torch.finfo(X.real.dtype).eps
+        # the Gram matrix's own resolution: ε of the blocks when it is accumulated in complex128, and
+        # ε·√N when it is accumulated in complex64 over N grid points (measured: complex64 grams at ε
+        # kept noise directions on perfect fcc copper, the bands lost orthonormality to 1e-6..5e-3,
+        # and the SCF drifted away from dρ = 1.3e-4 and never converged)
+        keep_tol = torch.finfo(X.real.dtype).eps * (math.sqrt(X.shape[1]) if gram_dtype == C64 else 1.0)
     dev = X.device
     wide = wide or dev
     small = torch.device(small or wide)
 
     def gram(A, Bm):
+        """⟨A_i|B_j⟩ as a complex128 matrix; accumulated in ``gram_dtype``."""
+        if gram_dtype == C64:
+            return (A.conj() @ Bm.T).to(C128).to(wide)
         return A.to(wide).to(C128).conj() @ Bm.to(wide).to(C128).T
 
     def narrow(M):
@@ -371,8 +384,10 @@ def lobpcg_dev(apply_H, X, precond, maxiter, floor: float, keep_tol: float | Non
         return 0.5 * (M + M.conj().T)
 
     def orth(A):
-        s, V = torch.linalg.eigh(herm(gram(A, A)).to(small))
-        keep = s > keep_tol * s.max()
+        # once per solve, and always in complex128: every solve starts from exactly orthonormal bands
+        G = A.to(wide).to(C128).conj() @ A.to(wide).to(C128).T
+        s, V = torch.linalg.eigh(herm(G).to(small))
+        keep = s > torch.finfo(A.real.dtype).eps * s.max()
         return narrow((V[:, keep] / torch.sqrt(s[keep])).to(wide).T @ A.to(wide).to(C128))
 
     X = orth(X)[:nb]

@@ -64,13 +64,15 @@ def _solver(name: str, c: Crystal):
     if name == "numpy":
         return PeriodicDFT(c, **kw), {"solver": "numpy", "precision": "float64", "device": "cpu"}
     if name == "torch":
+        import torch
         from ..crystal.periodic_torch import PeriodicDFTTorch
         dft = PeriodicDFTTorch(c, **kw)
         dev = dft.dev.type
         if dev == "cuda":
-            import torch
-            dev = f"cuda ({torch.cuda.get_device_name(dft.dev)})"
-        return dft, {"solver": "torch", "precision": "complex64 eigensolver, float64 energy and force sums",
+            dev =f"cuda ({torch.cuda.get_device_name(dft.dev)})"
+        grams = "complex64" if dft.gram_dtype == torch.complex64 else "complex128"
+        return dft, {"solver": "torch", "precision": f"complex64 eigensolver ({grams} Rayleigh–Ritz grams), "
+                                                     "float64 energy and force sums",
                      "device": dev}
     raise ValueError(f"unknown DFT solver {name!r}")
 

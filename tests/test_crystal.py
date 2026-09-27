@@ -240,6 +240,26 @@ def test_single_precision_eigensolver_is_stable_far_past_convergence():
 
 
 @requires_torch
+@pytest.mark.slow
+@pytest.mark.parametrize("gram", ["complex64", "complex128"])
+def test_single_precision_grams_on_perfect_copper(gram):
+    """Perfect fcc copper: degenerate d bands, where complex64 Rayleigh–Ritz grams once kept noise
+    directions (their own error is ~ε·√N, not ε), lost the bands' orthonormality and left the SCF
+    drifting; a production label of this crystal never converged. Both gram precisions must
+    converge and agree with NumPy to the single-precision bound for copper (1 meV/atom). The grid
+    matters: the error grows with √N, and at h = 0.35 (N = 8000) the broken threshold still converged;
+    at h = 0.25 (N = 27000) it did not in 60 iterations, while the fixed one takes 22."""
+    import torch
+    from engine.crystal.periodic_torch import PeriodicDFTTorch
+    c = cubic("fcc", 6.704, 29)
+    kw = dict(h=0.25, kmesh=2, T_e=0.01, symmetry=False, xc_grid=2)
+    ref = PeriodicDFT(c, **kw).run()
+    got = PeriodicDFTTorch(c, gram_dtype=getattr(torch, gram), **kw).run()
+    assert ref.converged and got.converged
+    assert abs(got.free_energy - ref.free_energy) / 4 * 27.211386 < 1e-3
+
+
+@requires_torch
 def test_single_precision_spin_without_a_moment_is_the_unpolarised_one():
     """The device's spin-polarised path (periodic_torch.py) with no starting moment: both spins start
     from the same state and do the same arithmetic, so the moment stays zero and the energy is the
