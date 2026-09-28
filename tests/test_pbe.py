@@ -3,6 +3,7 @@ the crystal, each checked against something it must satisfy."""
 
 import numpy as np
 import pytest
+from conftest import requires_torch
 
 from engine.electrons.xc import lda_xc, pbe_xc
 
@@ -148,3 +149,24 @@ def test_pbe_molecule_forces_are_the_slope_of_its_energy():
     eps = 0.01
     slope = (run(1.8 + eps)[0].free_energy - run(1.8 - eps)[0].free_energy) / (2 * eps)
     assert F[1, 0] == pytest.approx(-slope, abs=1e-4)
+
+
+@requires_torch
+@pytest.mark.slow
+def test_single_precision_gpu_path_carries_pbe_and_spin():
+    """PeriodicDFTTorch inherits the XC from periodic.py: magnetic iron with PBE against float64
+    (measured: the same 3.8848 μB, 0.05 meV/atom, 2.1e-5 Ha/bohr)."""
+    from engine.crystal.periodic import Crystal, PeriodicDFT, cubic
+    from engine.crystal.periodic_torch import PeriodicDFTTorch
+    rng = np.random.default_rng(3)
+    for _ in range(2):
+        rng.normal(0, 0.15, (4, 3))
+    base = cubic("bcc", 5.3, 26)
+    c = Crystal(base.cell, base.charges, base.positions + rng.normal(0, 0.15, base.positions.shape))
+    kw = dict(h=0.35, kmesh=1, T_e=0.01, symmetry=False, xc_grid=2, functional="pbe", spin=True, moments=2.0)
+    ref = PeriodicDFT(c, **kw).run(forces=True)
+    got = PeriodicDFTTorch(c, **kw).run(forces=True)
+    assert ref.converged and got.converged and ref.moment > 1.0
+    assert abs(got.moment - ref.moment) < 1e-3
+    assert abs(got.free_energy - ref.free_energy) / 2 * 27.211386 < 1e-3
+    assert np.abs(got.forces - ref.forces).max() < 3e-4
