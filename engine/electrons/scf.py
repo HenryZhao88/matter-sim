@@ -7,6 +7,8 @@ Given fixed nuclei, finds the electronic ground state of
 in one of three approximations to the electron–electron term:
 
 - ``"lda"``  Kohn–Sham DFT with local spin-density exchange–correlation.
+- ``"pbe"``  Kohn–Sham DFT with the PBE generalised gradient approximation (and PBE
+             pseudopotentials).
 - ``"hf"``   unrestricted Hartree–Fock (exact exchange, zero fitted constants).
 - ``"none"`` no electron–electron term. Exact for a single electron, where
              that term is identically zero; wrong for anything else.
@@ -30,9 +32,9 @@ from ..atoms import species
 from .external import NonlocalProjectors, NuclearField, ion_ion
 from .mixing import PulayMixer
 from .occupations import fermi
-from .xc import lda_xc
+from .xc import lda_xc, pbe_xc
 
-FUNCTIONALS = ("lda", "hf", "none")
+FUNCTIONALS = ("lda", "pbe", "hf", "none")
 
 
 @dataclass
@@ -69,7 +71,11 @@ class SCFSolver:
         self._rng = np.random.default_rng(seed)
         self._precond = teter_preconditioner(grid)
         self.mixer = PulayMixer()
-        self.nuclear = NuclearField(grid)
+        # pseudopotentials built with the same XC as the solver (HF and "none" keep LDA's)
+        self.pp_functional = "pbe" if functional == "pbe" else "lda"
+        self.nuclear = NuclearField(grid, self.pp_functional)
+        k = 2 * np.pi * np.fft.fftfreq(grid.N, d=grid.h)
+        self._kvec = (k[:, None, None], k[None, :, None], k[None, None, :])
         self.set_positions(system.positions)
         self.orbitals = [self._initial_orbitals(n) for n in (system.n_up, system.n_dn)]
         self.rho_up, self.rho_dn = self._initial_density()
@@ -80,7 +86,7 @@ class SCFSolver:
         self.system.positions = np.asarray(positions, dtype=float).reshape(-1, 3)
         self.v_nuc = self.nuclear.potential(self.system.charges, self.system.positions)
         self.rho_core = self.nuclear.core_density(self.system.charges, self.system.positions)
-        nl = NonlocalProjectors(self.grid, self.system.charges, self.system.positions)
+        nl = NonlocalProjectors(self.grid, self.system.charges, self.system.positions, self.pp_functional)
         self.projectors = nl if nl.count else None
         self.mixer.reset()
 
@@ -175,8 +181,8 @@ class SCFSolver:
                 v_xc = (np.zeros(g.shape), np.zeros(g.shape))
             else:
                 v_h = self.b.to_numpy(g.hartree(self.b.asarray(rho_tot)))
-                if self.functional == "lda":
-                    _, vu, vd = lda_xc(*self._with_core(rho_in))
+                if self.functional in ("lda", "pbe"):
+                    _, vu, vd = self._xc(rho_in)
                     v_xc = (vu, vd)
                 else:
                     v_xc = (np.zeros(g.shape), np.zeros(g.shape))
@@ -270,12 +276,27 @@ class SCFSolver:
         if self.functional != "none":
             v_h = self.b.to_numpy(g.hartree(self.b.asarray(rho)))
             comps["hartree"] = 0.5 * float(np.sum(v_h * rho) * g.dV)
-        if self.functional == "lda":
-            e_xc, _, _ = lda_xc(*self._with_core(rho_out))
+        if self.functional in ("lda", "pbe"):
+            e_xc, _, _ = self._xc(rho_out)
             comps["exchange_correlation"] = float(np.sum(e_xc) * g.dV)
         elif self.functional == "hf":
             comps["exchange_correlation"] = exchange_hf
         return comps
+
+    def _xc(self, rho_pair):
+        """(e_xc per volume, v↑, v↓) of the spin densities plus the partial core. PBE's potential
+        takes its gradient term spectrally: v_σ = ∂e/∂ρσ − ∇·(2 ∂e/∂s_σσ ∇ρσ + ∂e/∂s_ud ∇ρσ')."""
+        ru, rd = self._with_core(rho_pair)
+        if self.functional != "pbe":
+            return lda_xc(ru, rd)
+        grad = lambda f: [np.real(np.fft.ifftn(1j * k * np.fft.fftn(f))) for k in self._kvec]
+        div = lambda W: sum(np.real(np.fft.ifftn(1j * k * np.fft.fftn(w))) for k, w in zip(self._kvec, W))
+        gu, gd = grad(ru), grad(rd)
+        dot = lambda a, b: a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+        e, vu, vd, wuu, wud, wdd = pbe_xc(ru, rd, dot(gu, gu), dot(gu, gd), dot(gd, gd))
+        vu = vu - div([2 * wuu * gu[a] + wud * gd[a] for a in range(3)])
+        vd = vd - div([2 * wdd * gd[a] + wud * gu[a] for a in range(3)])
+        return e, vu, vd
 
     def _with_core(self, rho_pair):
         """Spin densities as the exchange–correlation functional sees them: plus half the ions'
@@ -301,8 +322,8 @@ class SCFSolver:
         F_e = self.nuclear.forces(sysm.charges, sysm.positions, self.last.rho)
         _, F_nn = ion_ion(sysm.charges, sysm.positions)
         F = F_e + F_nn
-        if self.rho_core is not None and self.functional == "lda":
-            _, vu, vd = lda_xc(*self._with_core((self.last.rho_up, self.last.rho_dn)))
+        if self.rho_core is not None and self.functional in ("lda", "pbe"):
+            _, vu, vd = self._xc((self.last.rho_up, self.last.rho_dn))
             F += self.nuclear.core_forces(sysm.charges, sysm.positions, 0.5 * (vu + vd))
         if self.projectors is not None:
             for s in range(2):

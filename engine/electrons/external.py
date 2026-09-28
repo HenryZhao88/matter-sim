@@ -30,8 +30,9 @@ from ..core.grid import Grid
 class NuclearField:
     """Ion potential (point nuclei or pseudo-ions) and its Hellmann–Feynman forces."""
 
-    def __init__(self, grid: Grid) -> None:
+    def __init__(self, grid: Grid, functional: str = "lda") -> None:
         self.grid = grid
+        self.functional = functional        # whose pseudopotentials: they must match the solver's XC
         N, h = grid.N, grid.h
         M = 2 * N
         self.M = M
@@ -75,7 +76,7 @@ class NuclearField:
             if not species.is_pseudized(Z):
                 self._form[Z] = -Z * self.kernel
             else:
-                pp = species.pseudopotential(Z)
+                pp = species.pseudopotential(Z, self.functional)
                 q = np.linspace(0.0, float(self.kk.max()) * 1.001, 2048)
                 short = np.interp(self.kk, q, pp.local_short_range_q(q))
                 gauss = np.exp(-self.kk ** 2 * R_GAUSS ** 2 / 4)
@@ -115,7 +116,7 @@ class NuclearField:
     # ------------------------------------------------------------ core correction
     def _core_hat(self, Z, R):
         if Z not in self._core_form:
-            pp = species.pseudopotential(Z) if species.is_pseudized(Z) else None
+            pp = species.pseudopotential(Z, self.functional) if species.is_pseudized(Z) else None
             if pp is None or pp.rho_core is None:
                 self._core_form[Z] = None
             else:
@@ -150,7 +151,7 @@ class NonlocalProjectors:
     band-limited by the same spectral filter as the local potential.
     """
 
-    def __init__(self, grid: Grid, charges, positions) -> None:
+    def __init__(self, grid: Grid, charges, positions, functional: str = "lda") -> None:
         self.grid = grid
         b = grid.backend
         N, h = grid.N, grid.h
@@ -166,7 +167,7 @@ class NonlocalProjectors:
         for i, (Z, R) in enumerate(zip(charges, positions)):
             if not species.is_pseudized(Z):
                 continue
-            pp = species.pseudopotential(Z)
+            pp = species.pseudopotential(Z, functional)
             d = np.asarray(R, dtype=float) - x0
             phase = np.exp(-1j * (KX * d[0] + KY * d[1] + KZ * d[2]))
             for l in pp.nonlocal_channels:

@@ -110,3 +110,41 @@ def test_spin_polarised_pbe_forces_on_iron():
         pm[atom, axis] -= eps
         slope = (run(pp).free_energy - run(pm).free_energy) / (2 * eps)
         assert r0.forces[atom, axis] == pytest.approx(-slope, abs=1e-4)
+
+
+def test_pbe_hydrogen_on_the_3d_grid_approaches_the_radial_atom():
+    """The molecular solver's PBE (spectral gradients) against the radial solver's (finite differences
+    on a log grid): the gap at h = 0.3 is the grid's, the same as LDA's (measured 2.24e-3 vs 2.02e-3)."""
+    from engine.atoms.radial import RadialAtom
+    from engine.core.backend import get_backend
+    from engine.core.grid import Grid
+    from engine.electrons.scf import SCFSolver
+    from engine.system import System
+    g = Grid(14.0, 0.3, get_backend("numpy"))
+    gap = {}
+    for f in ("lda", "pbe"):
+        r = SCFSolver(g, System([1], [[0, 0, 0]]), functional=f).run()
+        assert r.converged
+        gap[f] = r.energy - RadialAtom(1, spin=1, functional=f).solve().energy
+    assert 0 < gap["pbe"] < 3e-3
+    assert abs(gap["pbe"] - gap["lda"]) < 5e-4
+
+
+@pytest.mark.slow
+def test_pbe_molecule_forces_are_the_slope_of_its_energy():
+    """Water with PBE pseudopotentials, forces against the energy's slope (measured 3.4e-5 Ha/bohr;
+    LDA at the same settings 3.9e-5)."""
+    from engine.core.backend import get_backend
+    from engine.core.grid import Grid
+    from engine.electrons.scf import SCFSolver
+    from engine.system import System
+    g = Grid(12.0, 0.25, get_backend("numpy"))
+
+    def run(d):
+        s = SCFSolver(g, System([8, 1, 1], [[0, 0, 0], [d, 0.2, 0], [-0.5, 1.7, 0]]), functional="pbe")
+        return s.run(max_iter=120, tol_rho=1e-5, tol_e=1e-9), s
+    r, s = run(1.8)
+    F = s.forces()
+    eps = 0.01
+    slope = (run(1.8 + eps)[0].free_energy - run(1.8 - eps)[0].free_energy) / (2 * eps)
+    assert F[1, 0] == pytest.approx(-slope, abs=1e-4)

@@ -63,7 +63,7 @@ class Session:
             ],
             "modes": list(MODES),
             "qualities": QUALITY_H,
-            "functionals": ["lda", "hf", "none"],
+            "functionals": ["lda", "pbe", "hf", "none"],
             "backends": ["mlx", "numpy"] if have_mlx() else ["numpy"],
             "accelerator": describe(),
         }
