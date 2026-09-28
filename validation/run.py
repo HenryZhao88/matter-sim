@@ -77,6 +77,7 @@ def main(quick: bool = False, part: str = "all") -> None:
     if part in ("all", "materials"):
         materials_section()
         iron_section()
+        iron_section("pbe")
     ok = [r["ok"] for r in rows if r["ok"] is not None]
     print(f"\n{sum(ok)}/{len(ok)} checks pass  ({time.time() - t0:.0f} s)")
     OUT.write_text(json.dumps({"quick": quick, "part": part, "rows": rows}, indent=2, default=float))
@@ -130,35 +131,44 @@ def materials_section() -> None:
            "≈2.9 kJ from measured tables", 2.0 < b.heat_to_melt_J() / 1000 < 4.5)
 
 
-def iron_section() -> None:
+def iron_section(functional: str = "lda") -> None:
     """Iron: spin-polarised periodic DFT (scripts/fe_magnetism.py). Whether iron is a magnet, how strong,
-    and which crystal it picks all come out of the calculation; the starting moment is only a push."""
-    path = Path(__file__).resolve().parents[1] / "results" / "fe_magnetism.json"
+    and which crystal it picks all come out of the calculation; the starting moment is only a push.
+    The same rows and bounds for each functional (the bounds were set before any result existed)."""
+    name = "fe_magnetism.json" if functional == "lda" else f"fe_magnetism_{functional}.json"
+    path = Path(__file__).resolve().parents[1] / "results" / name
     if not path.exists():
-        print("\n(Iron checks skipped: run scripts/fe_magnetism.py first.)")
+        if functional == "lda":
+            print("\n(Iron checks skipped: run scripts/fe_magnetism.py first.)")
         return
     d = json.loads(path.read_text())
     fits = {p: f for p, f in d["fits"].items() if "error" not in f}
-    section(f"Iron: spin-polarised DFT (LSDA, h = {d['h']} bohr, k-mesh bcc {d['kmesh']['bcc']}³, fcc {d['kmesh']['fcc']}³)")
+    label = {"lda": "LSDA", "pbe": "spin-polarised PBE"}[functional]
+    tag = "" if functional == "lda" else f" ({functional.upper()})"
+    section(f"Iron: spin-polarised DFT ({label}, h = {d['h']} bohr, k-mesh bcc {d['kmesh']['bcc']}³, fcc {d['kmesh']['fcc']}³)")
     fm = fits.get("bcc-ferromagnetic")
     if fm is None:
         print("  (bcc ferromagnetic scan incomplete)")
         return
-    record("materials", "Iron: magnetic moment per atom (bcc)", fm["moment_at_V0"], 2.22, "μB",
-           "at the computed lattice constant", abs(fm["moment_at_V0"] - 2.22) < 0.3)
-    record("materials", "Iron: lattice constant (bcc, ferromagnetic)", fm["a0"] * BOHR_ANGSTROM, 2.8665, "Å",
-           "LDA over-binds 3d metals", fm["inside_scan"] and abs(fm["a0"] * BOHR_ANGSTROM / 2.8665 - 1) < 0.03)
-    record("materials", "Iron: bulk modulus", fm["B0_GPa"], 170.0, "GPa", "", abs(fm["B0_GPa"] / 170 - 1) < 0.3)
+    # the measured 2.22 μB is the net magnetisation, so compare the net moment ∫(ρ↑ − ρ↓), not the
+    # absolute ∫|ρ↑ − ρ↓| the fit stores (which also counts oppositely polarised regions: PBE 2.51 vs 2.39)
+    pr = sorted((r for r in d["points"] if r["phase"] == "bcc-ferromagnetic" and r["converged"]), key=lambda r: r["v_atom"])
+    net = float(np.interp(fm["V0"], [r["v_atom"] for r in pr], [r["moment_atom"] for r in pr]))
+    record("materials", f"Iron{tag}: magnetic moment per atom (bcc)", net, 2.22, "μB",
+           "net, at the computed lattice constant", abs(net - 2.22) < 0.3)
+    record("materials", f"Iron{tag}: lattice constant (bcc, ferromagnetic)", fm["a0"] * BOHR_ANGSTROM, 2.8665, "Å",
+           "LDA over-binds 3d metals" if functional == "lda" else "", fm["inside_scan"] and abs(fm["a0"] * BOHR_ANGSTROM / 2.8665 - 1) < 0.03)
+    record("materials", f"Iron{tag}: bulk modulus", fm["B0_GPa"], 170.0, "GPa", "", abs(fm["B0_GPa"] / 170 - 1) < 0.3)
     nm = fits.get("bcc-nonmagnetic")
     if nm is not None:
-        record("materials", "Iron: magnetic energy (bcc, FM − NM)", (fm["E0"] - nm["E0"]) * HARTREE_EV * 1000,
+        record("materials", f"Iron{tag}: magnetic energy (bcc, FM − NM)", (fm["E0"] - nm["E0"]) * HARTREE_EV * 1000,
                "< 0", "meV/atom", "negative: iron chooses to be a magnet", fm["E0"] < nm["E0"])
     env = _lower_envelopes(d["points"])
     if len(env) < 2:
         return
     ranked = sorted(env, key=lambda s: env[s]["E0"])
     best = ranked[0]
-    record("materials", "Iron: lowest-energy crystal", f"{best} {env[best]['state']}", "bcc ferromagnetic", "",
+    record("materials", f"Iron{tag}: lowest-energy crystal", f"{best} {env[best]['state']}", "bcc ferromagnetic", "",
            " < ".join(f"{s} {env[s]['state']} {(env[s]['E0'] - env[best]['E0']) * HARTREE_EV * 1000:+.0f}"
                       for s in ranked[1:]) + " meV (each structure's lowest state at every volume)",
            best == "bcc" and env[best]["state"] == "ferromagnetic")

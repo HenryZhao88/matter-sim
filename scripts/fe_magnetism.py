@@ -33,7 +33,8 @@ OUT = ROOT / "results" / "fe_magnetism.json"
 CACHE = ROOT / ".cache" / "fe_magnetism"
 
 Z = 26
-V_ATOM = np.linspace(60.0, 84.0, 7)          # bohr³ per atom: a wide scan; the fit must land inside it
+V_ATOM = np.linspace(60.0, 92.0, 9)          # bohr³ per atom: a wide scan; the fit must land inside it (PBE
+                                             # iron's bcc minimum sits at ~82, so 84 was too close to the edge)
 # phase: (structure, starting moment per atom in μB, or None for no spin polarisation)
 PHASES = {
     "bcc-nonmagnetic": ("bcc", None),

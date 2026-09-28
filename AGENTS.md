@@ -57,7 +57,7 @@ result disagrees with nature, say so and leave it disagreeing.
 | Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, pp at 13.6 TeV; one loop: lepton g−2 (a = 0.0011614 vs 0.0011597 measured) and α's running from α(0) |
 | Lattice QCD | working: confinement, deconfinement, hadron masses (pion as Goldstone boson, κ_c = 0.1695 vs 0.1694 published) |
 | Electrons and nuclei | working: H–Kr (Sc fails its own check and is greyed out), molecules, truth mode (VMC, MLX and PyTorch) |
-| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`, 10⁶ atoms) now runs the experiments (`engine="torch"`): melting in a 96 000-atom box gives **898 K** (1 200 atoms: 852–867 K). **Iron** (spin-polarised DFT, all five phases): bcc FM a = 2.794 Å (2.866), B = 218 GPa (170), 2.16 μB (2.22); plain LDA puts fcc ~40 meV/atom below bcc FM (known LDA error, left disagreeing). **Copper**: grid converged, DFT lattice constant 3.548 Å; labelling running downstairs |
+| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`, 10⁶ atoms) now runs the experiments (`engine="torch"`): melting in a 96 000-atom box gives **898 K** (1 200 atoms: 852–867 K). **Iron** (spin-polarised DFT, all five phases): bcc FM a = 2.794 Å (2.866), B = 218 GPa (170), 2.16 μB (2.22); plain LDA puts fcc ~40 meV/atom below bcc FM (known LDA error, left disagreeing). **With PBE** (D3, built): bcc FM comes out lowest (fcc +140 meV/atom), a = 2.892 Å, B = 146 GPa, 2.39 μB net; all five iron checks pass. **Copper**: grid converged, DFT lattice constant 3.548 Å; labelling running downstairs |
 | Everyday matter | working: the 1 cm³ block, 6.3 × 10²² atoms, 2.83 g, 2.29 kJ to melt |
 
 Results both machines can read are in `results/`. `HANDOFF.md` carries the detail and the
@@ -140,11 +140,14 @@ labeller passes `spin`. (fp32 fix (b) done 2026-09-27: complex64 grams on CUDA, 
 and search ranges from the element's own potential rather than from aluminium.
 
 **Mac** (float64 reference work):
-- **A gradient-corrected functional (PBE)** — the next physics step for iron, where plain LDA gets
-  the structure wrong. It needs the functional in `electrons/xc.py` (atoms and crystals), and
-  pseudopotentials regenerated with it (they must use the same functional as the solid), so it
-  goes through `DECISIONS.md` first. The success test is not written in: rerun
-  `fe_magnetism.py` and see whether bcc ferromagnetic comes out lowest.
+- ~~PBE~~ done 2026-09-28 (D3; `functional="pbe"`, results/fe_magnetism_pbe.json). Next on this line:
+  **carry the functional in each element's settings and labels** (`dataset.GRID` and the cache
+  key) before anything is labelled with PBE; PBE for molecules (`electrons/scf.py`), which is
+  LDA-only today; and **check whether our iron is too large for its pseudopotential**. Our a₀ is
+  2.794 Å with LDA and 2.892 with PBE. All-electron calculations usually quote about 2.75 and 2.83,
+  so both of ours may be ~1.5–2% large. That is a suspicion, not a measurement: compare against an
+  all-electron reference (the radial solver can do the atom, not the solid) or a harder iron
+  pseudopotential before trusting the size.
 - ~~D2~~ done 2026-09-26 (pseudopotential cache v6; see DECISIONS.md).
 
 **Linux cloud container** (short checks): both items done 2026-09-26 (see the log). Next candidates:
@@ -243,6 +246,16 @@ and add a dated line to the log. Keep it short: this file is a handover, not a d
 anything that is no longer true rather than appending a correction.
 
 ## Log
+
+- **2026-09-28, Mac (Claude).** Built PBE (D3, decided by the human): `xc.pbe_xc`, and a
+  `functional` switch through the radial atom, pseudopotential generation and cache, and the
+  periodic solver (so the GPU path too). LDA is bit for bit unchanged. PBE atoms match published
+  all-electron PBE (He −2.892935, Ne −128.866404, Ar −527.346034 Ha). Iron with PBE: grid h = 0.20,
+  xc_grid 2 holds (vs 0.16: 1.1 meV/atom on the volume energy, 0.03 on FM − NM). Phase scan widened
+  to V = 60–92 bohr³ (PBE's bcc minimum is at 81.6, too near the old edge of 84). **bcc
+  ferromagnetic lowest, fcc +140 meV/atom**; a = 2.892 Å, B = 146 GPa, 2.39 μB net. The validation's
+  iron moment row now compares the *net* moment with the measured net 2.22 μB. It had compared the
+  absolute ∫|m| (LDA 2.163 → 2.123 net; PBE 2.507 → 2.385); bound unchanged, both pass.
 
 - **2026-09-27 13:30, Downstairs PC (Claude).** **fp32 fix (b) done: LOBPCG's Rayleigh–Ritz grams run in
   complex64 on CUDA** (`gram_dtype`, default complex64 on CUDA, complex128 elsewhere; labels
