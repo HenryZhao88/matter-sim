@@ -138,12 +138,6 @@ labeller passes `spin`. (fp32 fix (b) done 2026-09-27: complex64 grams on CUDA, 
 (500–1500 K), the 1800 K melt, the thermal temperatures and `al_results.json`. You are editing
 `md*.py`/`experiments.py`, so downstairs left them alone. Wanted: mass and element as arguments,
 and search ranges from the element's own potential rather than from aluminium.
-- ~~Speed up the fp32 labeller~~ **done, see the log**: (a) is in (−21 % per label); the refused labels
-  and the 15–56 iteration spread were one fault, fixed (`1cdae28`). (b), split complex64 grams, is
-  **not done**: the grams need complex128 accuracy (see `_overlap`), which a complex64 split does
-  not give without a precision study; worth it only if many more GPU labels are coming.
-- ~~Port spin to `periodic_torch.py`~~ **done** (`44fc2a9`; see the log). Next for magnetism: pass
-  `spin`/`moments` through the labeller.
 
 **Mac** (float64 reference work):
 - **A gradient-corrected functional (PBE)** — the next physics step for iron, where plain LDA gets
