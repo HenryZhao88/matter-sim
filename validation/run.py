@@ -95,6 +95,12 @@ def copper_section() -> None:
     record("materials", "Cu lattice constant (static lattice)", d["a0_A"], 3.603, "Å",
            "exp. 3.615 at 293 K, 3.603 at 0 K; LDA is usually 1–3% short")
     record("materials", "Cu bulk modulus", d["B_GPa"], 142.0, "GPa", "exp. 0 K; LDA is usually stiff")
+    pbe = path.with_name("cu_eos_pbe.json")
+    if pbe.exists():
+        p = json.loads(pbe.read_text())
+        record("materials", "Cu lattice constant (static lattice, PBE)", p["a0_A"], 3.603, "Å",
+               "exp. 0 K; PBE is usually a little long")
+        record("materials", "Cu bulk modulus (PBE)", p["B_GPa"], 142.0, "GPa", "exp. 0 K")
 
 
 def materials_section() -> None:

@@ -140,14 +140,20 @@ labeller passes `spin`. (fp32 fix (b) done 2026-09-27: complex64 grams on CUDA, 
 and search ranges from the element's own potential rather than from aluminium.
 
 **Mac** (float64 reference work):
-- ~~PBE~~ done 2026-09-28 (D3; `functional="pbe"`, results/fe_magnetism_pbe.json). Next on this line:
-  **carry the functional in each element's settings and labels** (`dataset.GRID` and the cache
-  key) before anything is labelled with PBE; PBE for molecules (`electrons/scf.py`), which is
-  LDA-only today; and **check whether our iron is too large for its pseudopotential**. Our a₀ is
-  2.794 Å with LDA and 2.892 with PBE. All-electron calculations usually quote about 2.75 and 2.83,
-  so both of ours may be ~1.5–2% large. That is a suspicion, not a measurement: compare against an
-  all-electron reference (the radial solver can do the atom, not the solid) or a harder iron
-  pseudopotential before trusting the size.
+- ~~PBE~~ done 2026-09-28 (D3): crystals, atoms, pseudopotentials, molecules, the GPU path, and
+  labels carry the functional (`dataset.GRID[...]["functional"]`, in the cache name when not LDA).
+  Open on this line:
+  - **Iron's size.** PBE bcc iron comes out 2.892 Å; all-electron PBE is usually quoted near 2.83,
+    so ours is ~2% large (LDA: 2.794 vs ~2.75). **Not the stretched s radius:** the harder
+    r_s = 2.31 candidate gives 2.934 Å, larger still. Calibration on copper: ours is 3.548 (LDA) and
+    3.668 Å (PBE) against all-electron ~3.52 and ~3.63, so ~0.8–0.9% large for both functionals.
+    Iron's excess is about twice that. Next suspect: the frozen 3s3p semicore (8 valence electrons,
+    core correction only). A 16-electron iron pseudopotential would test it, but the generator
+    doesn't do semicore states. The literature values here are from memory; verify them before
+    quoting.
+  - **PBE molecules are slow:** relaxing water took 4,242 s against LDA's 378 (six full-grid FFTs
+    per XC call, and more SCF iterations near convergence, where the density change floors at
+    ~5e-6 while the energy converges). Profile before relying on it.
 - ~~D2~~ done 2026-09-26 (pseudopotential cache v6; see DECISIONS.md).
 
 **Linux cloud container** (short checks): both items done 2026-09-26 (see the log). Next candidates:
@@ -246,6 +252,14 @@ and add a dated line to the log. Keep it short: this file is a handover, not a d
 anything that is no longer true rather than appending a correction.
 
 ## Log
+
+- **2026-09-28, Mac (Claude), second stint.** Labels carry their functional. PBE for molecules
+  (`SCFSolver(functional="pbe")`, water relaxes to 0.972 Å / 104.45°; LDA 0.973 Å / 105.07°;
+  measured 0.958 Å / 104.5°). The GPU path checked with PBE and spin (magnetic iron vs float64:
+  same moment, 0.05 meV/atom). Copper under PBE: a₀ 3.668 Å, B 150 GPa (`results/cu_eos_pbe.json`).
+  Iron's harder pseudopotential makes iron larger (2.934 Å), so the stretch is not why iron is big.
+  Ran the **full slow suite** on the merged tree: 25/26. The failure was the downstairs fp32 fix
+  (b) on MPS (complex128 cast on the device), fixed in `04c5f38`; now 26/26.
 
 - **2026-09-28, Mac (Claude).** Built PBE (D3, decided by the human): `xc.pbe_xc`, and a
   `functional` switch through the radial atom, pseudopotential generation and cache, and the
