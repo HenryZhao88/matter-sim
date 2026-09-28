@@ -374,7 +374,7 @@ def lobpcg_dev(apply_H, X, precond, maxiter, floor: float, keep_tol: float | Non
     def gram(A, Bm):
         """⟨A_i|B_j⟩ as a complex128 matrix; accumulated in ``gram_dtype``."""
         if gram_dtype == C64:
-            return (A.conj() @ Bm.T).to(C128).to(wide)
+            return (A.conj() @ Bm.T).to(wide).to(C128)          # to the wide device first: MPS has no complex128
         return A.to(wide).to(C128).conj() @ Bm.to(wide).to(C128).T
 
     def narrow(M):
