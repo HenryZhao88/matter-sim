@@ -217,12 +217,26 @@ def test_each_element_is_labelled_on_its_own_converged_grid():
         return hashlib.sha1(pickle.dumps(("v2", np.round(conf["cell"], 6).tolist(), list(conf["charges"]),
                                           dataset._wrapped_fractions(conf), dataset.K_SPACING, dataset.T_E),
                                          protocol=4)).hexdigest()[:16]
-    assert dataset.grid_settings(al["charges"]) == {"h": 0.3, "xc_grid": 1}
-    assert dataset.grid_settings(cu["charges"]) == {"h": 0.19, "xc_grid": 2}
+    assert dataset.grid_settings(al["charges"]) == {"h": 0.3, "xc_grid": 1, "functional": "lda"}
+    assert dataset.grid_settings(cu["charges"]) == {"h": 0.19, "xc_grid": 2, "functional": "lda"}
     assert dataset.cache_key(al) == v2_name(al)
     assert dataset.cache_key(cu) != v2_name(cu)
     with pytest.raises(ValueError):
         dataset.grid_settings([26] * 2)
+
+
+def test_a_functional_other_than_lda_names_its_labels_apart(monkeypatch):
+    """An element labelled with PBE gets different cache names from the same configurations under
+    LDA, and its settings (hence the solver and the label's provenance) carry the functional."""
+    from engine.materials import dataset
+    c = dataset.cubic("fcc", 6.7, 29)
+    cu = {"cell": c.cell, "charges": c.charges, "positions": c.positions}
+    lda_name = dataset.cache_key(cu)
+    monkeypatch.setitem(dataset.GRID, 29, {"h": 0.19, "xc_grid": 2, "functional": "pbe"})
+    assert dataset.grid_settings(cu["charges"])["functional"] == "pbe"
+    assert dataset.cache_key(cu) != lda_name
+    dft, _ = dataset._solver("numpy", dataset.Crystal(cu["cell"], cu["charges"], cu["positions"]))
+    assert dft.functional == "pbe"
 
 
 @requires_torch

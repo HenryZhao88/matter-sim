@@ -6,9 +6,10 @@ experiment. Each volume is one periodic DFT run on the 4-atom cubic cell, cached
 Birch–Murnaghan fit is redone from whatever is cached. The grid (h, xc_grid) is the element's
 converged one from dataset.GRID.
 
-    uv run python scripts/eos.py 29 [k] [workers]
+    uv run python scripts/eos.py 29 [k] [workers] [a_guess_bohr|-] [lda|pbe]
 
-Writes results/<symbol>_eos.json. Experiment appears only in validation/run.py.
+Writes results/<symbol>_eos.json (<symbol>_eos_pbe.json for PBE). Experiment appears only in
+validation/run.py.
 """
 
 import hashlib
@@ -32,10 +33,20 @@ V_RANGE = (0.88, 1.12)       # volume per atom, relative to the first guess
 N_POINTS = 9
 
 
-def _point(args):
-    Z, a, k = args
+def _settings(Z, functional=None):
     g = grid_settings([Z])
-    key = hashlib.sha1(pickle.dumps((Z, round(a, 8), k, T_E, g["h"], g["xc_grid"]), protocol=4)).hexdigest()[:16]
+    if functional:
+        g["functional"] = functional
+    return g
+
+
+def _point(args):
+    Z, a, k, fn = args
+    g = _settings(Z, fn)
+    ident = (Z, round(a, 8), k, T_E, g["h"], g["xc_grid"])
+    if g["functional"] != "lda":
+        ident += (g["functional"],)               # LDA points keep the names they were cached under
+    key = hashlib.sha1(pickle.dumps(ident, protocol=4)).hexdigest()[:16]
     path = CACHE / "eos" / f"{key}.json"
     if path.exists():
         return json.loads(path.read_text())
@@ -48,7 +59,7 @@ def _point(args):
     return out
 
 
-def main(Z: int, k: int = 10, workers: int = 2, a_guess_bohr: float | None = None) -> None:
+def main(Z: int, k: int = 10, workers: int = 2, a_guess_bohr: float | None = None, functional: str | None = None) -> None:
     # the first guess only sets where to look (a window of ±12% in volume); the answer is the
     # minimum of our own curve, and the window is re-centred if the minimum lands at its edge
     a_guess = a_guess_bohr or 6.8
@@ -57,7 +68,7 @@ def main(Z: int, k: int = 10, workers: int = 2, a_guess_bohr: float | None = Non
     rows = []
     for _ in range(3):
         vols = np.linspace(*V_RANGE, N_POINTS) * a_guess ** 3
-        jobs = [(Z, float(v ** (1 / 3)), k) for v in vols]
+        jobs = [(Z, float(v ** (1 / 3)), k, functional) for v in vols]
         with ctx.Pool(processes=workers, maxtasksperchild=2) as pool:
             for r in pool.imap(_point, jobs):
                 print(f"a = {r['a_bohr']:.4f} bohr: E = {r['energy_per_atom']:.6f} Ha/atom "
@@ -74,15 +85,18 @@ def main(Z: int, k: int = 10, workers: int = 2, a_guess_bohr: float | None = Non
     res = fit([(r["a_bohr"] ** 3 / 4, r["energy_per_atom"], r["a_bohr"], True) for r in good])
     a0 = (4 * res["V0"]) ** (1 / 3)
     out = {"source": "scripts/eos.py: periodic LDA DFT, fcc 4-atom cell, float64", "Z": Z,
-           "k": k, "T_e": T_E, **grid_settings([Z]), "points": len(good),
+           "k": k, "T_e": T_E, **_settings(Z, functional), "points": len(good),
            "refused": len(rows) - len(good), "a0_bohr": a0, "a0_A": a0 * BOHR_A,
            "B_GPa": res["B0_GPa"], "B1": res["B1"],
            "rows": [{"a_bohr": r["a_bohr"], "E_Ha_per_atom": r["energy_per_atom"]} for r in good]}
     sym = ELEMENTS[Z].symbol.lower()
-    (ROOT / "results" / f"{sym}_eos.json").write_text(json.dumps(out, indent=1))
+    suffix = "" if (functional or "lda") == "lda" else f"_{functional}"
+    (ROOT / "results" / f"{sym}_eos{suffix}.json").write_text(json.dumps(out, indent=1))
     print(f"a0 = {a0 * BOHR_A:.4f} Å, B = {res['B0_GPa']:.1f} GPa, B' = {res['B1']:.2f}  "
           f"({len(good)} points)", flush=True)
 
 
 if __name__ == "__main__":
-    main(int(sys.argv[1]), *(int(x) for x in sys.argv[2:4]))
+    a = sys.argv[1:]
+    main(int(a[0]), int(a[1]) if len(a) > 1 else 10, int(a[2]) if len(a) > 2 else 2,
+         float(a[3]) if len(a) > 3 and a[3] != "-" else None, a[4] if len(a) > 4 else None)

@@ -31,6 +31,9 @@ T_E = 0.01          # Ha, Fermi–Dirac smearing of the labels
 # strain energy (a x 1.04) 106.2 vs 107.4, forces within 2e-4 Ha/bohr; half-step egg-box +0.56 meV/atom.
 # h = 0.22 misses the strain energy by 9 meV/atom, h = 0.30 by 70. 0.19 is also the finest spacing
 # whose 8-atom cells fit in memory on both machines.
+# An entry may also name its exchange–correlation functional ("functional": "pbe"); without one it is
+# LDA. The functional picks the pseudopotentials too, is recorded on every label, and enters the
+# cache name when it is not LDA, so labels of one element under two functionals never share a name.
 GRID = {13: {"h": 0.3, "xc_grid": 1}, 29: {"h": 0.19, "xc_grid": 2}}
 
 
@@ -55,7 +58,9 @@ def grid_settings(charges) -> dict:
     zs = sorted({int(z) for z in charges})
     if len(zs) != 1 or zs[0] not in GRID:
         raise ValueError(f"no converged DFT grid for elements {zs}: measure one before labelling (GRID)")
-    return dict(GRID[zs[0]])
+    g = dict(GRID[zs[0]])
+    g.setdefault("functional", "lda")
+    return g
 
 
 def _solver(name: str, c: Crystal):
@@ -94,6 +99,8 @@ def cache_key(conf: dict) -> str:
     g = GRID.get(int(conf["charges"][0]))
     if g is not None and g != GRID[13]:
         key += (g["h"], g["xc_grid"])       # aluminium's names predate this and keep their form
+    if g is not None and g.get("functional", "lda") != "lda":
+        key += (g["functional"],)           # LDA names (every label so far) are unchanged
     return hashlib.sha1(pickle.dumps(key, protocol=4)).hexdigest()[:16]
 
 
