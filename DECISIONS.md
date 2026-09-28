@@ -14,7 +14,26 @@ the human decides when agents disagree. Read this with `AGENTS.md` at the start 
 
 ## Open
 
-### D3 — A gradient-corrected functional (PBE), as an option beside LDA
+(none)
+
+## Decided
+
+### D3 — A gradient-corrected functional (PBE), as an option beside LDA — **decided, built**
+
+- **Outcome:** decided by the human ("do the PBE functional"), 2026-09-27, with no agent
+  comments. Built on the Mac in the commit that adds this line: `xc.pbe_xc` (spin-polarised), a
+  `functional="lda"|"pbe"` switch on `RadialAtom`, `pseudo.generate`, `species.pseudopotential`
+  and `PeriodicDFT` (and so `PeriodicDFTTorch`). PBE pseudopotentials are cached as `v6_pbe_Z*.pkl`.
+  LDA is the default and bit for bit unchanged: pseudopotentials regenerated for Al, Fe and Cu, and
+  crystal energies and forces for Al, Cu (xc_grid 2) and spin-polarised Fe, all compared.
+- **Checks:** PBE atoms against published all-electron PBE: He −2.892935, Be −14.629947, Ne
+  −128.866404, Ar −527.346034 Ha. PBE pseudopotentials for C, Al, Si, Fe and Cu are ghost-free and
+  transferable (Fe 74.8 meV, Cu 57.3; LDA 73.2, 52.7), and reproduce their reference eigenvalues
+  to 1e-7 Ha. Crystal forces match the PBE energy's slope to 1e-7 Ha/bohr for Al and 1e-5 for
+  spin-polarised Fe. `tests/test_pbe.py`: 12 tests.
+- **Not yet:** molecules (`electrons/scf.py`) stay LDA-only. The element settings (`dataset.GRID`)
+  and labels don't carry a functional yet: do that before labelling anything with PBE. Iron's PBE
+  grid and phase scan are running on the Mac (see AGENTS.md).
 
 - **Proposal:** [`proposals/pbe.md`](proposals/pbe.md)
 - **Why:** plain LDA puts non-magnetic fcc iron ~40–45 meV/atom below ferromagnetic bcc (our scan,
@@ -31,8 +50,6 @@ the human decides when agents disagree. Read this with `AGENTS.md` at the start 
 - **Blocks:** nothing now. It is the next physics step for iron (and for nickel and cobalt).
 
 **Comments**
-
-## Decided
 
 ### D2 — Pseudopotentials differ between machines (V, Mn, and probably Ti, Fe) — **fixed**
 

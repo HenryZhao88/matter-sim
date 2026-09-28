@@ -30,8 +30,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from scipy.special import erf
 
-from .radial import AtomResult, RadialAtom, RadialGrid, hartree_potential, scattering_state, settled
-from ..electrons.xc import lda_xc
+from .radial import AtomResult, RadialAtom, RadialGrid, hartree_potential, radial_xc, scattering_state, settled
 
 # Core radii (bohr), close to Troullier & Martins' published choices.
 DEFAULT_RC = {3: 2.4, 4: 1.9, 5: 1.6, 6: 1.5, 7: 1.5, 8: 1.45, 9: 1.4, 10: 1.4,
@@ -62,6 +61,7 @@ class Pseudopotential:
     core: list[tuple[int, int]] = field(default_factory=list)       # (n, l) core subshells
     valence_n: dict[int, int] = field(default_factory=dict)         # l → n of the valence level
     rho_core: np.ndarray | None = field(default=None, repr=False)  # partial core density (NLCC)
+    functional: str = "lda"                                          # the XC it was built with
 
     @property
     def v_local(self) -> np.ndarray:
@@ -268,17 +268,19 @@ def _partial_core(grid: RadialGrid, rho_core: np.ndarray, rho_val: np.ndarray) -
 GHOST_TOL = 2e-3   # Ha
 
 
-def generate(Z: int, rc: dict[int, float] | None = None, l_local: int | None = None) -> Pseudopotential:
+def generate(Z: int, rc: dict[int, float] | None = None, l_local: int | None = None,
+             functional: str = "lda") -> Pseudopotential:
     """Pseudopotential for element Z. Unless ``l_local`` is given, the local channel is the first
     of (default, s, p, d) whose separable form has no ghost states (see :func:`ghost_check`);
-    for Z ≤ 18 the default is ghost-free and is kept."""
+    for Z ≤ 18 the default is ghost-free and is kept. ``functional`` is the exchange–correlation
+    of the all-electron atom it is cut from and of every check: a solid must use the same one."""
     grid = RadialGrid(r_min=2e-6 / math.sqrt(Z), r_max=60.0, dx=0.004)
-    ref = reference_atom(Z, grid)
+    ref = reference_atom(Z, grid, functional)
     if l_local is not None:
-        return _build(Z, ref, grid, rc, l_local)
+        return _build(Z, ref, grid, rc, l_local, functional)
     first = default_local_channel(Z)
     if Z <= 18:
-        return _build(Z, ref, grid, rc, first)
+        return _build(Z, ref, grid, rc, first, functional)
     base = rc or DEFAULT_RC[Z]
     base = base if isinstance(base, dict) else {0: base, 1: base, 2: base}
     ghostly, clean = [], []
@@ -291,7 +293,7 @@ def generate(Z: int, rc: dict[int, float] | None = None, l_local: int | None = N
             rcs = dict(base)
             rcs[cand] = base[cand] * scale
             try:
-                pp = _build(Z, ref, grid, rcs, cand)
+                pp = _build(Z, ref, grid, rcs, cand, functional)
             except Exception:
                 continue
             g = max((abs(a - b) for a, b in ghost_check(pp).values()), default=0.0)
@@ -312,7 +314,7 @@ def generate(Z: int, rc: dict[int, float] | None = None, l_local: int | None = N
     raise RuntimeError(f"no pseudopotential could be built for Z={Z}")
 
 
-def reference_atom(Z: int, grid: RadialGrid) -> AtomResult:
+def reference_atom(Z: int, grid: RadialGrid, functional: str = "lda") -> AtomResult:
     """The all-electron atom a pseudopotential is built from.
 
     Filled by energy and self-consistent. If the plain SCF does not settle within its iterations
@@ -321,15 +323,15 @@ def reference_atom(Z: int, grid: RadialGrid) -> AtomResult:
     rounding decides, so the Mac fell back for V and Mn where Linux and Windows converged, and
     built different pseudopotentials from the same code (DECISIONS.md D2). Integer configurations
     remain the last resort."""
-    ref: AtomResult = RadialAtom(Z, spin=0.0, grid=grid).solve()
+    ref: AtomResult = RadialAtom(Z, spin=0.0, grid=grid, functional=functional).solve()
     if not ref.converged:
-        ref = settled(RadialAtom(Z, spin=0.0, grid=grid))
+        ref = settled(RadialAtom(Z, spin=0.0, grid=grid, functional=functional))
     if not ref.converged:
-        ref = _lowest_configuration(Z, grid, ref)
+        ref = _lowest_configuration(Z, grid, ref, functional)
     return ref
 
 
-def _lowest_configuration(Z: int, grid: RadialGrid, trial: AtomResult) -> AtomResult:
+def _lowest_configuration(Z: int, grid: RadialGrid, trial: AtomResult, functional: str = "lda") -> AtomResult:
     """When filling levels by energy does not settle (electrons slosh between two nearly
     degenerate shells, as 4s and 3d do in the transition metals), try each way of sharing the
     outer electrons between the outermost row's s and d shells and keep the lowest energy."""
@@ -354,7 +356,7 @@ def _lowest_configuration(Z: int, grid: RadialGrid, trial: AtomResult) -> AtomRe
         for spin in (0, 1):
             cfg[(spin, 0, s_nl[0] - 1)] = s_e / 2
             cfg[(spin, 2, d_nl[0] - 3)] = d_e / 2
-        res = RadialAtom(Z, spin=0.0, grid=grid, occupations=cfg).solve()
+        res = RadialAtom(Z, spin=0.0, grid=grid, occupations=cfg, functional=functional).solve()
         if res.converged and (not best.converged or res.energy < best.energy):
             best = res
     return best
@@ -378,7 +380,7 @@ def worst_transfer(rows: list[dict]) -> float:
     return max(abs(r["dE_ps"] - r["dE_ae"]) for r in good)
 
 
-def _build(Z: int, ref: AtomResult, grid: RadialGrid, rc, l_local: int) -> Pseudopotential:
+def _build(Z: int, ref: AtomResult, grid: RadialGrid, rc, l_local: int, functional: str = "lda") -> Pseudopotential:
     core, valence = _core_valence_split(ref.levels)
     core_nl = {(lv.n, lv.l) for lv in core}
     valence_nl = {(lv.n, lv.l) for lv in valence}
@@ -429,7 +431,7 @@ def _build(Z: int, ref: AtomResult, grid: RadialGrid, rc, l_local: int) -> Pseud
         rho_pc = _partial_core(grid, np.maximum(rho_core, 0), rho_v_ae)
     vH = hartree_potential(grid, rho_v)
     rho_xc = rho_v + (rho_pc if rho_pc is not None else 0)
-    _, vxc, _ = lda_xc(0.5 * rho_xc, 0.5 * rho_xc)
+    _, vxc, _ = radial_xc(grid, 0.5 * rho_xc, 0.5 * rho_xc, functional)
     v_ion = {l: v_scr[l] - vH - vxc for l in v_scr}
     # Beyond the core region every channel equals −Z_v/r (up to exponentially small terms).
     q_out = 4 * np.pi * r * r * np.abs(rho_core)
@@ -446,7 +448,7 @@ def _build(Z: int, ref: AtomResult, grid: RadialGrid, rc, l_local: int) -> Pseud
         kb[l] = 1.0 / D
         beta[l] = dv * u_ps[l] / r
     return Pseudopotential(Z, float(Z_val), l_local, rcs, grid, v_ion, u_ps, eps, occ, kb, beta,
-                           core=sorted(core_nl), valence_n=valence_n, rho_core=rho_pc)
+                           core=sorted(core_nl), valence_n=valence_n, rho_core=rho_pc, functional=functional)
 
 
 # ------------------------------------------------------------------ checks
@@ -466,7 +468,7 @@ def ghost_check(pp: Pseudopotential, r_max: float = 20.0, dr: float = 0.01) -> d
     # screened potentials: the ionic parts plus the valence Hartree + xc of the reference
     rho_v = sum(pp.occ[l] * pp.u_ps[l] ** 2 for l in pp.u_ps) / (4 * np.pi * g.r ** 2)
     rho_xc = rho_v + (pp.rho_core if pp.rho_core is not None else 0)
-    _, vxc, _ = lda_xc(0.5 * rho_xc, 0.5 * rho_xc)
+    _, vxc, _ = radial_xc(g, 0.5 * rho_xc, 0.5 * rho_xc, getattr(pp, "functional", "lda"))
     scr = on(hartree_potential(g, rho_v) + vxc)
     out = {}
     for l in pp.v_ion:
@@ -517,12 +519,13 @@ def verify(pp: Pseudopotential, configs: list[dict] | None = None) -> list[dict]
             ps_fixed[(0, l, 0)] = n / 2
             ps_fixed[(1, l, 0)] = n / 2
         ne_val = sum(cfg.values())
-        key = (pp.Z, tuple(sorted(ae_fixed.items())), int(round(pp.Z_val - ne_val)))
+        fn = getattr(pp, "functional", "lda")
+        key = (pp.Z, tuple(sorted(ae_fixed.items())), int(round(pp.Z_val - ne_val)), fn)
         if key not in _AE_CACHE:
-            _AE_CACHE[key] = RadialAtom(pp.Z, charge=key[2], grid=grid, occupations=ae_fixed).solve()
+            _AE_CACHE[key] = RadialAtom(pp.Z, charge=key[2], grid=grid, occupations=ae_fixed, functional=fn).solve()
         ae = _AE_CACHE[key]
         ps = RadialAtom(pp.Z, charge=int(round(pp.Z_val - ne_val)), grid=grid, v_external=pp.v_ion,
-                        n_valence=pp.Z_val, occupations=ps_fixed, rho_core=pp.rho_core).solve()
+                        n_valence=pp.Z_val, occupations=ps_fixed, rho_core=pp.rho_core, functional=fn).solve()
         rows.append({"config": cfg, "E_ae": ae.energy, "E_ps": ps.energy, "converged": bool(ae.converged and ps.converged),
                      "eps_ae": {l: _level(ae, l, pp.valence_n[l] - l - 1) for l in cfg},
                      "eps_ps": {l: _level(ps, l, 0) for l in cfg}})

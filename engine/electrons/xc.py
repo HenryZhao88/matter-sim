@@ -85,3 +85,110 @@ def lda_xc(rho_up: np.ndarray, rho_dn: np.ndarray):
     v_up[mask] = vxu + vcu
     v_dn[mask] = vxd + vcd
     return e_xc, v_up, v_dn
+
+
+# ------------------------------------------------------------------ PBE (generalised gradient)
+# Perdew, Burke & Ernzerhof, PRL 77, 3865 (1996). Every constant is fixed by an exact condition,
+# none by fitting: μ from the gradient expansion of correlation cancelling that of exchange (μ =
+# β π²/3), κ from the Lieb–Oxford bound, β from the high-density limit of the gradient expansion
+# of correlation, γ = (1 − ln 2)/π² from the high-density limit of the correlation energy.
+PBE_KAPPA = 0.804
+PBE_BETA = 0.06672455060314922
+PBE_MU = PBE_BETA * np.pi ** 2 / 3
+PBE_GAMMA = (1 - np.log(2.0)) / np.pi ** 2
+_CX = 0.75 * (3 / np.pi) ** (1 / 3)          # ε_x^unif = −_CX n^{1/3}
+_KF = (3 * np.pi ** 2) ** (1 / 3)            # k_F = _KF n^{1/3}
+
+
+def _pbe_exchange(n, g2):
+    """Unpolarised PBE exchange: energy per volume and its partial derivatives ∂/∂n, ∂/∂|∇n|²."""
+    n13 = np.cbrt(n)
+    ex_unif = -_CX * n * n13                                  # per volume
+    inv = 1.0 / (4 * _KF ** 2 * n ** (8 / 3))                 # s² = g2 · inv
+    s2 = g2 * inv
+    den = 1 + PBE_MU * s2 / PBE_KAPPA
+    Fx = 1 + PBE_KAPPA - PBE_KAPPA / den
+    dFx = PBE_MU / (den * den)                                # dFx/ds²
+    e = ex_unif * Fx
+    de_dn = (4 / 3) * ex_unif / n * Fx + ex_unif * dFx * (-8 / 3) * s2 / n
+    de_dg2 = ex_unif * dFx * inv
+    return e, de_dn, de_dg2
+
+
+def _pbe_correlation(n, zeta, g2):
+    """PBE correlation: n(ε_c^LDA + H). Energy per volume and ∂/∂n, ∂/∂ζ, ∂/∂|∇n|²."""
+    rs = (3 / (4 * np.pi * n)) ** (1 / 3)
+    ec, dec_drs, dec_dz = pw92_correlation(rs, zeta)
+    opz = np.clip(1 + zeta, 1e-12, 2.0)
+    omz = np.clip(1 - zeta, 1e-12, 2.0)
+    phi = 0.5 * (opz ** (2 / 3) + omz ** (2 / 3))
+    dphi = (np.cbrt(opz) ** -1 - np.cbrt(omz) ** -1) / 3
+    phi3 = phi ** 3
+    # t² = |∇n|² / (2 φ k_s n)², k_s² = 4 k_F / π
+    ct = np.pi / (16 * _KF * n ** (7 / 3))                    # y = t² = g2 · ct / φ²
+    y = np.minimum(g2 * ct / (phi * phi), 1e30)
+    bg = PBE_BETA / PBE_GAMMA
+    with np.errstate(over="ignore", divide="ignore", invalid="ignore"):
+        E = np.exp(np.minimum(-ec / (PBE_GAMMA * phi3), 700.0))
+        A = np.minimum(bg / np.maximum(E - 1, 1e-300), 1e30)
+        dA_dec = np.where(A < 1e30, A * A * E / (PBE_BETA * phi3), 0.0)
+        dA_dphi = np.where(A < 1e30, -A * A * E * 3 * ec / (PBE_BETA * phi3 * phi), 0.0)
+    u = A * y
+    num = y * (1 + u)
+    den = 1 + u + u * u
+    Q = num / den
+    dQ_dy = ((1 + 2 * u) * den - num * (A + 2 * A * u)) / (den * den)
+    dQ_dA = (y * y * den - num * (y + 2 * u * y)) / (den * den)
+    L = np.log1p(bg * Q)
+    H = PBE_GAMMA * phi3 * L
+    dH_dQ = PBE_BETA * phi3 / (1 + bg * Q)
+    # H through its three inputs: ε_c, φ and t²
+    dH_dec = dH_dQ * dQ_dA * dA_dec
+    dH_dphi = 3 * PBE_GAMMA * phi * phi * L + dH_dQ * (dQ_dA * dA_dphi + dQ_dy * (-2 * y / phi))
+    dH_dy = dH_dQ * dQ_dy
+    e = n * (ec + H)
+    dec_dn = dec_drs * (-rs / (3 * n))
+    de_dn = ec + H + n * (dec_dn + dH_dec * dec_dn + dH_dy * (-7 / 3) * y / n)
+    de_dz = n * (dec_dz + dH_dec * dec_dz + dH_dphi * dphi)
+    de_dg2 = n * dH_dy * ct / (phi * phi)
+    return e, de_dn, de_dz, de_dg2
+
+
+def pbe_xc(rho_up, rho_dn, s_uu, s_ud, s_dd):
+    """Spin-polarised PBE. ``s_uu`` = |∇ρ↑|², ``s_ud`` = ∇ρ↑·∇ρ↓, ``s_dd`` = |∇ρ↓|².
+
+    Returns (e_xc per volume, ∂e/∂ρ↑, ∂e/∂ρ↓, ∂e/∂s_uu, ∂e/∂s_ud, ∂e/∂s_dd). The Kohn–Sham potential
+    is v_σ = ∂e/∂ρσ − ∇·(2 ∂e/∂s_σσ ∇ρσ + ∂e/∂s_ud ∇ρσ'), which the caller forms with its own
+    gradient; with all gradients zero this is lda_xc exactly."""
+    ru = np.maximum(rho_up, 0.0)
+    rd = np.maximum(rho_dn, 0.0)
+    n = ru + rd
+    out = [np.zeros_like(n) for _ in range(6)]
+    m = n > RHO_FLOOR
+    if not m.any():
+        return tuple(out)
+    ru, rd, n = ru[m], rd[m], n[m]
+    suu, sud, sdd = s_uu[m], s_ud[m], s_dd[m]
+    # exchange by spin scaling: E_x[ρ↑, ρ↓] = ½ E_x[2ρ↑] + ½ E_x[2ρ↓]
+    e = np.zeros_like(n)
+    vu = np.zeros_like(n)
+    vd = np.zeros_like(n)
+    wuu = np.zeros_like(n)
+    wdd = np.zeros_like(n)
+    for r, s, v, w in ((ru, suu, vu, wuu), (rd, sdd, vd, wdd)):
+        ok = r > RHO_FLOOR / 2
+        ex, dn, dg = _pbe_exchange(2 * r[ok], 4 * s[ok])
+        e[ok] += 0.5 * ex
+        v[ok] += dn
+        w[ok] += 2 * dg
+    zeta = np.clip((ru - rd) / n, -1.0, 1.0)
+    g2 = np.maximum(suu + 2 * sud + sdd, 0.0)
+    ec, dn, dz, dg = _pbe_correlation(n, zeta, g2)
+    e += ec
+    vu += dn + dz * (1 - zeta) / n
+    vd += dn - dz * (1 + zeta) / n
+    wuu += dg
+    wdd += dg
+    for o, x in zip(out, (e, vu, vd, wuu, 2 * dg, wdd)):
+        o[m] = x
+    return tuple(out)

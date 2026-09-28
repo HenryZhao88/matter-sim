@@ -32,7 +32,7 @@ import numpy as np
 from numba import njit
 
 from ..electrons.mixing import PulayMixer
-from ..electrons.xc import lda_xc
+from ..electrons.xc import lda_xc, pbe_xc
 
 L_MAX = 3
 
@@ -53,6 +53,10 @@ class RadialGrid:
         """∫ f(r) dr on the log grid (dr = r dx), trapezoid rule."""
         g = f * self.r
         return float(self.dx * (g.sum() - 0.5 * (g[0] + g[-1])))
+
+    def derivative(self, f: np.ndarray) -> np.ndarray:
+        """df/dr on the log grid (second-order differences in x, dr = r dx)."""
+        return np.gradient(f, self.dx) / self.r
 
     def cumulative(self, f: np.ndarray) -> np.ndarray:
         """∫_0^r f dr for every r."""
@@ -248,6 +252,19 @@ def radial_eigenstates(grid: RadialGrid, V: np.ndarray, l: int, count: int, z0: 
     return np.array(out_e), out_u
 
 
+def radial_xc(grid: RadialGrid, rho_up: np.ndarray, rho_dn: np.ndarray, functional: str = "lda"):
+    """(e_xc per volume, v_xc↑, v_xc↓) of a spherical density. For PBE the potential carries the
+    gradient term, v_σ = ∂e/∂ρσ − ∇·(2 ∂e/∂s_σσ ∇ρσ + ∂e/∂s_ud ∇ρσ'), with ∇·(W r̂) = r⁻² d(r² W)/dr."""
+    if functional == "lda":
+        return lda_xc(rho_up, rho_dn)
+    du, dd = grid.derivative(rho_up), grid.derivative(rho_dn)
+    e, vu, vd, wuu, wud, wdd = pbe_xc(rho_up, rho_dn, du * du, du * dd, dd * dd)
+    r2 = grid.r ** 2
+    for v, W in ((vu, 2 * wuu * du + wud * dd), (vd, 2 * wdd * dd + wud * du)):
+        v -= grid.derivative(r2 * W) / r2
+    return e, vu, vd
+
+
 def hartree_potential(grid: RadialGrid, rho: np.ndarray) -> np.ndarray:
     r = grid.r
     q_in = grid.cumulative(4 * np.pi * r * r * rho)          # charge inside r
@@ -290,7 +307,8 @@ def _fill(levels: list[tuple[int, int, float]], n_electrons: float, T: float) ->
 class RadialAtom:
     def __init__(self, Z: int, charge: int = 0, spin: float = 0.0, grid: RadialGrid | None = None,
                  T_e: float = 1e-4, v_external=None, n_valence: float | None = None,
-                 occupations: dict | None = None, rho_core: np.ndarray | None = None) -> None:
+                 occupations: dict | None = None, rho_core: np.ndarray | None = None,
+                 functional: str = "lda") -> None:
         """``spin`` = N↑ − N↓.
 
         ``v_external`` replaces −Z/r: an array, or a dict {l: array} of
@@ -320,6 +338,13 @@ class RadialAtom:
         self.fixed_occ = occupations
         # partial core density seen only by exchange–correlation (pseudo-atoms with core correction)
         self.rc_half = 0.0 if rho_core is None else 0.5 * np.asarray(rho_core)
+        if functional not in ("lda", "pbe"):
+            raise ValueError(f"unknown functional {functional!r}")
+        self.functional = functional
+
+    def xc(self, rho_up, rho_dn):
+        """(e_xc per volume, v_xc↑, v_xc↓) for spin densities (the partial core added here)."""
+        return radial_xc(self.grid, rho_up + self.rc_half, rho_dn + self.rc_half, self.functional)
 
     def solve(self, max_iter: int = 400, tol: float = 1e-9, start: tuple | None = None) -> AtomResult:
         """Self-consistent atom. ``start`` = (ρ↑, ρ↓) to begin from instead of the default cloud."""
@@ -345,7 +370,7 @@ class RadialAtom:
                 vs = (_thomas_fermi(self.Z, r) - self.v_ext,) * 2
             else:
                 vH = hartree_potential(g, rho[0] + rho[1])
-                _, vxu, vxd = lda_xc(rho[0] + self.rc_half, rho[1] + self.rc_half)
+                _, vxu, vxd = self.xc(rho[0], rho[1])
                 vs = (vH + vxu, vH + vxd)
             new_rho, levels_all = [np.zeros_like(r), np.zeros_like(r)], []
             band = e_ext = pot = 0.0
@@ -390,7 +415,7 @@ class RadialAtom:
             x = np.maximum(x, 0.0)
             rho = [x[: g.n], x[g.n:]]
         vH = hartree_potential(g, rho[0] + rho[1])
-        _, vxu, vxd = lda_xc(rho[0] + self.rc_half, rho[1] + self.rc_half)
+        _, vxu, vxd = self.xc(rho[0], rho[1])
         return AtomResult(self.Z, self.charge, self.n_up, self.n_dn, E, comps, levels_all,
                           rho[0], rho[1], self.v_ext + vH + vxu, self.v_ext + vH + vxd,
                           g, converged, it)
@@ -400,7 +425,7 @@ class RadialAtom:
         rt = rho[0] + rho[1]
         w = 4 * np.pi * r * r
         vH = hartree_potential(g, rt)
-        e_xc, _, _ = lda_xc(rho[0] + self.rc_half, rho[1] + self.rc_half)
+        e_xc, _, _ = self.xc(rho[0], rho[1])
         # kinetic = Σ f ε − Σ f ⟨u|V_eff|u⟩ (V_eff that produced the orbitals)
         return {
             "kinetic": kinetic,

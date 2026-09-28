@@ -26,16 +26,21 @@ def is_pseudized(Z: int) -> bool:
     return Z >= 3
 
 
+def _stem(Z: int, functional: str = "lda") -> str:
+    """Cache name: LDA's keep the names they always had; other functionals are named apart."""
+    return f"v{CACHE_VERSION}_Z{Z}" if functional == "lda" else f"v{CACHE_VERSION}_{functional}_Z{Z}"
+
+
 @functools.lru_cache(maxsize=None)
-def pseudopotential(Z: int) -> Pseudopotential:
-    path = CACHE_DIR / f"v{CACHE_VERSION}_Z{Z}.pkl"
+def pseudopotential(Z: int, functional: str = "lda") -> Pseudopotential:
+    path = CACHE_DIR / f"{_stem(Z, functional)}.pkl"
     if path.exists():
         try:
             with path.open("rb") as f:
                 return pickle.load(f)
         except Exception:
             path.unlink(missing_ok=True)
-    pp = generate(Z)
+    pp = generate(Z, functional=functional)
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     with path.open("wb") as f:
         pickle.dump(pp, f)
@@ -43,8 +48,8 @@ def pseudopotential(Z: int) -> Pseudopotential:
     return pp
 
 
-def _checks_path(Z: int) -> Path:
-    return CACHE_DIR / f"v{CACHE_VERSION}_Z{Z}_checks.json"
+def _checks_path(Z: int, functional: str = "lda") -> Path:
+    return CACHE_DIR / f"{_stem(Z, functional)}_checks.json"
 
 
 def _record_checks(pp: Pseudopotential) -> dict:
@@ -54,7 +59,7 @@ def _record_checks(pp: Pseudopotential) -> dict:
     rec = {"ghost_free": bool(all(abs(a - b) < GHOST_TOL for a, b in ghosts.values())),
            "transfer_eV": float(worst) if np.isfinite(worst) else None, "l_local": int(pp.l_local), "Z_val": float(pp.Z_val)}
     rec["ok"] = bool(rec["ghost_free"] and np.isfinite(worst) and worst < TRANSFER_TOL_EV)
-    _checks_path(pp.Z).write_text(json.dumps(rec))
+    _checks_path(pp.Z, getattr(pp, "functional", "lda")).write_text(json.dumps(rec))
     return rec
 
 

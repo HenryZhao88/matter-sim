@@ -6,6 +6,7 @@ grid: the half-step egg-box at V = 76 bohr³/atom, the energy difference between
 Every run is cached in .cache/fe_grid/, so the scan resumes. Compare each row with the finest.
 
     uv run python scripts/fe_grid.py 0.30:1 0.30:2 0.24:1 0.24:2 0.20:2 0.16:2
+    uv run python scripts/fe_grid.py 0.24:2:pbe 0.20:2:pbe 0.16:2:pbe      (PBE, its own potential)
 """
 
 import json
@@ -18,12 +19,13 @@ CACHE = Path(__file__).resolve().parents[1] / ".cache" / "fe_grid"
 HA_MEV = 27211.386
 
 
-def run(h, xc, v, spin=True, shift=0.0):
-    key = CACHE / f"h{h}_x{xc}_v{v}_s{int(spin)}_d{shift}.json"
+def run(h, xc, v, spin=True, shift=0.0, functional="lda"):
+    tag = "" if functional == "lda" else f"_{functional}"
+    key = CACHE / f"h{h}_x{xc}_v{v}_s{int(spin)}_d{shift}{tag}.json"
     if key.exists():
         return json.loads(key.read_text())
     base = cubic("bcc", (2 * v) ** (1 / 3), 26)
-    kw = dict(h=h, kmesh=6, smearing="mp", T_e=0.01, xc_grid=xc)
+    kw = dict(h=h, kmesh=6, smearing="mp", T_e=0.01, xc_grid=xc, functional=functional)
     if spin:
         kw.update(spin=True, moments=3.0)
     step = base.cell[0] / PeriodicDFT(base, **kw).N[0] if shift else 0.0
@@ -37,13 +39,14 @@ def run(h, xc, v, spin=True, shift=0.0):
 
 def main(specs):
     for spec in specs:
-        h, xc = float(spec.split(":")[0]), int(spec.split(":")[1])
-        fm = run(h, xc, 76.0)
-        shifted = run(h, xc, 76.0, shift=0.5)
-        small, large = run(h, xc, 68.0), run(h, xc, 84.0)
-        nm = run(h, xc, 76.0, spin=False)
+        parts = spec.split(":")
+        h, xc, fn = float(parts[0]), int(parts[1]), (parts[2] if len(parts) > 2 else "lda")
+        fm = run(h, xc, 76.0, functional=fn)
+        shifted = run(h, xc, 76.0, shift=0.5, functional=fn)
+        small, large = run(h, xc, 68.0, functional=fn), run(h, xc, 84.0, functional=fn)
+        nm = run(h, xc, 76.0, spin=False, functional=fn)
         ok = all(x["converged"] for x in (fm, shifted, small, large, nm))
-        print(json.dumps(dict(h=h, xc_grid=xc, grid=fm["grid"], converged=ok,
+        print(json.dumps(dict(h=h, xc_grid=xc, functional=fn, grid=fm["grid"], converged=ok,
                               eggbox_meV=(shifted["E"] - fm["E"]) * HA_MEV,
                               dE_68_84_meV=(small["E"] - large["E"]) * HA_MEV,
                               fm_minus_nm_meV=(fm["E"] - nm["E"]) * HA_MEV, M=fm["M"], E_fm=fm["E"],

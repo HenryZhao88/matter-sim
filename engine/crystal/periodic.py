@@ -30,7 +30,7 @@ from scipy.special import erfc
 from ..atoms import species
 from ..atoms.pseudo import R_GAUSS, real_harmonics_k
 from ..core.grid import fft_friendly
-from ..electrons.xc import lda_xc
+from ..electrons.xc import lda_xc, pbe_xc
 
 
 # ------------------------------------------------------------------ geometry
@@ -144,13 +144,16 @@ class CrystalResult:
 class PeriodicDFT:
     def __init__(self, crystal: Crystal, h: float = 0.3, kmesh: int | tuple = 6, T_e: float = 0.005,
                  symmetry: bool = True, extra_bands: int = 6, smearing: str = "fd", xc_grid: int = 1,
-                 spin: bool = False, moments=None) -> None:
+                 spin: bool = False, moments=None, functional: str = "lda") -> None:
         """``spin``: collinear spin-polarised DFT (LSDA), one chemical potential for both spins, so the
         magnetisation is free and comes out of the SCF. ``moments`` (Bohr magnetons per atom) is only
         the starting magnetisation: without one the two spins stay equal by symmetry, whatever the
         true ground state; with one, a non-magnetic metal still relaxes back to zero."""
         if moments is not None and not spin:
             raise ValueError("starting moments need spin=True")
+        if functional not in ("lda", "pbe"):
+            raise ValueError(f"unknown functional {functional!r}")
+        self.functional = functional        # also picks the pseudopotentials, built with the same one
         self.c = crystal
         self.xc_grid = int(xc_grid)
         self.T_e = T_e
@@ -213,10 +216,38 @@ class PeriodicDFT:
         g = (np.fft.fftn(ff) / self.Nftot)[self._fine_idx]
         return np.real(np.fft.ifftn(g) * self.Ntot)
 
+    def _grad(self, f):
+        """∇f on the XC grid, spectrally: three real fields."""
+        fg = np.fft.fftn(f)
+        return [np.real(np.fft.ifftn(1j * self.Gf[..., a] * fg)) for a in range(3)]
+
+    def _div(self, W):
+        """∇·W on the XC grid, spectrally."""
+        return sum(np.real(np.fft.ifftn(1j * self.Gf[..., a] * np.fft.fftn(W[a]))) for a in range(3))
+
+    def _eval_xc(self, ru, rd):
+        """(e_xc per volume, v↑, v↓) on the XC grid. PBE adds the gradient term to the potential,
+        v_σ = ∂e/∂ρσ − ∇·(2 ∂e/∂s_σσ ∇ρσ + ∂e/∂s_ud ∇ρσ'), with gradients taken spectrally there."""
+        if self.functional == "lda":
+            return lda_xc(ru, rd)
+        gu = self._grad(ru)
+        gd = gu if rd is ru else self._grad(rd)
+        dot = lambda a, b: a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+        suu = dot(gu, gu)
+        sud = suu if gd is gu else dot(gu, gd)
+        sdd = suu if gd is gu else dot(gd, gd)
+        e, vu, vd, wuu, wud, wdd = pbe_xc(ru, rd, suu, sud, sdd)
+        vu = vu - self._div([2 * wuu * gu[a] + wud * gd[a] for a in range(3)])
+        if gd is gu:
+            return e, vu, vu.copy()
+        vd = vd - self._div([2 * wdd * gd[a] + wud * gu[a] for a in range(3)])
+        return e, vu, vd
+
     def _xc(self, rho):
         """(E_xc, v_xc on the coarse grid, v_xc on the XC grid) for valence density ``rho``."""
         rx = self._to_fine(rho) + self.rho_core
-        exc, vxc_f, _ = lda_xc(rx / 2, rx / 2)
+        half = rx / 2
+        exc, vxc_f, _ = lda_xc(half, half) if self.functional == "lda" else self._eval_xc(half, half)
         return float(np.sum(exc) * self.dVf), self._to_coarse(vxc_f), vxc_f
 
     def _xc_spin(self, rho):
@@ -224,7 +255,7 @@ class PeriodicDFT:
         partial core counts half to each spin."""
         ru = self._to_fine(rho[0]) + self.rho_core / 2
         rd = self._to_fine(rho[1]) + self.rho_core / 2
-        exc, vu_f, vd_f = lda_xc(ru, rd)
+        exc, vu_f, vd_f = self._eval_xc(ru, rd)
         return float(np.sum(exc) * self.dVf), (self._to_coarse(vu_f), self._to_coarse(vd_f)), (vu_f, vd_f)
 
     def _core_forces(self, rho, vxc_f=None):
@@ -247,7 +278,7 @@ class PeriodicDFT:
         q = np.sqrt(self.G2)
         qf = np.linalg.norm(self.Gf, axis=-1) if self.xc_grid > 1 else q
         qtab = np.linspace(0, qf.max() * 1.001 + 1, 3000 * self.xc_grid)
-        self.pp = {Z: species.pseudopotential(Z) for Z in set(c.charges)}
+        self.pp = {Z: species.pseudopotential(Z, self.functional) for Z in set(c.charges)}
         self.vloc_q: dict = {}
         self.proj_tab: dict = {}
         self.core_q: dict = {}
