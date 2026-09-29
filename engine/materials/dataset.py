@@ -143,6 +143,14 @@ def label(conf: dict, solver: str = "numpy") -> dict:
     c = Crystal(conf["cell"], conf["charges"], conf["positions"])
     dft, provenance = _solver(solver, c)
     r = dft.run(forces=True)
+    if not r.converged and dft.nspin == 2:
+        # a magnetisation that overshoots (the net moment swinging sign between iterations) can leave
+        # the plain SCF in a wrong, higher state that never converges; retry with its step damped
+        dft, provenance = _solver(solver, c)
+        dft.beta_m = SPIN_RETRY_BETA_M
+        r = dft.run(forces=True, max_iter=100)
+        provenance = {**provenance, "mixing": f"magnetisation damped (beta_m {SPIN_RETRY_BETA_M}) after the "
+                                             "plain SCF did not converge"}
     if not r.converged:
         # a non-converged SCF still returns an energy, several meV off and indistinguishable from a
         # real one; it is neither cached nor handed on
@@ -161,6 +169,7 @@ def label(conf: dict, solver: str = "numpy") -> dict:
     return out
 
 
+SPIN_RETRY_BETA_M = 0.1      # see PeriodicDFT.beta_m and label()
 CROSS_CHECK_FRACTION = 0.05     # of each kind of configuration, also computed on the NumPy float64 path
 
 

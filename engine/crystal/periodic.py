@@ -142,6 +142,10 @@ class CrystalResult:
 
 
 class PeriodicDFT:
+    # the magnetisation's mixing step; None: the charge's beta. Smaller damps a magnetisation that
+    # overshoots (expanded bcc iron, 1.1 a0: the net moment swung +4.9 to -2 uB per cell and the SCF
+    # settled 88 mHa too high at zero moment; at 0.1 it converged ferromagnetic, 2.81 uB/atom)
+    beta_m: float | None = None
     def __init__(self, crystal: Crystal, h: float = 0.3, kmesh: int | tuple = 6, T_e: float = 0.005,
                  symmetry: bool = True, extra_bands: int = 6, smearing: str = "fd", xc_grid: int = 1,
                  spin: bool = False, moments=None, functional: str = "lda") -> None:
@@ -511,7 +515,7 @@ class PeriodicDFT:
         kerker = self.G2 / (self.G2 + q0 * q0)
         kerker[0, 0, 0] = 0.0
         n = x[0] + beta * np.real(np.fft.ifftn(kerker * np.fft.fftn(f[0])))
-        m = x[1] + beta * f[1]
+        m = x[1] + (beta if self.beta_m is None else self.beta_m) * f[1]
         new = np.stack([np.maximum((n + m) / 2, 0), np.maximum((n - m) / 2, 0)])
         return new * (self.c.valence / (new.sum() * self.dV))
 
