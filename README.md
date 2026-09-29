@@ -1,7 +1,7 @@
 # matter-sim
 
-A first-principles simulator of matter, from particle collisions up to molecules. The only
-physics written into the code is the laws themselves:
+A first-principles simulator of matter, from particle collisions up to a block of metal you could
+hold. The only physics written into the code is the laws themselves:
 
 - **The Standard Model Lagrangian**, written as structure: the gauge group
   SU(3)×SU(2)×U(1), how each field transforms, the Higgs potential and the Yukawa couplings.
@@ -17,10 +17,12 @@ Everything else has to **emerge**, and none of it is written anywhere in the cod
 - decays and lifetimes;
 - confinement;
 - shell structure and Hund's rule;
-- chemical bonds, molecular shapes and magnetism.
+- chemical bonds, molecular shapes and magnetism;
+- crystal structures, lattice constants, ferromagnetism in iron, melting.
 
-It runs on Apple Silicon (Metal GPU through [MLX](https://github.com/ml-explore/mlx)) and
-shows everything live in a browser.
+It runs on Apple Silicon (Metal GPU through [MLX](https://github.com/ml-explore/mlx)) and on
+NVIDIA GPUs (CUDA through PyTorch, the optional `gpu` extra), with NumPy as the reference
+everywhere, and shows everything live in a browser.
 
 ```bash
 uv run matter-sim                           # opens the viewer at http://127.0.0.1:8765
@@ -35,7 +37,8 @@ is cached.
 
 Several agents work on this repository from different machines. `AGENTS.md` is how they hand
 work to each other: what the project is, what it stands on, what is in flight, and the mistakes
-already paid for. Read it before changing anything.
+already paid for. `DECISIONS.md` holds choices that change shared physics, with the evidence.
+`HANDOFF.md` carries the longer technical notes. Read them before changing anything.
 
 ## The ladder of scales
 
@@ -45,13 +48,13 @@ The scale bar at the top of the viewer switches between the rungs.
 |---|---|---|
 | **Particles and forces** | collisions, decays, confinement | Standard Model amplitudes; lattice gauge theory |
 | **Electrons and nuclei** | atoms and molecules | quantum electrons (DFT/Hartree–Fock), moving nuclei |
-| **Materials** | hundreds of atoms in motion, melting and expanding | forces learned from this project's own DFT, then molecular dynamics |
+| **Materials** | metal crystals and up to 10⁶ atoms in motion, melting and expanding | periodic DFT (spin-polarised, LDA or PBE); forces learned from that DFT, then molecular dynamics on the GPU |
 | **Everyday matter** | a cubic centimetre of aluminium | a continuum built from the per-atom properties measured above |
 
 ## What emerges: particles and forces
 
-All numbers are tree-level (lowest order). The gaps to experiment are the known size of the
-loop corrections that level leaves out.
+Most numbers are tree-level (lowest order); the gaps to experiment are the known size of the
+loop corrections that level leaves out. The first one-loop results are at the end of the table.
 
 | Result | Simulated | Experiment | Notes |
 |---|---|---|---|
@@ -77,6 +80,9 @@ loop corrections that level leaves out.
 | Pion mass² vs quark mass (lattice) | straight line to zero at κ = 0.1695 | 0.1694 published | the pion is a Goldstone boson |
 | Rho mass in the chiral limit | 0.555 /a | ≈ 0.56 published | stays heavy while the pion vanishes |
 | 1D hadronisation | charges end up screened | string breaks into mesons | a flying pair, evolved exactly |
+| Electron g − 2 (one loop) | 0.0011614 | 0.0011597 | the QED vertex from the same Feynman rules; equals α/2π to 1e-9; the α² term is missing |
+| Muon g − 2 (one loop) | 0.0011614 | 0.0011659 | the same number: mass-independent at one loop; the rest is α², hadronic and weak loops |
+| 1/α at m_Z from α(0), lepton loops | 132.7 | 127.95 | **fails**, as it should: the rest is hadronic vacuum polarisation, not perturbative |
 
 ### The three particle tools
 
@@ -107,10 +113,11 @@ loop corrections that level leaves out.
   is measured input, just like the particle masses. Only hard proton collisions are generated,
   where partons meet with more than 50 GeV. Most of the 100 mb pp cross section is soft,
   non-perturbative scattering, and it is not shown.
-- **Tree level only.** Amplitudes have no loop corrections yet. H → gg and H → γγ are loop
-  processes, so the Higgs's branching ratios are two-body tree level only. The strong coupling
-  does run with the collision energy (one loop, with the quark thresholds read off the model), so
-  the leading effect of loops on rates is there.
+- **Mostly tree level.** One-loop QED is in (`engine/particles/loops.py`: the vertex correction
+  and vacuum polarisation), but collision and decay amplitudes are still tree level: no weak or
+  QCD loops yet, so H → gg and H → γγ are missing and the Higgs's branching ratios are two-body
+  tree level only. The strong coupling does run with the collision energy (one loop, with the
+  quark thresholds read off the model), so the leading effect of loops on rates is there.
 
 ## What emerges: atoms and molecules
 
@@ -134,7 +141,9 @@ loop corrections that level leaves out.
 | H₂, exact Hamiltonian (truth mode) | −1.170 ± 0.004 Ha | −1.1745 | no functional, no basis set |
 
 The "LDA" approximation for electron correlation accounts for most of the remaining gaps. In
-LDA, water is about 105° and H₂ about 0.765 Å.
+LDA, water is about 105° and H₂ about 0.765 Å. The gradient-corrected PBE functional is also
+available (`functional="pbe"`, with its own pseudopotentials); with it water relaxes to 104.45°
+and 0.972 Å. PBE relaxations are about 10× slower than LDA's for now.
 
 **Truth mode** removes that approximation for small systems: a neural-network wavefunction
 (FermiNet-style, trained on the GPU) is varied against the exact many-electron Hamiltonian, with
@@ -145,10 +154,12 @@ methods are measured against.
 **Which elements are available.** Hydrogen and helium are simulated all-electron. Lithium to
 krypton use pseudopotentials the engine derives from its own all-electron atoms, each one
 checked for ghost states and for transferability across ionised and promoted configurations
-before it is offered. Everything up to argon agrees to within 0.06 eV; the fourth row is
-looser (4 meV for zinc, 147 meV for titanium) and scandium currently fails its own check at
-212 meV, so it stays greyed out rather than quietly giving wrong answers. Relativity is not in
-the atom solver yet, which matters most for the heaviest of these.
+before it is offered. Everything up to argon agrees to within 0.06 eV. The fourth row is looser
+(4 meV for zinc, 53 for copper, 146 for cobalt). Scandium (212 meV) and titanium (265 meV)
+currently fail their own check against the 150 meV limit, so they stay greyed out rather than
+quietly giving wrong answers. Iron's first pseudopotential passed every atomic check but
+collapsed in the solid; the generator now caps how far it softens a channel (`DECISIONS.md`, D1).
+Relativity is not in the atom solver yet, which matters most for the heaviest of these.
 
 ## What emerges: a piece of metal
 
@@ -163,7 +174,8 @@ and the per-atom properties they produce define a block you could hold.
 | Bulk modulus | 84.5 GPa | 76 GPa | from the DFT equation of state |
 | Elastic constants C₁₁, C₁₂, C₄₄ | 124, 65, 39 GPa | 107, 61, 28 | strained periodic cells |
 | bcc above fcc | 108 meV/atom | fcc is the stable one | the learned potential agrees to 1 meV |
-| Melting point | 852 K | 933.5 K | solid and liquid in one box; whichever grows, wins |
+| Melting point | 852 K | 933.5 K | solid and liquid in one box of 1 200 atoms; whichever grows, wins |
+| Melting point, 96 000 atoms (GPU) | 898 K | 933.5 K | the small box is biased low; the block below still uses 852 K |
 | Volume change on melting | 3.2% | 6.5% | |
 | Latent heat of fusion | 70 meV/atom | 111 meV/atom | **the weakest number here** |
 | Thermal expansion | 27.3 ×10⁻⁶/K | 23.1 | classical nuclei |
@@ -185,6 +197,26 @@ faults only showed up as dynamics that exploded: a fitted density that crossed z
 density cannot), no repulsion at distances the training data never sampled, and a barostat that
 boiled the metal into vacuum while reporting a plausible-looking melting point. Each is fixed in
 the physics rather than papered over; `engine/materials/` says where.
+
+## What emerges: copper and iron
+
+The same chain, started on two more metals. Copper's crystal comes from its own DFT (never from
+the measured lattice constant), its training set is labelled (89 configurations, 6 recomputed
+in float64 to check the GPU labels: worst 0.62 meV/atom), and its learned potential is fitted;
+its melting and expansion experiments are next. Iron needed spin-polarised DFT, since its
+structure comes from its magnetism.
+
+| Result | Simulated | Experiment | Notes |
+|---|---|---|---|
+| Copper lattice constant, LDA / PBE | 3.548 / 3.668 Å | 3.603 Å (0 K) | static lattice; LDA short and PBE long, as usual |
+| Copper bulk modulus, LDA / PBE | 168 / 150 GPa | 142 GPa | |
+| Copper's learned potential | a₀ 3.553 Å, bcc − fcc 37 meV | DFT: 3.548 Å, 42 meV | 14 meV/atom on configurations it never saw |
+| Iron chooses to be a magnet | yes: bcc FM − NM = −581 meV/atom (PBE) | ferromagnetic | the starting moment is only a push; aluminium gives it back |
+| Iron's crystal, LDA | fcc non-magnetic, 44 meV below bcc | bcc ferromagnetic | **wrong**: plain LDA's known failure for iron, left disagreeing |
+| Iron's crystal, PBE | **bcc ferromagnetic**, fcc 140 meV above | bcc ferromagnetic | the gradient correction fixes it; nothing tuned |
+| Iron lattice constant (bcc FM), LDA / PBE | 2.794 / 2.892 Å | 2.866 Å | possibly ~2% large for a pseudopotential reason: under investigation (AGENTS.md) |
+| Iron bulk modulus, LDA / PBE | 218 / 146 GPa | 170 GPa | |
+| Iron magnetic moment, LDA / PBE | 2.12 / 2.39 μB | 2.22 μB | net moment at the computed lattice constant |
 
 ## How it works
 
@@ -209,7 +241,8 @@ the physics rather than papered over; `engine/materials/` says where.
 - Solved on a 3D grid with spectral operators, so kinetic energy and open-boundary Coulomb
   interactions are exact for the grid.
 - The electron–electron interaction uses LDA (exact uniform-gas exchange plus the Perdew–Wang
-  correlation fit to quantum Monte Carlo of the uniform electron gas), Hartree–Fock, or a
+  correlation fit to quantum Monte Carlo of the uniform electron gas), PBE (the generalised
+  gradient approximation, whose constants all come from exact conditions), Hartree–Fock, or a
   single-electron exact mode.
 - Nuclei feel exact Hellmann–Feynman forces.
 
@@ -224,12 +257,18 @@ the physics rather than papered over; `engine/materials/` says where.
 
 **Crystals and materials** (`engine/crystal/`, `engine/materials/`):
 - `periodic.py`: DFT with Bloch waves, symmetry-reduced k-meshes, Ewald sums and
-  Hellmann–Feynman forces.
+  Hellmann–Feynman forces; spin-polarised (the magnetisation is free, one Fermi level), LDA or
+  PBE, with exchange–correlation on a finer grid where a sharp core density needs it (copper).
+  `periodic_torch.py` runs the same thing with a single-precision eigensolver on a GPU, checked
+  against the float64 path.
 - `eam.py`: an embedded-atom potential whose functions are learned from this engine's own DFT
   energies and forces (MLX autodiff, then least squares), never from experiment.
 - `md.py`, `experiments.py`: molecular dynamics with that potential, and the measurements a
   laboratory would make on the metal: expansion, heat capacity, melting by solid–liquid
-  coexistence, latent heat.
+  coexistence, latent heat. `md_torch.py` runs it on a GPU (10⁶ atoms, tested step for step
+  against `md.py`).
+- `dataset.py`: DFT training labels, each on its element's converged grid and functional, cached
+  by content with a name that is the same on every machine.
 - `continuum.py`: the centimetre block assembled from those per-atom properties.
 
 **Truth mode** (`engine/truth/`): a neural-network wavefunction varied against the exact
@@ -258,14 +297,15 @@ tests/             pytest (fast: `uv run pytest -m "not slow"`)
 
 ## Roadmap
 
-1. **Loop corrections**: one-loop amplitudes, to close the remaining percent-level gaps and add
-   loop-induced processes such as H → γγ. The running of α_s is already in; the amplitudes are not.
+1. **Loop corrections**: one-loop QED is in (g − 2, the running of α). Next are the weak and QCD
+   loops, to close the remaining percent-level gaps and add loop-induced processes such as H → γγ.
 2. **Baryons on the lattice**: the pion and rho are there; the proton needs three-quark
    correlators and much more statistics. Lighter quarks and quark loops are a matter of compute.
 3. **A relativistic atom solver**: scalar-relativistic radial equations, which the fourth row
    wants and anything heavier needs.
-4. **More metals and alloys**: the learned-forces pipeline is aluminium-specific only in its
-   training set; other elements need their own labelled configurations.
-5. **Bigger dynamics**: the molecular dynamics runs a few hundred atoms in Python. On the GPU,
-   with neighbour lists in MLX, 10⁵–10⁶ atoms is reachable, which is where grains, defects and
-   cracks start to appear.
+4. **More metals and alloys**: copper has its potential; its experiments, then iron's training set
+   (magnetic, PBE), then nickel and cobalt. Alloys after that.
+5. **Grains, defects and cracks**: the GPU molecular dynamics reaches 10⁶ atoms; the experiments
+   that need that size are next.
+6. **Semicore electrons in the pseudopotentials**: the next suspect for iron's possibly-large
+   lattice constant (the stretched s radius has been ruled out).

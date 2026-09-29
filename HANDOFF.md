@@ -1,15 +1,17 @@
 # Where the work stands
 
-A snapshot for whoever (or whatever) picks this up next, on either machine.
+A snapshot for whoever (or whatever) picks this up next, on any of the machines. `AGENTS.md` has
+the current state and work queue, `DECISIONS.md` the shared-physics decisions; this file keeps the
+longer technical notes.
 
 ## The state of the ladder
 
 | Rung | State |
 |---|---|
-| Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, proton collisions |
+| Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, proton collisions, one-loop QED (g − 2, running α) |
 | Lattice QCD | working: confinement, deconfinement, and hadron masses (pion as a Goldstone boson) |
-| Electrons and nuclei | working: H–Kr, molecules, truth mode (neural-network wavefunction) |
-| Materials | working: melting, expansion, heat capacity from learned forces |
+| Electrons and nuclei | working: H–Kr (Sc, Ti fail their checks), molecules, LDA and PBE, truth mode (neural-network wavefunction) |
+| Materials | aluminium end to end (melting 898 K at 96 000 atoms on the GPU); copper crystal, labels and potential; iron's magnetism and phases (spin-polarised, LDA and PBE) |
 | Everyday matter | working: the 1 cm³ block, built from the per-atom properties above |
 
 ## Aluminium: done, and what it cost
@@ -18,7 +20,10 @@ The chain runs end to end: DFT on small cells → a learned interatomic potentia
 dynamics of a few hundred atoms → a continuum 1 cm³ block. Results are in `results/`
 (`al_results.json`, `al_crystal.json`, `al_eam_errors.json`, `al_eam_aluminium.npz`) and in the
 README table. Melting 852 K against 933.5 measured; latent heat 70 meV/atom against 111, which
-fails its validation check and is reported failing.
+fails its validation check and is reported failing. On the GPU molecular dynamics a 96 000-atom
+box melts at 898 K: the 1 200-atom box is biased low, not just noisy. The headline number and the
+continuum block still use the small box; whether to switch them (and redo the latent heat at
+scale) is open.
 
 Four faults had to be fixed first, and every one of them produced plausible-looking numbers
 before it was found:
@@ -50,8 +55,14 @@ still a condensed metal.
 - **Every long job caches per item** so a crash or a flat battery costs only the item in flight.
 - **Element availability is earned.** A pseudopotential beyond argon is offered only after it
   passes a ghost-state check and a transferability check; the verdicts live in
-  `.cache/pseudo/v4_Z*_checks.json` and `matter-sim pseudos` rebuilds them. Scandium currently
-  fails (212 meV against a 150 meV limit) and is greyed out.
+  `.cache/pseudo/v6_Z*_checks.json` (PBE: `v6_pbe_Z*`) and `matter-sim pseudos` rebuilds them.
+  Scandium (212 meV) and titanium (265 meV) fail against the 150 meV limit and are greyed out.
+  Passing the atomic checks is not enough: iron's first pseudopotential passed them and collapsed
+  in the solid (D1). Look at a solid's E(V) (`scripts/pp_check.py eos`) before trusting one.
+- **The reference atom must converge, not merely stop.** Where 4s and 3d are nearly degenerate
+  (Ti, V, Mn, Ni) the plain SCF sloshes electrons between them and settles only by chance, after an
+  iteration count that rounding decides. That once gave the Mac different V and Mn
+  pseudopotentials from every other machine (D2). `radial.settled` anneals the smearing instead.
 
 - **Truth-mode error bars cover sampling, not training.** `evaluate()` takes its ± from the
   spread of the 512 walkers' time-averaged energies (independent Markov chains), which is honest
@@ -121,10 +132,21 @@ machines silently named the same label differently.
 
 ## Before the next metal
 
-- **Iron cannot be labelled yet, at any speed.** Spin-polarised periodic DFT exists now
-  (`PeriodicDFT(spin=True, moments=...)`, NumPy only), but iron's generated pseudopotential passes
-  its free-atom checks and still collapses in the solid: non-magnetic bcc E(V) has no minimum (see
-  AGENTS.md, and `scripts/pp_check.py` to reproduce).
+- **Iron: magnetism works; its training set does not exist yet.** Spin-polarised DFT runs on
+  NumPy and the GPU. Iron's pseudopotential was fixed by D1. Its grid is h = 0.20, xc_grid 2 for
+  both LDA and PBE. Plain LDA gets iron's structure wrong (fcc non-magnetic 44 meV/atom below bcc
+  ferromagnetic); PBE gets it right (bcc ferromagnetic lowest, fcc +140). So an iron potential
+  should be trained on **PBE** labels: set `dataset.GRID[26]` with `"functional": "pbe"`, and make
+  the labeller pass `spin=True` and a starting moment (it doesn't yet). Open question first: PBE
+  iron's lattice constant (2.892 Å) may be ~2% large. The stretched s radius is ruled out (a
+  harder one gives 2.934 Å); the frozen 3s3p semicore is the next suspect.
+- **PBE, where it is and what it costs.** `functional="pbe"` on `RadialAtom`, `pseudo.generate`
+  / `species.pseudopotential` (cached apart), `PeriodicDFT` (and so the GPU path) and `SCFSolver`.
+  Checked against published all-electron PBE atoms (He −2.892935, Ne −128.866404 Ha) and by forces
+  against energy slopes everywhere. In the crystal it costs little. In the molecular solver a
+  relaxation of water took 11× LDA's time, and at tight tolerances the density change floors at
+  ~5e-6 while the energy converges. The potential is formed with spectral (or, in the radial atom,
+  finite-difference) gradients of ρ; near ρ → 0 that is where noise would come from.
 - **Copper's grid is h = 0.19 bohr with exchange–correlation on a 2× grid** (`dataset.GRID`,
   `PeriodicDFT(xc_grid=2)`). Its grid error was not the 3d wavefunctions. It was the partial core
   density (11 electrons, following the true 3s3p core in to ~0.3 bohr) put through the nonlinear
