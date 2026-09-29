@@ -101,6 +101,22 @@ def copper_section() -> None:
         record("materials", "Cu lattice constant (static lattice, PBE)", p["a0_A"], 3.603, "Å",
                "exp. 0 K; PBE is usually a little long")
         record("materials", "Cu bulk modulus (PBE)", p["B_GPa"], 142.0, "GPa", "exp. 0 K")
+    res = path.with_name("cu_results.json")
+    if res.exists():
+        # Pass marks: aluminium's tolerances, unchanged, committed before copper's numbers existed.
+        r = json.loads(res.read_text())
+        section(f"Copper: learned potential from its own DFT labels, then molecular dynamics "
+                f"({r['melting']['atoms']:,}-atom coexistence box)")
+        record("materials", "Cu melting point (solid–liquid coexistence)", r["melting"]["T_melt"], 1357.8, "K",
+               f"bracket {r['melting']['bracket'][0]:.0f}–{r['melting']['bracket'][1]:.0f} K",
+               abs(r["melting"]["T_melt"] - 1357.8) < 150)
+        record("materials", "Cu latent heat of fusion", r["latent"]["latent_eV"] * 1000, 137.4, "meV/atom",
+               "13.26 kJ/mol", abs(r["latent"]["latent_eV"] * 1000 - 137.4) < 40)
+        t, a = np.array([(x["T"], x["a_A"]) for x in r["thermal"]]).T
+        ca = np.polyfit(t, a, 2)
+        alpha = float(np.polyval(np.polyder(ca), 293.15) / np.polyval(ca, 293.15))
+        record("materials", "Cu linear thermal expansion at 293 K", alpha * 1e6, 16.5, "10⁻⁶/K", "classical nuclei",
+               abs(alpha - 16.5e-6) < 8e-6)
 
 
 def materials_section() -> None:
