@@ -337,28 +337,39 @@ def _initial_configurations_bcc(Z: int, a0: float, seed: int) -> list[dict]:
 
 
 def md_snapshots(model, a0: float, temps=(600.0, 1000.0, 1400.0), per_T: int = 6, seed: int = 0,
-                 Z: int = 13, mass_amu: float = 26.9815385) -> list[dict]:
+                 Z: int = 13, mass_amu: float = 26.9815385, structure: str = "fcc",
+                 disorder_above: float = 900.0, disorder_T: float = 2500.0) -> list[dict]:
     """Configurations the metal actually visits: 8-atom cells run with a learned potential
     (hot enough to disorder, then held at T), sampled every few hundred femtoseconds.
 
     ``Z`` and ``mass_amu`` default to aluminium exactly as its training set was generated (the
     dynamics are chaotic, so any change to the mass would move every snapshot and its cache key);
     another metal passes its own. The temperatures, and the 900 K above which a run is first
-    disordered at 2500 K, were chosen for aluminium and are the caller's to revisit."""
+    disordered at 2500 K, were chosen for aluminium and are the caller's to revisit (``disorder_above``,
+    ``disorder_T``; the defaults reproduce aluminium's and copper's snapshots bit for bit).
+    ``structure``: the 8-atom cell is 2x1x1 fcc (default) or 2x2x1 bcc, around the lattice constant a0
+    of that structure; the dynamics and the random draws are the same."""
     from ..core.units import AMU_ME, AU_TIME_FS, KELVIN_HARTREE
     from .eam import energy_forces
     rng = np.random.default_rng(seed)
-    base = cubic("fcc", a0, Z)
-    cell = base.cell * np.array([2, 1, 1])
+    if structure == "fcc":
+        base = cubic("fcc", a0, Z)
+        cell = base.cell * np.array([2, 1, 1])
+        start = np.concatenate([base.positions, base.positions + np.array([base.cell[0], 0, 0])])
+    elif structure == "bcc":
+        sc = _supercell(cubic("bcc", a0, Z), (2, 2, 1))
+        cell, start = sc.cell, sc.positions
+    else:
+        raise ValueError(f"no MD cell for {structure!r}")
     out = []
     mass = mass_amu * AMU_ME
     dt = 3.0 / AU_TIME_FS
     for T in temps:
-        pos = np.concatenate([base.positions, base.positions + np.array([base.cell[0], 0, 0])])
-        vel = rng.normal(0, math.sqrt(KELVIN_HARTREE * max(T, 1500.0 if T > 900 else T) / mass), pos.shape)
+        pos = start.copy()
+        vel = rng.normal(0, math.sqrt(KELVIN_HARTREE * max(T, 1500.0 if T > disorder_above else T) / mass), pos.shape)
         _, F = energy_forces(model, cell, pos)
         for step in range(400 * per_T + 600):
-            target = (2500.0 if step < 300 else T) if T > 900 else T
+            target = (disorder_T if step < 300 else T) if T > disorder_above else T
             vel += 0.5 * dt * F / mass
             pos = (pos + dt * vel) % cell
             _, F = energy_forces(model, cell, pos)

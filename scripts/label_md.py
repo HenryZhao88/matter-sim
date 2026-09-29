@@ -2,6 +2,7 @@
 training set, after scripts/label_crystal.py and scripts/seed_fit.py.
 
     uv run python scripts/label_md.py 29 6.704 63.546 870,1450,2040 torch
+    uv run python scripts/label_md.py 26 5.4655 55.845 <T1,T2,T3> torch bcc      # a bcc metal
 
 dataset.md_snapshots runs 8-atom cells with the seed potential (results/<el>_eam_seed.npz) and
 samples them; the snapshots are written to results/<el>_md_snapshots.json before any labelling,
@@ -24,7 +25,7 @@ from engine.materials.eam import EAM, pairs_with_images
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def main(Z: int, a0: float, mass: float, temps, solver: str = "torch") -> None:
+def main(Z: int, a0: float, mass: float, temps, solver: str = "torch", structure: str = "fcc") -> None:
     el = ELEMENTS[Z].symbol.lower()
     out = ROOT / "results" / f"{el}_md_snapshots.json"
     if out.exists():
@@ -33,7 +34,7 @@ def main(Z: int, a0: float, mass: float, temps, solver: str = "torch") -> None:
     else:
         model = EAM.load(ROOT / "results" / f"{el}_eam_seed.npz")
         t = time.time()
-        confs = md_snapshots(model, a0, temps=temps, Z=Z, mass_amu=mass)
+        confs = md_snapshots(model, a0, temps=temps, Z=Z, mass_amu=mass, structure=structure)
         print(f"{len(confs)} snapshots in {time.time() - t:.0f}s", flush=True)
         out.write_text(json.dumps([dict(c, cell=np.asarray(c["cell"]).tolist(), positions=c["positions"].tolist())
                                    for c in confs]))
@@ -47,4 +48,4 @@ def main(Z: int, a0: float, mass: float, temps, solver: str = "torch") -> None:
 
 if __name__ == "__main__":
     main(int(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3]), [float(x) for x in sys.argv[4].split(",")],
-         sys.argv[5] if len(sys.argv) > 5 else "torch")
+         sys.argv[5] if len(sys.argv) > 5 else "torch", sys.argv[6] if len(sys.argv) > 6 else "fcc")

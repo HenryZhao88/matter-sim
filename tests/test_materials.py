@@ -247,6 +247,19 @@ def test_a_magnetic_element_is_labelled_spin_polarised_from_its_push(monkeypatch
     assert dft.nspin == 1
 
 
+def test_md_snapshots_of_a_bcc_metal_start_from_its_own_crystal():
+    """bcc snapshots run in a 2x2x1 bcc cell (8 atoms) around the bcc lattice constant; the defaults
+    are fcc's, which reproduce copper's saved snapshots bit for bit (checked when this was added)."""
+    from engine.materials import dataset
+    a0 = 5.4655
+    snaps = dataset.md_snapshots(toy_model(), a0, temps=(300.0,), per_T=2, Z=26, mass_amu=55.845, structure="bcc")
+    assert len(snaps) == 2 and all(s["tag"] == "md-300" for s in snaps)
+    assert all(len(s["charges"]) == 8 and set(s["charges"]) == {26} for s in snaps)
+    assert np.allclose(snaps[0]["cell"], [2 * a0, 2 * a0, a0])
+    with pytest.raises(ValueError):
+        dataset.md_snapshots(toy_model(), a0, temps=(300.0,), per_T=1, structure="hcp")
+
+
 def test_a_functional_other_than_lda_names_its_labels_apart(monkeypatch):
     """An element labelled with PBE gets different cache names from the same configurations under
     LDA, and its settings (hence the solver and the label's provenance) carry the functional."""
