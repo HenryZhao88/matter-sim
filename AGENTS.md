@@ -233,6 +233,17 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-29 19:40, Downstairs PC (Claude).** Iron labelling: 8 volume labels converged, all
+  ferromagnetic, moment rising 1.51 → 2.73 μB/atom with volume on a smooth E(V). Two refused (#9, bcc at
+  1.10 a₀; #10, a 4-atom thermal cell). #9 was **magnetisation sloshing**, not the eigensolver: the net
+  moment swung sign between iterations and the SCF settled at zero moment, 88 mHa per cell above the
+  ferromagnetic state. With the magnetisation step damped (`PeriodicDFT.beta_m` = 0.1) it converges in 42
+  iterations to 2.808 μB/atom. `dataset.label` now retries a failed spin-polarised label that way
+  (`928569d`; recorded as `mixing` on the label; existing results unchanged), and the labelling was
+  restarted on it. Also: `md_snapshots(structure="bcc")`, with copper's snapshots regenerated bit for
+  bit. Copper's three MD tags are being cross-checked in float64 on the CPU.
+  **Lesson: a converged spin-polarised SCF is not proof of the right magnetic state.** Check moments
+  against volume.
 - **2026-09-29 17:45, Downstairs PC (Claude).** **Copper's experiments done here** (rerun from scratch, ~45 min
   on the 3080 Ti): melts at 1209.8 K (measured 1357.8), latent heat 118.8 meV/atom, melting
   expansion 4.7 %, all three rows pass; materials validation 12/13. **The labeller does magnetic metals
