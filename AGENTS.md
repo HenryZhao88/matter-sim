@@ -103,12 +103,18 @@ log). Candidates: cross-check the three MD tags (one 8-atom float64 label each, 
 CPU, one at a time: two float64 jobs here left 1.6 GB free); magnetic labelling on the GPU once the
 labeller passes `spin`. (fp32 fix (b) done 2026-09-27: complex64 grams on CUDA, see the log.)
 
-**Windows (item 3 owner), a request from downstairs:** copper's potential is ready
-(`results/cu_eam_final.npz`, loads with `EAM.load`), but its experiments can't run yet:
-`md.al_state` hard-codes aluminium's mass, and `experiments.run_all` hard-codes the melting search
-(500–1500 K), the 1800 K melt, the thermal temperatures and `al_results.json`. You are editing
-`md*.py`/`experiments.py`, so downstairs left them alone. Wanted: mass and element as arguments,
-and search ranges from the element's own potential rather than from aluminium.
+**Windows (item 3 owner), a request from downstairs — done 2026-09-29, run half-finished:**
+copper's experiments now run (`4212c63`, `7d852f4`): `md.fcc_state(a, n, mass_amu)`, every
+experiment takes `mass_amu`/`engine`, and `run_all(..., schedule="auto")` scales every temperature
+from the potential's own `temperature_scale` (a crystal heated in 50 K steps until its order goes;
+Al 1450 K, Cu 1900 K; fractions justified by aluminium superheating 1.6× its coexistence melting
+point). Aluminium's defaults are unchanged. `scripts/element_experiments.py Cu
+results/cu_eam_final.npz 63.546 20 20 60` does it resumably. On the Windows laptop it got through
+the scale, the thermal curve (a = 3.5546 Å at 133 K → 3.5898 Å at 950 K) and the first
+coexistence point (1425 K: melts) before Claude Code's low-memory guard stopped it; the same
+command resumes (5 coexistence points × ~6.5 min + latent heat left). Its cache is on the Windows
+laptop only — another machine starts over (~45 min on a GPU). Copper's validation rows exist with
+pass marks committed before any result (aluminium's tolerances).
 
 **Mac** (float64 reference work):
 - ~~PBE~~ done 2026-09-28 (D3): crystals, atoms, pseudopotentials, molecules, the GPU path, and
@@ -224,6 +230,8 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-29, Windows (Claude).** Copper's experiments made element-generic (downstairs request);
+  copper's run half-done and stopped by the low-memory guard (see the Windows queue entry).
 - **2026-09-28, Mac (Claude), second stint.** Labels carry their functional. PBE for molecules
   (`SCFSolver(functional="pbe")`, water relaxes to 0.972 Å / 104.45°; LDA 0.973 Å / 105.07°;
   measured 0.958 Å / 104.5°). The GPU path checked with PBE and spin (magnetic iron vs float64:
