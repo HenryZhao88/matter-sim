@@ -182,15 +182,23 @@ def make_md(model: EAM, state: State, seed: int = 0, engine: str = "numpy", dt_f
     return MD(model, state, dt_fs=dt_fs, seed=seed)
 
 
-def al_state(model: EAM, a: float, n=(6, 6, 6)) -> State:
+AL_MASS_AMU = 26.9815385
+
+
+def fcc_state(a: float, n=(6, 6, 6), mass_amu: float = AL_MASS_AMU) -> State:
+    """An fcc crystal of n cells at rest, atoms of the given mass (amu)."""
     pos, box = fcc_lattice(a, n)
-    return State(pos, np.zeros_like(pos), box, 26.9815385 * AMU_ME)
+    return State(pos, np.zeros_like(pos), box, mass_amu * AMU_ME)
+
+
+def al_state(model: EAM, a: float, n=(6, 6, 6)) -> State:
+    return fcc_state(a, n, AL_MASS_AMU)
 
 
 def npt_lattice_constant(model: EAM, a0: float, T: float, n=(6, 6, 6), steps=3000, seed=0,
-                         engine: str = "numpy") -> dict:
+                         engine: str = "numpy", mass_amu: float = AL_MASS_AMU) -> dict:
     """Mean lattice constant and enthalpy per atom at temperature T and zero pressure."""
-    md = make_md(model, al_state(model, a0, n), seed=seed, engine=engine)
+    md = make_md(model, fcc_state(a0, n, mass_amu), seed=seed, engine=engine)
     md.thermalise(T)
     rows = md.run(steps, T=T, P_GPa=0.0, sample_every=10)
     tail = rows[len(rows) // 2:]
@@ -202,23 +210,24 @@ def npt_lattice_constant(model: EAM, a0: float, T: float, n=(6, 6, 6), steps=300
 
 
 def coexistence(model: EAM, a_T: float, T: float, n=(5, 5, 12), steps=6000, seed=0,
-                engine: str = "numpy") -> dict:
+                engine: str = "numpy", mass_amu: float = AL_MASS_AMU, melt_T: float = 1800.0) -> dict:
     """Half crystal, half liquid at temperature T, at fixed volume.
 
     The solid and the liquid share a box whose density is the solid's at T, opened by the few
     per cent that melting costs. Which phase grows is then decided by the energy: below the
     melting point the crystal advances into the liquid and the potential energy falls; above it
     the liquid eats the crystal and the energy rises. Fixed volume on purpose — a barostat on a
-    two-phase cell chases a pressure that neither phase alone defines."""
-    state = al_state(model, a_T, n)
+    two-phase cell chases a pressure that neither phase alone defines. ``melt_T`` melts the top
+    half first: well above the melting point, not so hot that atoms reach each other's cores."""
+    state = fcc_state(a_T, n, mass_amu)
     state.box = state.box * (1 + 0.02)                 # liquid is a few per cent less dense
     state.pos = state.pos * (1 + 0.02)
     md = make_md(model, state, seed=seed, engine=engine)
     N = len(state.pos)
     top = state.pos[:, 2] > state.box[2] / 2
     # melt the top half while holding the bottom half fixed, then release at T
-    md.thermalise(1800.0)
-    md.run(1500, T=1800.0, frozen=~top, sample_every=50)
+    md.thermalise(melt_T)
+    md.run(1500, T=melt_T, frozen=~top, sample_every=50)
     md.thermalise(T)
     rows = md.run(steps, T=T, sample_every=20)
     t = np.array([r["step"] for r in rows]) * md.dt * AU_TIME_FS

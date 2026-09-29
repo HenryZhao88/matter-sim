@@ -284,3 +284,21 @@ def test_experiments_run_on_either_md_engine():
     assert abs(a["a"] - b["a"]) < 1e-9 and abs(a["H_per_atom"] - b["H_per_atom"]) < 1e-9 * abs(a["H_per_atom"])
     with pytest.raises(ValueError):
         npt_lattice_constant(m, 7.6, 300.0, n=(3, 3, 3), steps=1, engine="fortran")
+
+
+def test_crystal_order_tells_a_crystal_from_a_liquid():
+    from engine.materials.experiments import crystal_order
+    pos, box = fcc_lattice(7.6, (4, 4, 4))
+    assert crystal_order(pos, box, (4, 4, 4)) > 0.999
+    rng = np.random.default_rng(0)
+    assert crystal_order(pos + rng.normal(0, 0.3, pos.shape), box, (4, 4, 4)) > 0.7      # thermal jostling
+    assert crystal_order(rng.uniform(0, 1, pos.shape) * box, box, (4, 4, 4)) < 0.15
+
+
+def test_an_element_schedule_comes_from_its_own_temperature_scale():
+    """Defaults stay aluminium's; "auto" scales every temperature from T_order, not from aluminium."""
+    from engine.materials.experiments import AL_SCHEDULE, schedule_from_scale
+    s = schedule_from_scale(1900.0)
+    assert s["melt_bracket"] == (950.0, 1900.0) and s["melt_T"] == 2280.0
+    assert max(s["thermal_T"]) <= s["melt_bracket"][0]
+    assert AL_SCHEDULE["melt_bracket"] == (500.0, 1500.0) and AL_SCHEDULE["melt_T"] == 1800.0
