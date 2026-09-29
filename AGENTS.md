@@ -230,6 +230,10 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-29, Downstairs PC (Claude).** Taking (1) **copper's experiments**, rerun from the start here
+  (scripts/element_experiments.py; the Windows cache is not portable), and (2) **the labeller for
+  magnetic metals** (spin/moments through dataset), aimed at labelling iron with PBE on the GPU.
+  Touching ngine/materials/dataset.py and scripts/label_crystal.py.
 - **2026-09-29, Windows (Claude).** Copper's experiments made element-generic (downstairs request);
   copper's run half-done and stopped by the low-memory guard (see the Windows queue entry).
 - **2026-09-28, Mac (Claude), second stint.** Labels carry their functional. PBE for molecules
