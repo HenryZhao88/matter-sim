@@ -56,8 +56,8 @@ result disagrees with nature, say so and leave it disagreeing.
 |---|---|
 | Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, pp at 13.6 TeV; one loop: lepton g−2 (a = 0.0011614 vs 0.0011597 measured) and α's running from α(0) |
 | Lattice QCD | working: confinement, deconfinement, hadron masses (pion as Goldstone boson, κ_c = 0.1695 vs 0.1694 published) |
-| Electrons and nuclei | working: H–Kr (Sc fails its own check and is greyed out), molecules, truth mode (VMC, MLX and PyTorch) |
-| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`, 10⁶ atoms) now runs the experiments (`engine="torch"`): melting in a 96 000-atom box gives **898 K** (1 200 atoms: 852–867 K). **Iron** (spin-polarised DFT, all five phases): bcc FM a = 2.794 Å (2.866), B = 218 GPa (170), 2.16 μB (2.22); plain LDA puts fcc ~40 meV/atom below bcc FM (known LDA error, left disagreeing). **With PBE** (D3, built): bcc FM comes out lowest (fcc +140 meV/atom), a = 2.892 Å, B = 146 GPa, 2.39 μB net; all five iron checks pass. **Copper**: grid converged, DFT lattice constant 3.548 Å; labelling running downstairs |
+| Electrons and nuclei | working: H–Kr (Sc and Ti fail their own checks and are greyed out), molecules, LDA and PBE, truth mode (VMC, MLX and PyTorch) |
+| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`, 10⁶ atoms) now runs the experiments (`engine="torch"`): melting in a 96 000-atom box gives **898 K** (1 200 atoms: 852–867 K). **Iron** (spin-polarised DFT, all five phases): bcc FM a = 2.794 Å (2.866), B = 218 GPa (170), 2.12 μB net (2.22); plain LDA puts fcc ~40 meV/atom below bcc FM (known LDA error, left disagreeing). **With PBE** (D3, built): bcc FM comes out lowest (fcc +140 meV/atom), a = 2.892 Å, B = 146 GPa, 2.39 μB net; all five iron checks pass. **Copper**: DFT lattice constant 3.548 Å (PBE 3.668), 89 labels, learned potential done; its experiments wait for element-generic MD |
 | Everyday matter | working: the 1 cm³ block, 6.3 × 10²² atoms, 2.83 g, 2.29 kJ to melt |
 
 Results both machines can read are in `results/`. `HANDOFF.md` carries the detail and the
@@ -67,59 +67,30 @@ hard-won lessons; read it too.
 
 ## In flight
 
-- **Copper: grid chosen, lattice constant computed, ready to label (Mac, 2026-09-25).** The grid
-  error was copper's partial core density going through the nonlinear LDA on the plain grid, not
-  its 3d states. `PeriodicDFT(xc_grid=2)` evaluates XC on a 2× grid and cuts the half-step egg-box
-  from +15.6 to +0.56 meV/atom at h = 0.19. Copper's grid is **h = 0.19, xc_grid = 2**
-  (`dataset.GRID[29]`). Against h = 0.16 it holds displacement energies to 0.1 meV/atom, strain
-  energies to 1.2, forces to 2e-4 Ha/bohr; h = 0.22 misses strain by 9 meV/atom. Our own lattice
-  constant is **a₀ = 3.548 Å = 6.704 bohr**, B = 168 GPa (`results/cu_eos.json`, k = 10³ — k = 12 moves a volume difference by 0.075 meV/atom — fit
-  residuals ≤ 0.45 meV/atom). Build copper's training set around 6.704 bohr, not the measured
-  3.615 Å. The labeller refuses an element with no `GRID` entry, and copper's cache names include
-  its grid. **First copper label done (Windows, 2026-09-25):** the compressed fcc-volume cell
-  (a × 0.90, 8³ k → 256, h 0.19, xc_grid 2) in 732 s on fp32, 15 SCF iterations, peak 2.0 GB VRAM
-  and 1.3 GB RAM. The 8-atom attempt was stopped by Claude Code's low-memory guard before its first
-  memory sample, so it is untimed. On Windows, "commit" tracks GPU memory one for one (a 4-atom
-  label shows ~5.6 GB committed with 1.3 GB actually in RAM): watch the working set, not commit.
-- **Memory decides which h is usable (Windows, 2026-09-24).** Both DFT paths keep every
-  k-point's wavefunctions resident (fp32: on the GPU in complex64; NumPy: in RAM in complex128,
-  plus every k-point's projectors). For copper's 8-atom cells (3×7×7 k → 98 after time reversal,
-  50 bands):
-
-  | h (bohr) | grid | fp32 wavefunctions (6 GB GPU) | NumPy wavefunctions + projectors (RAM) |
-  |---|---|---|---|
-  | 0.22 | 64×32×32 | 2.4 GB | ~4.8 + 3.1 GB |
-  | 0.19 | 72×36×36 | 3.4 GB | ~6.8 + 4.5 GB (tight on 16 GB) |
-  | 0.16 | 90×48×48 | **7.6 GB: does not fit** | ~15 + 10 GB: **does not fit on the Mac either** |
-
-  4-atom cells need about half. So h = 0.16 needs the wavefunctions streamed per k-point (or
-  stored as G-sphere coefficients only) before either machine can label 8-atom copper with it,
-  and h = 0.19 is the finest spacing the current code can do on both.
-- **The fp32 path holds at copper's finer grids (Windows, measured).** Displaced 4-atom Cu, 2×2×2 k,
-  fp32 against NumPy float64: at h = 0.19, −0.147 meV/atom and 1.1e-5 Ha/bohr (fp32 27 s, NumPy
-  317 s). At h = 0.16 fp32 converged in 44 s; the NumPy comparison there was stopped by the
-  low-memory guard and is still owed. The same cell's largest force is 0.109 Ha/bohr at h = 0.30
-  and 0.0157 at h = 0.19 — independent support for the egg-box numbers above.
-- **Spin-polarised periodic DFT exists (Linux cloud, 2026-09-25; NumPy path only).**
-  `PeriodicDFT(spin=True, moments=...)`: LSDA, one Fermi level, so the magnetisation is free; the
-  starting moment is only a push. Works with `xc_grid`. Unpolarised results are unchanged bit for
-  bit (checked against main for Cu with xc_grid = 2 and Al). Aluminium pushed to 1 μB/atom relaxes
-  to 3e-5 μB. `PeriodicDFTTorch` refuses `spin=True` (not ported).
-- **Iron's pseudopotential collapses in the solid — blocks every iron number (Linux cloud).**
-  Non-magnetic bcc Fe, h = 0.24, xc_grid = 2, 6³ k: E rises **+17.7, +17.2, +17.6 mHa/atom** per
-  8 bohr³ from V = 56 to 80 (no minimum; at h = 0.30 it is still concave out to V = 170). The
-  generator stretched the s-local radius to 1.5× base (r_s = 3.45 bohr) to avoid ghosts, because
-  that candidate scores best on the *free-atom* test; the solid never enters that test. Its own
-  ghost-free r_s = 2.30 candidate at the same settings: −20.9, −4.1, +4.8 (minimum V ≈ 69,
-  a ≈ 2.75 Å); r_s = 2.88: minimum a ≈ 2.77 Å (coarse). No ghost band in the solid: the two
-  potentials' band structures agree to 0.02 Ha, so the error is in the energy's volume
-  dependence. `scripts/pp_check.py` reproduces all of it. **Lesson: a pseudopotential is not
-  validated until a solid's E(V) has been looked at.** Copper's (1.25×) is fine, as its EOS shows.
-  **Fixed (D1, applied 2026-09-25, Mac):** the stretch is capped at 1.25× and the pseudopotential
-  cache is v5, so every machine regenerates on first use (a few minutes for Ti–Fe; the rest come
-  back identical). Iron is now the 1.25× s-local potential with a minimum near a ≈ 2.75 Å. V, Cr
-  and Mn changed too and are **not checked in a solid**. Ti and (on the Mac) V now fail their
-  free-atom check. **Pseudopotentials for V/Mn differ between machines:** `DECISIONS.md` D2.
+- **Copper (potential done, experiments waiting).** Grid h = 0.19, xc_grid 2 (`dataset.GRID[29]`;
+  the error at coarser grids was the partial core in LDA, not the 3d states). Our DFT lattice
+  constant is **6.704 bohr = 3.548 Å** (LDA; PBE 3.668). Training set: 89 labels (71 crystal + 18 MD
+  snapshots), 6 recomputed in float64 (worst 0.62 meV/atom). Final potential
+  `results/cu_eam_final.*`: 14 meV/atom on unseen configurations, a₀ 3.553 Å. **Blocked on**
+  element-generic experiments (`md.al_state`'s mass, `experiments.run_all`'s aluminium ranges); see
+  the Windows item below.
+- **Memory decides which h is usable.** Both DFT paths keep every k-point's wavefunctions resident.
+  For copper's 8-atom cells (98 k-points, 50 bands): h = 0.19 needs 3.4 GB on fp32 and ~11 GB on
+  NumPy; h = 0.16 (7.6 GB / ~25 GB) fits nowhere until wavefunctions are streamed per k-point or
+  stored as G-sphere coefficients. The fp32 path against float64 at h = 0.16 is still owed.
+- **Iron (magnetism done; training set not started).** Spin-polarised DFT runs on NumPy and the GPU
+  (`PeriodicDFT(spin=True, moments=...)`, `PeriodicDFTTorch` too). Iron's pseudopotential was fixed
+  by D1 (cap 1.25×), grid h = 0.20, xc_grid 2 under LDA and PBE. **LDA gets the structure wrong, PBE
+  right** (`results/fe_magnetism_pbe.json`). So label iron with PBE: a `dataset.GRID[26]` entry with
+  `"functional": "pbe"`, and the labeller must pass `spin=True` and a moment (it doesn't yet).
+  Open: PBE iron's a₀ 2.892 Å may be ~2% large. It is not the stretched s radius (a harder one
+  gives 2.934); the next suspect is the frozen 3s3p semicore.
+- **Pseudopotentials are v6** (D1 cap, D2 annealed reference atom). Every machine regenerates on
+  first use; only Ti–Ni differ from v4. Sc (212 meV) and Ti (265) fail their checks. Linux's
+  solid E(V) checks (`2b63d1f`: V, Cr, Mn, Co, Ni all have a minimum) were on v5. On the Mac, v6
+  changed V and Mn to what Linux already had, but **Ni changed (49.9 → 129.8 meV)**: redo Ni's E(V)
+  on v6 before using it. **Lesson: a pseudopotential is not validated until a solid's E(V) has been
+  looked at.**
 
 ## What would help most
 
