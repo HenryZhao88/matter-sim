@@ -34,7 +34,13 @@ T_E = 0.01          # Ha, Fermi–Dirac smearing of the labels
 # An entry may also name its exchange–correlation functional ("functional": "pbe"); without one it is
 # LDA. The functional picks the pseudopotentials too, is recorded on every label, and enters the
 # cache name when it is not LDA, so labels of one element under two functionals never share a name.
-GRID = {13: {"h": 0.3, "xc_grid": 1}, 29: {"h": 0.19, "xc_grid": 2}}
+# An entry with "moment" is labelled spin-polarised, starting from that moment (μB per atom, the same
+# on every atom). It is only a push: one Fermi level lets the electrons keep it, change it or give it
+# back (aluminium pushed to 1 μB returns to zero). It enters the cache name too.
+# Iron: h = 0.20, xc_grid 2, converged under LDA and PBE (scripts/fe_grid.py); PBE, because LDA puts
+# fcc iron below bcc and PBE does not (results/fe_magnetism_pbe.json); 3 μB, the scans' start.
+GRID = {13: {"h": 0.3, "xc_grid": 1}, 26: {"h": 0.20, "xc_grid": 2, "functional": "pbe", "moment": 3.0},
+        29: {"h": 0.19, "xc_grid": 2}}
 
 
 def _kmesh(cell):
@@ -65,7 +71,11 @@ def grid_settings(charges) -> dict:
 
 def _solver(name: str, c: Crystal):
     """The DFT path, and the provenance it leaves in the label."""
-    kw = dict(**grid_settings(c.charges), kmesh=_kmesh(c.cell), T_e=T_E, symmetry=False)
+    g = grid_settings(c.charges)
+    moment = g.pop("moment", None)
+    kw = dict(**g, kmesh=_kmesh(c.cell), T_e=T_E, symmetry=False)
+    if moment is not None:
+        kw.update(spin=True, moments=[moment] * len(c.charges))
     if name == "numpy":
         return PeriodicDFT(c, **kw), {"solver": "numpy", "precision": "float64", "device": "cpu"}
     if name == "torch":
@@ -101,6 +111,8 @@ def cache_key(conf: dict) -> str:
         key += (g["h"], g["xc_grid"])       # aluminium's names predate this and keep their form
     if g is not None and g.get("functional", "lda") != "lda":
         key += (g["functional"],)           # LDA names (every label so far) are unchanged
+    if g is not None and g.get("moment") is not None:
+        key += ("moment", g["moment"])
     return hashlib.sha1(pickle.dumps(key, protocol=4)).hexdigest()[:16]
 
 
@@ -135,10 +147,15 @@ def label(conf: dict, solver: str = "numpy") -> dict:
         # a non-converged SCF still returns an energy, several meV off and indistinguishable from a
         # real one; it is neither cached nor handed on
         raise NotConverged(f"{conf.get('tag', '')}: SCF not converged in {r.iterations} iterations")
+    from ..atoms.species import CACHE_VERSION
     out = {"cell": c.cell, "charges": c.charges, "positions": c.positions,
            "energy": r.free_energy, "forces": r.forces, "converged": r.converged, "tag": conf.get("tag", ""),
            "kspacing": K_SPACING, "T_e": T_E, **grid_settings(c.charges), **provenance,
-           "scf_iterations": r.iterations}
+           "scf_iterations": r.iterations,
+           # the pseudopotentials are not in the cache name: this is how a stale label is recognised
+           "pseudo_version": CACHE_VERSION}
+    if getattr(r, "rho_spin", None) is not None:
+        out.update(moment_per_atom=r.moment / len(c.charges), abs_moment_per_atom=r.abs_moment / len(c.charges))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(pickle.dumps(out))
     return out
@@ -234,7 +251,15 @@ def label_all(confs, workers: int | None = None, progress=None, solver: str = "n
     return out
 
 
-def initial_configurations(Z: int, a0: float, seed: int = 0) -> list[dict]:
+def initial_configurations(Z: int, a0: float, seed: int = 0, structure: str = "fcc") -> list[dict]:
+    """The crystal-phase training configurations around the element's own lattice constant a0 (of
+    ``structure``, its lowest-energy cubic crystal). "fcc" is exactly the set aluminium and copper
+    were labelled with (same draws, same tags, so the same cache names); "bcc" builds the same kinds
+    of cell on bcc (volume, thermal, strain, 8-atom), with fcc and sc as the other structures."""
+    if structure == "bcc":
+        return _initial_configurations_bcc(Z, a0, seed)
+    if structure != "fcc":
+        raise ValueError(f"no configuration set for {structure!r}")
     rng = np.random.default_rng(seed)
     confs = []
 
@@ -262,6 +287,48 @@ def initial_configurations(Z: int, a0: float, seed: int = 0) -> list[dict]:
             add(cubic(kind, a, Z), kind, rng.uniform(0.0, 0.1))
     for _ in range(18):                                          # disordered / liquid-like
         v_atom = a0 ** 3 / 4 * rng.uniform(1.02, 1.12)
+        n = 8
+        L = (v_atom * n) ** (1 / 3)
+        pos = _random_packing(rng, n, L, 4.0)
+        confs.append({"cell": np.array([L, L, L]), "charges": [Z] * n, "positions": pos, "tag": "disordered"})
+    return confs
+
+
+def _supercell(c: Crystal, reps) -> Crystal:
+    """c repeated reps = (nx, ny, nz) times."""
+    shifts = [np.array(s) * c.cell for s in np.ndindex(*reps)]
+    pos = np.concatenate([c.positions + s for s in shifts])
+    return Crystal(c.cell * np.array(reps), list(c.charges) * len(shifts), pos)
+
+
+def _initial_configurations_bcc(Z: int, a0: float, seed: int) -> list[dict]:
+    """initial_configurations for a bcc metal: the fcc set''s kinds of cell, built on bcc. The cubic
+    bcc cell holds 2 atoms, so the thermal cells are 2x1x1 (4 atoms, as fcc''s) and the large-motion
+    cells 2x2x1 (8 atoms); volume and strain cells are the 2-atom cube."""
+    rng = np.random.default_rng(seed)
+    confs = []
+
+    def add(c: Crystal, tag, sigma=0.0):
+        pos = c.positions + rng.normal(0, sigma, c.positions.shape)
+        confs.append({"cell": c.cell, "charges": c.charges, "positions": pos, "tag": tag})
+
+    for s in np.linspace(0.90, 1.10, 9):                       # equation of state
+        add(cubic("bcc", a0 * s, Z), "bcc-volume", 0.0)
+    for _ in range(24):                                          # thermal jostling at several volumes
+        s = rng.uniform(0.95, 1.06)
+        add(_supercell(cubic("bcc", a0 * s, Z), (2, 1, 1)), "bcc-thermal", rng.uniform(0.05, 0.35))
+    for _ in range(16):                                          # strained cells
+        e = rng.uniform(-0.05, 0.05, 3)
+        add(cubic("bcc", a0, Z, strain=tuple(e)), "bcc-strain", rng.uniform(0.0, 0.2))
+    for _ in range(16):                                          # 8-atom cells, larger motion
+        add(_supercell(cubic("bcc", a0 * rng.uniform(0.97, 1.08), Z), (2, 2, 1)), "bcc-8", rng.uniform(0.2, 0.55))
+    for kind, n in (("fcc", 6), ("sc", 5)):                      # other structures, at bcc's volume per atom
+        for s in np.linspace(0.93, 1.08, n):
+            v = a0 ** 3 / 2 * s ** 3
+            a = (v * {"fcc": 4, "sc": 1}[kind]) ** (1 / 3)
+            add(cubic(kind, a, Z), kind, rng.uniform(0.0, 0.1))
+    for _ in range(18):                                          # disordered / liquid-like
+        v_atom = a0 ** 3 / 2 * rng.uniform(1.02, 1.12)
         n = 8
         L = (v_atom * n) ** (1 / 3)
         pos = _random_packing(rng, n, L, 4.0)

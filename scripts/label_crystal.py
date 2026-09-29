@@ -8,6 +8,7 @@ every label records the solver, precision, device and grid that produced it.
 
     uv run python scripts/label_crystal.py 29 6.704 torch     # copper, fp32 on the GPU, one at a time
     uv run python scripts/label_crystal.py 29 6.704 numpy 3   # float64, three workers
+    uv run python scripts/label_crystal.py 26 5.4655 torch 1 bcc   # iron: bcc set, PBE and spin from GRID[26]
 
 The MD snapshots that complete a set (dataset.md_snapshots) need a seed potential fitted to these
 labels, and temperatures chosen for the element; that is a separate step.
@@ -20,9 +21,9 @@ from engine.core.elements import ELEMENTS
 from engine.materials.dataset import CACHE, cache_key, initial_configurations, label_all
 
 
-def main(Z: int, a0: float, solver: str = "torch", workers: int = 1) -> None:
+def main(Z: int, a0: float, solver: str = "torch", workers: int = 1, structure: str = "fcc") -> None:
     t = time.time()
-    confs = [c for c in initial_configurations(Z, a0) if c["tag"] not in ("sc", "disordered")]
+    confs = [c for c in initial_configurations(Z, a0, structure=structure) if c["tag"] not in ("sc", "disordered")]
     have = sum((CACHE / "dft" / f"{cache_key(c)}.pkl").exists() for c in confs)
     print(f"{ELEMENTS[Z].symbol}: {len(confs)} configurations at a0 = {a0} bohr, {have} already labelled; "
           f"solver {solver}", flush=True)
@@ -33,4 +34,4 @@ def main(Z: int, a0: float, solver: str = "torch", workers: int = 1) -> None:
 
 if __name__ == "__main__":
     main(int(sys.argv[1]), float(sys.argv[2]), sys.argv[3] if len(sys.argv) > 3 else "torch",
-         int(sys.argv[4]) if len(sys.argv) > 4 else 1)
+         int(sys.argv[4]) if len(sys.argv) > 4 else 1, sys.argv[5] if len(sys.argv) > 5 else "fcc")

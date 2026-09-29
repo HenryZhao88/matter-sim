@@ -222,7 +222,29 @@ def test_each_element_is_labelled_on_its_own_converged_grid():
     assert dataset.cache_key(al) == v2_name(al)
     assert dataset.cache_key(cu) != v2_name(cu)
     with pytest.raises(ValueError):
-        dataset.grid_settings([26] * 2)
+        dataset.grid_settings([28] * 2)           # nickel: no grid converged yet
+
+
+def test_a_magnetic_element_is_labelled_spin_polarised_from_its_push(monkeypatch):
+    """A GRID entry with a moment gives a spin-polarised solver started from that moment on every atom
+    (only a push: the SCF decides), and names its labels apart from the same entry without one. Iron's
+    bcc set has the fcc set's kinds of cell, sized like them."""
+    import collections
+    from engine.materials import dataset
+    fe = dataset.initial_configurations(26, 5.4655, structure="bcc")
+    sizes = collections.Counter((c["tag"], len(c["charges"])) for c in fe)
+    assert sizes == {("bcc-volume", 2): 9, ("bcc-thermal", 4): 24, ("bcc-strain", 2): 16, ("bcc-8", 8): 16,
+                     ("fcc", 4): 6, ("sc", 1): 5, ("disordered", 8): 18}
+    conf = fe[4]                                     # the perfect crystal at a0
+    assert dataset.grid_settings(conf["charges"])["moment"] == 3.0
+    dft, _ = dataset._solver("numpy", dataset.Crystal(conf["cell"], conf["charges"], conf["positions"]))
+    assert dft.nspin == 2 and dft.functional == "pbe"
+    assert np.allclose(dft.moments, 3.0)
+    magnetic = dataset.cache_key(conf)
+    monkeypatch.setitem(dataset.GRID, 26, {"h": 0.20, "xc_grid": 2, "functional": "pbe"})
+    assert dataset.cache_key(conf) != magnetic
+    dft, _ = dataset._solver("numpy", dataset.Crystal(conf["cell"], conf["charges"], conf["positions"]))
+    assert dft.nspin == 1
 
 
 def test_a_functional_other_than_lda_names_its_labels_apart(monkeypatch):
