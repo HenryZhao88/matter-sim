@@ -67,22 +67,23 @@ hard-won lessons; read it too.
 
 ## In flight
 
-- **Copper (potential done, experiments waiting).** Grid h = 0.19, xc_grid 2 (`dataset.GRID[29]`;
+- **Copper (done: melts at 1210 K, measured 1358).** Grid h = 0.19, xc_grid 2 (`dataset.GRID[29]`;
   the error at coarser grids was the partial core in LDA, not the 3d states). Our DFT lattice
   constant is **6.704 bohr = 3.548 Å** (LDA; PBE 3.668). Training set: 89 labels (71 crystal + 18 MD
   snapshots), 6 recomputed in float64 (worst 0.62 meV/atom). Final potential
-  `results/cu_eam_final.*`: 14 meV/atom on unseen configurations, a₀ 3.553 Å. **Blocked on**
-  element-generic experiments (`md.al_state`'s mass, `experiments.run_all`'s aluminium ranges); see
-  the Windows item below.
+  `results/cu_eam_final.*`: 14 meV/atom on unseen configurations, a₀ 3.553 Å. Experiments
+  (`results/cu_results.json`, downstairs): T_melt 1209.8 K (1202–1217), latent heat 118.8 meV/atom
+  (measured 137.4), melting expansion 4.7 %; all three validation rows pass.
 - **Memory decides which h is usable.** Both DFT paths keep every k-point's wavefunctions resident.
   For copper's 8-atom cells (98 k-points, 50 bands): h = 0.19 needs 3.4 GB on fp32 and ~11 GB on
   NumPy; h = 0.16 (7.6 GB / ~25 GB) fits nowhere until wavefunctions are streamed per k-point or
   stored as G-sphere coefficients. The fp32 path against float64 at h = 0.16 is still owed.
-- **Iron (magnetism done; training set not started).** Spin-polarised DFT runs on NumPy and the GPU
+- **Iron (magnetism done; PBE training set being labelled downstairs, 71 configurations).** Spin-polarised DFT runs on NumPy and the GPU
   (`PeriodicDFT(spin=True, moments=...)`, `PeriodicDFTTorch` too). Iron's pseudopotential was fixed
   by D1 (cap 1.25×), grid h = 0.20, xc_grid 2 under LDA and PBE. **LDA gets the structure wrong, PBE
-  right** (`results/fe_magnetism_pbe.json`). So label iron with PBE: a `dataset.GRID[26]` entry with
-  `"functional": "pbe"`, and the labeller must pass `spin=True` and a moment (it doesn't yet).
+  right** (`results/fe_magnetism_pbe.json`). `dataset.GRID[26]` now labels iron with PBE, spin-polarised
+  from a 3 μB push (`label_crystal.py 26 5.4655 torch 1 bcc`; the bcc set is
+  `initial_configurations(..., structure="bcc")`). First label: 2.32 μB/atom, 23 iterations.
   Open: PBE iron's a₀ 2.892 Å may be ~2% large. It is not the stretched s radius (a harder one
   gives 2.934); the next suspect is the frozen 3s3p semicore.
 - **Pseudopotentials are v6** (D1 cap, D2 annealed reference atom). Every machine regenerates on
@@ -98,10 +99,12 @@ hard-won lessons; read it too.
 
 Take an item, say so in the log, and move it to the log when done. Items are ordered by value.
 
-**Downstairs PC**: queue empty (copper's training set, cross-check and final potential done; see the
-log). Candidates: cross-check the three MD tags (one 8-atom float64 label each, ~7 h apiece on this
-CPU, one at a time: two float64 jobs here left 1.6 GB free); magnetic labelling on the GPU once the
-labeller passes `spin`. (fp32 fix (b) done 2026-09-27: complex64 grams on CUDA, see the log.)
+**Downstairs PC** (running: iron's PBE crystal set on the GPU, ~20–30 min a label, so ~1–2 days):
+- **Iron's training set**, then its float64 cross-check (spin-polarised NumPy: slow, one at a time),
+  a seed fit (`scripts/seed_fit.py 26 5.4655`), bcc MD snapshots (`md_snapshots` is fcc-only today)
+  and the final fit. If the Mac changes iron's pseudopotential (the 2 % size question), the labels are
+  stale: each records `pseudo_version`.
+- Candidates after: cross-check copper's three MD tags (~7 h each on the CPU, one at a time).
 
 **Windows (item 3 owner), a request from downstairs — done 2026-09-29, run half-finished:**
 copper's experiments now run (`4212c63`, `7d852f4`): `md.fcc_state(a, n, mass_amu)`, every
@@ -230,6 +233,13 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-09-29 17:45, Downstairs PC (Claude).** **Copper's experiments done here** (rerun from scratch, ~45 min
+  on the 3080 Ti): melts at 1209.8 K (measured 1357.8), latent heat 118.8 meV/atom, melting
+  expansion 4.7 %, all three rows pass; materials validation 12/13. **The labeller does magnetic metals
+  and bcc**: `GRID` entries may carry a starting moment (in the cache name; each label records the
+  moment it ends with and its `pseudo_version`), and `initial_configurations(structure="bcc")`. The fcc
+  path is unchanged: all 94 Al and 94 Cu cache names checked identical. Iron's PBE set (71 labels)
+  started on the GPU.
 - **2026-09-29, Downstairs PC (Claude).** Taking (1) **copper's experiments**, rerun from the start here
   (scripts/element_experiments.py; the Windows cache is not portable), and (2) **the labeller for
   magnetic metals** (spin/moments through dataset), aimed at labelling iron with PBE on the GPU.
