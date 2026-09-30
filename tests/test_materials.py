@@ -247,6 +247,33 @@ def test_a_magnetic_element_is_labelled_spin_polarised_from_its_push(monkeypatch
     assert dft.nspin == 1
 
 
+def test_a_spin_label_that_does_not_converge_is_retried_with_its_magnetisation_damped(monkeypatch, tmp_path):
+    """Only a spin-polarised label is retried, only after its plain SCF fails, with the magnetisation
+    step damped; the label says so. A non-magnetic label that fails is still refused."""
+    from types import SimpleNamespace
+    from engine.materials import dataset
+    calls = []
+
+    def run(self, **kw):
+        calls.append((self.nspin, self.beta_m, kw.get("max_iter")))
+        ok = self.nspin == 2 and self.beta_m == dataset.SPIN_RETRY_BETA_M
+        return SimpleNamespace(converged=ok, iterations=41 if ok else 60, free_energy=-57.7, forces=np.zeros((2, 3)),
+                               rho_spin=np.zeros(1) if self.nspin == 2 else None, moment=5.6, abs_moment=6.0)
+
+    monkeypatch.setattr(dataset, "CACHE", tmp_path)
+    monkeypatch.setattr(dataset.PeriodicDFT, "run", run)
+    c = dataset.cubic("bcc", 6.0, 26)
+    conf = {"cell": c.cell, "charges": c.charges, "positions": c.positions, "tag": "test"}
+    d = dataset.label(conf)
+    assert calls == [(2, None, None), (2, dataset.SPIN_RETRY_BETA_M, 100)]
+    assert "damped" in d["mixing"] and d["scf_iterations"] == 41 and d["moment_per_atom"] == 2.8
+    monkeypatch.setitem(dataset.GRID, 26, {"h": 0.20, "xc_grid": 2, "functional": "pbe"})   # no moment
+    calls.clear()
+    with pytest.raises(dataset.NotConverged):
+        dataset.label({**conf, "positions": c.positions + 0.1})
+    assert calls == [(1, None, None)]
+
+
 def test_md_snapshots_of_a_bcc_metal_start_from_its_own_crystal():
     """bcc snapshots run in a 2x2x1 bcc cell (8 atoms) around the bcc lattice constant; the defaults
     are fcc's, which reproduce copper's saved snapshots bit for bit (checked when this was added)."""
