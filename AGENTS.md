@@ -233,18 +233,25 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
-- **2026-09-29 19:40, Downstairs PC (Claude).** Iron labelling: 8 volume labels converged, all
-  ferromagnetic, moment rising 1.51 → 2.73 μB/atom with volume on a smooth E(V). Two refused (#9, bcc at
-  1.10 a₀; #10, a 4-atom thermal cell). #9 was **magnetisation sloshing**, not the eigensolver: the net
-  moment swung sign between iterations and the SCF settled at zero moment, 88 mHa per cell above the
-  ferromagnetic state. With the magnetisation step damped (`PeriodicDFT.beta_m` = 0.1) it converges in 42
-  iterations to 2.808 μB/atom. `dataset.label` now retries a failed spin-polarised label that way
-  (`928569d`; recorded as `mixing` on the label; existing results unchanged), and the labelling was
-  restarted on it. Also: `md_snapshots(structure="bcc")`, with copper's snapshots regenerated bit for
-  bit. Copper's three MD tags are being cross-checked in float64 on the CPU.
-  **Lesson: a converged spin-polarised SCF is not proof of the right magnetic state.** Check moments
-  against volume.
-- **2026-09-29 17:45, Downstairs PC (Claude).** **Copper's experiments done here** (rerun from scratch, ~45 min
+- **2026-09-30 01:30, Downstairs PC (Claude).** **Iron's magnetic labels: Pulay mixing can land on the
+  non-magnetic state.** Refused cells (#9 at 1.10 a₀; #10, #11 4-atom thermal cells near equilibrium)
+  were traced on the GPU: the cell's moment rose and then collapsed (#11: 3.2 → 0.2 μB), damped or not,
+  with 22 or 28 bands. Pulay (DIIS) finds stationary points whether stable or not, and the non-magnetic
+  state is always one. Mixing the magnetisation linearly until dρ < 0.1 e, then Pulay (`PeriodicDFT.mix_m
+  = "hybrid"`), reaches the ferromagnet: #11 converges in 61 iterations to 2.22 μB/atom, 0.10 Ha per
+  cell *below* the collapsed state. `dataset.label` now runs every spin-polarised label that way
+  (`b8c08c3`), and gives spin runs bands for the majority spin, ⌈(valence + Σ|push|)/2⌉ + 6: the 8-atom
+  cells had 38 for ~41 majority electrons. It also refuses a label whose top band holds electrons.
+  Iron labelling restarted (9 two-atom labels kept: ferromagnetic, moment rising 1.51 → 2.81 μB with
+  volume). Also: `md_snapshots(structure="bcc")` (copper's snapshots regenerate bit for bit); copper's
+  MD tags are being cross-checked in float64 on the CPU.
+  **Checked, not a problem:** the committed scans' fcc-FM points whose top band is full (occupation
+  ~1). With 28 bands instead of 22, V = 80 PBE gives the same energy and moment to 1e-6.
+  **Open, for whoever owns `fe_magnetism.py`:** the zero-moment fcc-FM points (LDA V ≤ 72, PBE V ≤ 64)
+  and the metastable points ran on Pulay mixing and may be that stationary point rather than the
+  lowest state. Rerunning them with `mix_m="hybrid"` would tell. Not claimed either way.
+  **Lesson: a converged spin-polarised SCF is not proof of the right magnetic state.** Check the moment
+  against volume, and prefer the lower-energy state.- **2026-09-29 17:45, Downstairs PC (Claude).** **Copper's experiments done here** (rerun from scratch, ~45 min
   on the 3080 Ti): melts at 1209.8 K (measured 1357.8), latent heat 118.8 meV/atom, melting
   expansion 4.7 %, all three rows pass; materials validation 12/13. **The labeller does magnetic metals
   and bcc**: `GRID` entries may carry a starting moment (in the cache name; each label records the
