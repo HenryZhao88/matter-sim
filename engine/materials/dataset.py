@@ -142,15 +142,18 @@ def label(conf: dict, solver: str = "numpy") -> dict:
         return pickle.loads(path.read_bytes())
     c = Crystal(conf["cell"], conf["charges"], conf["positions"])
     dft, provenance = _solver(solver, c)
-    r = dft.run(forces=True)
-    if not r.converged and dft.nspin == 2:
-        # a magnetisation that overshoots (the net moment swinging sign between iterations) can leave
-        # the plain SCF in a wrong, higher state that never converges; retry with its step damped
-        dft, provenance = _solver(solver, c)
-        dft.beta_m = SPIN_RETRY_BETA_M
-        r = dft.run(forces=True, max_iter=100)
-        provenance = {**provenance, "mixing": f"magnetisation damped (beta_m {SPIN_RETRY_BETA_M}) after the "
-                                             "plain SCF did not converge"}
+    if dft.nspin == 2:
+        # Pulay mixing can carry a magnet onto its non-magnetic stationary point (converged or not, and
+        # far higher in energy); the magnetisation is mixed linearly until the density is close, then Pulay
+        dft.mix_m = "hybrid"
+        r = dft.run(forces=True, max_iter=SPIN_MAX_ITER)
+        provenance = {**provenance, "mixing": f"magnetisation linear until drho < {dft.HYBRID_SWITCH}, then Pulay"}
+    else:
+        r = dft.run(forces=True)
+    top = (getattr(r, "notes", None) or {}).get("top_band_occupation")
+    if r.converged and top is not None and top > TOP_BAND_LIMIT:
+        # the majority spin ran out of bands: the moment (and energy) would be the band count's
+        raise NotConverged(f"{conf.get('tag', '')}: top band holds {top:.3g} electrons; too few bands")
     if not r.converged:
         # a non-converged SCF still returns an energy, several meV off and indistinguishable from a
         # real one; it is neither cached nor handed on
@@ -169,7 +172,8 @@ def label(conf: dict, solver: str = "numpy") -> dict:
     return out
 
 
-SPIN_RETRY_BETA_M = 0.1      # see PeriodicDFT.beta_m and label()
+SPIN_MAX_ITER = 100          # SCF iterations for a spin-polarised label (hybrid mixing: see label())
+TOP_BAND_LIMIT = 1e-3        # electrons in the highest band a label may have (more: too few bands)
 CROSS_CHECK_FRACTION = 0.05     # of each kind of configuration, also computed on the NumPy float64 path
 
 

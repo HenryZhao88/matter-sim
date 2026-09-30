@@ -247,32 +247,46 @@ def test_a_magnetic_element_is_labelled_spin_polarised_from_its_push(monkeypatch
     assert dft.nspin == 1
 
 
-def test_a_spin_label_that_does_not_converge_is_retried_with_its_magnetisation_damped(monkeypatch, tmp_path):
-    """Only a spin-polarised label is retried, only after its plain SCF fails, with the magnetisation
-    step damped; the label says so. A non-magnetic label that fails is still refused."""
+def test_a_spin_label_mixes_its_magnetisation_linearly_until_close(monkeypatch, tmp_path):
+    """A spin-polarised label runs in "hybrid" mode (the magnetisation mixed linearly until the density
+    is close, then Pulay), so Pulay cannot carry a magnet onto its non-magnetic stationary point; the
+    label says so. A non-magnetic label is untouched and still refused when it does not converge."""
     from types import SimpleNamespace
     from engine.materials import dataset
     calls = []
 
     def run(self, **kw):
-        calls.append((self.nspin, self.beta_m, kw.get("max_iter")))
-        ok = self.nspin == 2 and self.beta_m == dataset.SPIN_RETRY_BETA_M
-        return SimpleNamespace(converged=ok, iterations=41 if ok else 60, free_energy=-57.7, forces=np.zeros((2, 3)),
-                               rho_spin=np.zeros(1) if self.nspin == 2 else None, moment=5.6, abs_moment=6.0)
+        calls.append((self.nspin, self.mix_m, kw.get("max_iter")))
+        ok = self.nspin == 2
+        return SimpleNamespace(converged=ok, iterations=61, free_energy=-115.4, forces=np.zeros((2, 3)),
+                               rho_spin=np.zeros(1) if ok else None, moment=4.4, abs_moment=4.6,
+                               notes={"top_band_occupation": 0.0})
 
     monkeypatch.setattr(dataset, "CACHE", tmp_path)
     monkeypatch.setattr(dataset.PeriodicDFT, "run", run)
     c = dataset.cubic("bcc", 6.0, 26)
     conf = {"cell": c.cell, "charges": c.charges, "positions": c.positions, "tag": "test"}
     d = dataset.label(conf)
-    assert calls == [(2, None, None), (2, dataset.SPIN_RETRY_BETA_M, 100)]
-    assert "damped" in d["mixing"] and d["scf_iterations"] == 41 and d["moment_per_atom"] == 2.8
+    assert calls == [(2, "hybrid", dataset.SPIN_MAX_ITER)]
+    assert "linear" in d["mixing"] and d["moment_per_atom"] == 2.2
     monkeypatch.setitem(dataset.GRID, 26, {"h": 0.20, "xc_grid": 2, "functional": "pbe"})   # no moment
     calls.clear()
     with pytest.raises(dataset.NotConverged):
         dataset.label({**conf, "positions": c.positions + 0.1})
-    assert calls == [(1, None, None)]
+    assert calls == [(1, "pulay", None)]
 
+
+def test_a_label_whose_top_band_holds_electrons_is_refused(monkeypatch, tmp_path):
+    """Too few bands: the majority spin would be squeezed, so the label is refused, not stored."""
+    from types import SimpleNamespace
+    from engine.materials import dataset
+    monkeypatch.setattr(dataset, "CACHE", tmp_path)
+    monkeypatch.setattr(dataset.PeriodicDFT, "run", lambda self, **kw: SimpleNamespace(
+        converged=True, iterations=20, free_energy=-57.7, forces=np.zeros((2, 3)), rho_spin=np.zeros(1),
+        moment=5.0, abs_moment=5.2, notes={"top_band_occupation": 0.9}))
+    c = dataset.cubic("bcc", 5.5, 26)
+    with pytest.raises(dataset.NotConverged, match="too few bands"):
+        dataset.label({"cell": c.cell, "charges": c.charges, "positions": c.positions, "tag": "test"})
 
 def test_md_snapshots_of_a_bcc_metal_start_from_its_own_crystal():
     """bcc snapshots run in a 2x2x1 bcc cell (8 atoms) around the bcc lattice constant; the defaults

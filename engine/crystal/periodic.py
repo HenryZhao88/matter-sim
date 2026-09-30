@@ -142,10 +142,15 @@ class CrystalResult:
 
 
 class PeriodicDFT:
-    # the magnetisation's mixing step; None: the charge's beta. Smaller damps a magnetisation that
-    # overshoots (expanded bcc iron, 1.1 a0: the net moment swung +4.9 to -2 uB per cell and the SCF
-    # settled 88 mHa too high at zero moment; at 0.1 it converged ferromagnetic, 2.81 uB/atom)
+    # the magnetisation's mixing step; None: the charge's beta
     beta_m: float | None = None
+    # how the magnetisation is mixed. "pulay": with the charge's Pulay (DIIS) history. "hybrid": linearly
+    # from each step alone while the density change is above HYBRID_SWITCH electrons, then Pulay. DIIS
+    # converges to stationary points whether stable or not, and the non-magnetic state always is one:
+    # on 4-atom bcc iron near equilibrium Pulay was drawn there (moment 3.2 -> 0.2 uB per cell, 0.10 Ha
+    # per cell too high) while hybrid reached the ferromagnet (2.22 uB/atom) and converged in 61 iterations.
+    mix_m: str = "pulay"
+    HYBRID_SWITCH = 0.1
     def __init__(self, crystal: Crystal, h: float = 0.3, kmesh: int | tuple = 6, T_e: float = 0.005,
                  symmetry: bool = True, extra_bands: int = 6, smearing: str = "fd", xc_grid: int = 1,
                  spin: bool = False, moments=None, functional: str = "lda") -> None:
@@ -176,7 +181,12 @@ class PeriodicDFT:
         labels = None if self.moments is None else [(Z, round(float(m), 6)) for Z, m in zip(crystal.charges, self.moments)]
         self.ops = crystal_symmetries(crystal, labels=labels) if symmetry else [((0, 1, 2), (1, 1, 1))]
         self.kpts, self.wk = kpoint_mesh(crystal, kmesh, self.ops)
-        self.n_bands = int(math.ceil(crystal.valence / 2)) + extra_bands
+        # bands per spin channel: half the electrons plus a margin. A magnet's majority spin holds more
+        # than half, up to (valence + moment) / 2, so a spin-polarised run gets room for the moment it
+        # starts from. Without it a 4-atom fcc iron cell had 22 bands for ~21 majority electrons: the top
+        # band filled (occupation 0.8-1.04) and the moment was set by the band count, not the physics.
+        push = 0.0 if self.moments is None else float(np.sum(np.abs(self.moments)))
+        self.n_bands = int(math.ceil((crystal.valence + push) / 2)) + extra_bands
         self._form_factors()
         self._rng = np.random.default_rng(0)
 
@@ -515,7 +525,11 @@ class PeriodicDFT:
         kerker = self.G2 / (self.G2 + q0 * q0)
         kerker[0, 0, 0] = 0.0
         n = x[0] + beta * np.real(np.fft.ifftn(kerker * np.fft.fftn(f[0])))
-        m = x[1] + (beta if self.beta_m is None else self.beta_m) * f[1]
+        bm = beta if self.beta_m is None else self.beta_m
+        if self.mix_m == "hybrid" and float(np.sum(np.abs(rho_out - rho_in)) * self.dV) > self.HYBRID_SWITCH:
+            m = x_in[1] + bm * res[1]               # this step alone: no extrapolation onto an unstable point
+        else:
+            m = x[1] + bm * f[1]
         new = np.stack([np.maximum((n + m) / 2, 0), np.maximum((n - m) / 2, 0)])
         return new * (self.c.valence / (new.sum() * self.dV))
 
