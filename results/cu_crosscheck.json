@@ -1,6 +1,6 @@
 {
- "labels": 66,
- "checked": 6,
+ "labels": 89,
+ "checked": 9,
  "rows": [
   {
    "key": "0148ac1e1c3bd926",
@@ -17,6 +17,13 @@
    "max_dF_Ha_per_bohr": 2.4837819065969338e-05
   },
   {
+   "key": "0f1000838bb66f3d",
+   "tag": "md-1450",
+   "solver": "torch",
+   "dE_meV_per_atom": -0.11522848264531244,
+   "max_dF_Ha_per_bohr": 1.5458611187527116e-05
+  },
+  {
    "key": "0f5146c079ed2647",
    "tag": "fcc-volume",
    "solver": "torch",
@@ -31,6 +38,13 @@
    "max_dF_Ha_per_bohr": 2.8965339037213822e-05
   },
   {
+   "key": "23c29800a96b28cf",
+   "tag": "md-870",
+   "solver": "torch",
+   "dE_meV_per_atom": -0.11360410134925546,
+   "max_dF_Ha_per_bohr": 1.5125121325260116e-05
+  },
+  {
    "key": "28f63163cf22b211",
    "tag": "fcc-thermal",
    "solver": "torch",
@@ -43,6 +57,13 @@
    "solver": "torch",
    "dE_meV_per_atom": 0.0006802925369023285,
    "max_dF_Ha_per_bohr": 1.8090911223666873e-06
+  },
+  {
+   "key": "8049a87892c626ab",
+   "tag": "md-2040",
+   "solver": "torch",
+   "dE_meV_per_atom": -0.1194075673881441,
+   "max_dF_Ha_per_bohr": 2.1056418665201665e-05
   }
  ],
  "max_abs_dE_meV_per_atom": 0.6217850517792115,
