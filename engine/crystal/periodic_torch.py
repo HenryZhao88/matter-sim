@@ -57,7 +57,8 @@ def _harmonics(l: int, x, y, z):
 
 class PeriodicDFTTorch(PeriodicDFT):
     def __init__(self, crystal, *args, device: str | None = None, wide_device: str | None = None,
-                 small_device: str | None = "cpu", gram_dtype=None, cache_projectors: bool = False, **kw) -> None:
+                 small_device: str | None = "cpu", gram_dtype=None, cache_projectors: bool = False,
+                 stream: bool | None = None, **kw) -> None:
         super().__init__(crystal, *args, **kw)
         self.dev = torch.device(device or torch_device())
         # float64 work stays on the device unless it cannot do float64 (MPS)
@@ -69,12 +70,35 @@ class PeriodicDFTTorch(PeriodicDFT):
         # complex128 on the wide device elsewhere
         self.gram_dtype = gram_dtype or (C64 if self.dev.type == "cuda" else C128)
         self.cache_projectors = cache_projectors
+        # every k-point's Bloch functions, both spins: resident on the device, or (``stream``) in host
+        # memory and moved to the device one k-point at a time. Auto: stream when they would take more
+        # than a third of the GPU's memory. Spin-polarised 8-atom iron (2 x 98 k x 50 bands x 88k points,
+        # ~7 GB plus work) overflowed a 12 GB card into shared system memory and ran ~5x slower.
+        need = self.nspin * len(self.kpts) * self.n_bands * self.Ntot * 8
+        if stream is None:
+            stream = self.dev.type == "cuda" and need > torch.cuda.get_device_properties(self.dev).total_memory / 3
+        self.stream = bool(stream)
         w = self.wdev
         self._Gt = torch.tensor(self.G, dtype=F64, device=w)                   # (Nx,Ny,Nz,3)
         self._filter = torch.tensor(self.filter, dtype=F64, device=w)
         self._tabs = {key: (torch.tensor(qt, dtype=F64, device=w), torch.tensor(ft, dtype=F64, device=w))
                       for key, (qt, ft) in self.proj_tab.items()}
         self._Bcache: dict = {}
+
+    def _keep(self, u, store=None):
+        """Where a k-point's Bloch functions are stored between uses. Streaming copies them into the
+        k-point's own host buffer (``store``), allocated once, in ordinary (pageable) memory: pinned memory
+        is rounded up to powers of two (a 35 MB k-point took 64 MB), and 8-atom iron's 7.9 GB of
+        wavefunctions held 15.5 GB of host memory."""
+        if not self.stream or u.device.type != "cuda":
+            return u
+        if store is not None and store.shape == u.shape and store.device.type == "cpu":
+            return store.copy_(u)
+        return u.cpu()
+
+    def _use(self, u):
+        """The Bloch functions on the device, for computing with."""
+        return u.to(self.dev, non_blocking=True)
 
     def _wide(self, x, dtype):
         return x.to(self.wdev).to(dtype)
@@ -178,7 +202,7 @@ class PeriodicDFTTorch(PeriodicDFT):
         U = []
         for _ in range(nk):
             u = self._rng.standard_normal((self.n_bands, self.Ntot)) + 1j * self._rng.standard_normal((self.n_bands, self.Ntot))
-            U.append(torch.tensor(u.astype(np.complex64), device=self.dev))
+            U.append(self._keep(torch.tensor(u.astype(np.complex64), device=self.dev)))
         hist_x, hist_f = [], []
         E_prev = np.inf
         converged = False
@@ -190,7 +214,8 @@ class PeriodicDFTTorch(PeriodicDFT):
             evals = []
             for ik, k in enumerate(self.kpts):
                 B, E, _ = self._projectors_dev(ik, k)
-                lam, U[ik] = self._eig_dev(k, Veff32, B, E, U[ik], 30 if it == 1 else 5)
+                lam, Uk = self._eig_dev(k, Veff32, B, E, self._use(U[ik]), 30 if it == 1 else 5)
+                U[ik] = self._keep(Uk, U[ik])
                 evals.append(lam)
             occ, mu, S = fermi_all(evals, self.wk, ne, self.T_e, self.smearing)
             rho_out = self._symmetrize(self._density_dev(U, occ, 2))
@@ -228,7 +253,7 @@ class PeriodicDFTTorch(PeriodicDFT):
         rho_t = torch.zeros(self.Ntot, dtype=F64, device=self.wdev)
         for ik in range(len(self.kpts)):
             o = torch.tensor(occ[ik], dtype=F64, device=self.wdev)
-            rho_t += (g * self.wk[ik] / self.dV) * (o[:, None] * self._wide(U[ik].abs() ** 2, F64)).sum(dim=0)
+            rho_t += (g * self.wk[ik] / self.dV) * (o[:, None] * self._wide(self._use(U[ik]).abs() ** 2, F64)).sum(dim=0)
         return rho_t.cpu().numpy().reshape(self.N)
 
     # -------------------------------------------------------------- spin-polarised SCF
@@ -244,7 +269,7 @@ class PeriodicDFTTorch(PeriodicDFT):
         U0 = []
         for _ in range(nk):
             u = self._rng.standard_normal((self.n_bands, self.Ntot)) + 1j * self._rng.standard_normal((self.n_bands, self.Ntot))
-            U0.append(torch.tensor(u.astype(np.complex64), device=self.dev))
+            U0.append(self._keep(torch.tensor(u.astype(np.complex64), device=self.dev)))
         U = [U0, [u.clone() for u in U0]]
         hist_x, hist_f = [], []
         E_prev = np.inf
@@ -257,7 +282,8 @@ class PeriodicDFTTorch(PeriodicDFT):
                 Veff32 = torch.tensor((self.Vloc + vh + vxc).reshape(1, -1).astype(np.float32), device=self.dev)
                 for ik, k in enumerate(self.kpts):
                     B, E, _ = self._projectors_dev(ik, k)
-                    lam, U[s][ik] = self._eig_dev(k, Veff32, B, E, U[s][ik], 30 if it == 1 else 5)
+                    lam, Uk = self._eig_dev(k, Veff32, B, E, self._use(U[s][ik]), 30 if it == 1 else 5)
+                    U[s][ik] = self._keep(Uk, U[s][ik])
                     evals[s].append(lam)
             occ_all, mu, S = fermi_all(evals[0] + evals[1], np.concatenate([self.wk, self.wk]), ne, self.T_e,
                                        self.smearing, g=1)
@@ -300,12 +326,13 @@ class PeriodicDFTTorch(PeriodicDFT):
         enl = 0.0
         for ik, k in enumerate(self.kpts):
             o = torch.tensor(occ[ik], dtype=F64, device=self.wdev)
-            Ug = torch.fft.fftn(U[ik].reshape((-1,) + self.N), dim=(1, 2, 3))
+            Uk = self._use(U[ik])
+            Ug = torch.fft.fftn(Uk.reshape((-1,) + self.N), dim=(1, 2, 3))
             per_band = torch.sum(self._kin(k) * self._wide(Ug.abs() ** 2, F64), dim=(1, 2, 3)) / self.Ntot
             kin += g * self.wk[ik] * float(o @ per_band)
             B, E, _ = self._projectors_dev(ik, k)
             if len(E):
-                cc = self._overlap(U[ik], B) * math.sqrt(self.dV)
+                cc = self._overlap(Uk, B) * math.sqrt(self.dV)
                 enl += g * self.wk[ik] * float(torch.sum(o[:, None] * self._wide(E, F64)[None, :] * cc.abs() ** 2))
         return kin, enl
 
@@ -320,10 +347,11 @@ class PeriodicDFTTorch(PeriodicDFT):
             E64 = self._wide(E, F64)[None, :]
             for U, occ, g in bands:
                 o = torch.tensor(occ[ik], dtype=F64, device=self.wdev)
-                cc = self._overlap(U[ik], B) * math.sqrt(self.dV)                       # (nb, P)
+                Uk = self._use(U[ik])
+                cc = self._overlap(Uk, B) * math.sqrt(self.dV)                          # (nb, P)
                 for a in range(3):
                     dB = self._narrow((torch.fft.ifftn(-1j * kG[..., a] * Fs, dim=(1, 2, 3)) * self.Ntot).reshape(len(E), -1))
-                    dc = self._overlap(U[ik], dB) * math.sqrt(self.dV)                    # (nb, P)
+                    dc = self._overlap(Uk, dB) * math.sqrt(self.dV)                       # (nb, P)
                     dE = g * self.wk[ik] * torch.sum(o[:, None] * E64 * 2 * torch.real(cc.conj() * dc), dim=0)
                     for p, i in enumerate(atom):
                         F[i, a] -= float(dE[p])

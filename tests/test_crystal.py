@@ -260,6 +260,22 @@ def test_single_precision_grams_on_perfect_copper(gram):
 
 
 @requires_torch
+def test_streamed_wavefunctions_give_the_same_answer_bit_for_bit():
+    """Bloch functions kept in host memory and moved to the device one k-point at a time (for cells whose
+    wavefunctions overflow the GPU) change where they wait, not the arithmetic: energy, forces and
+    moment must be bit for bit those of the resident run."""
+    from engine.crystal.periodic_torch import PeriodicDFTTorch
+    rng = np.random.default_rng(5)
+    base = cubic("bcc", 5.3, 26)
+    c = Crystal(base.cell, base.charges, base.positions + rng.normal(0, 0.15, base.positions.shape))
+    kw = dict(h=0.45, kmesh=2, T_e=0.01, symmetry=False, spin=True, moments=2.5)
+    a = PeriodicDFTTorch(c, stream=False, **kw).run(forces=True)
+    b = PeriodicDFTTorch(c, stream=True, **kw).run(forces=True)
+    assert a.converged and a.free_energy == b.free_energy and a.moment == b.moment
+    assert np.array_equal(a.forces, b.forces)
+
+
+@requires_torch
 def test_single_precision_spin_without_a_moment_is_the_unpolarised_one():
     """The device's spin-polarised path (periodic_torch.py) with no starting moment: both spins start
     from the same state and do the same arithmetic, so the moment stays zero and the energy is the
