@@ -1,6 +1,7 @@
 """A seed potential for an element from its crystal labels, checked against the element's own DFT.
 
-    uv run python scripts/seed_fit.py 29 6.704 [force_weight] [name]
+    uv run python scripts/seed_fit.py 29 6.704 [force_weight] [name] [structure]
+    uv run python scripts/seed_fit.py 26 5.4655 3.0 seed bcc        # iron
 
 ``name`` (default "seed") names the output: the same fit on crystal + MD labels is the final potential
 (``... 3.0 final``).
@@ -33,7 +34,7 @@ HA_EV, BOHR_A, GPA = 27.211386245988, 0.529177210903, 29421.02648438959
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def main(Z: int, a0: float, w_force: float = 3.0, name: str = "seed") -> None:
+def main(Z: int, a0: float, w_force: float = 3.0, name: str = "seed", structure: str = "fcc") -> None:
     el = ELEMENTS[Z].symbol
     data = []
     for f in sorted(glob.glob(str(CACHE / "dft/*.pkl"))):
@@ -65,7 +66,10 @@ def main(Z: int, a0: float, w_force: float = 3.0, name: str = "seed") -> None:
     ete, fte = errs(test)
     print(f"train E {etr:.1f} meV/atom F {ftr:.3f} eV/A | test E {ete:.1f} F {fte:.3f}", flush=True)
 
-    def E_cell(a, kind="fcc"):
+    other = {"fcc": "bcc", "bcc": "fcc"}[structure]
+    per_atom = {"fcc": 4, "bcc": 2}                    # atoms in the cubic cell: a^3 / n is the volume per atom
+
+    def E_cell(a, kind=structure):
         c = cubic(kind, a, Z)
         return energy_forces(m, c.cell, c.positions)[0] / len(c.charges)
 
@@ -75,14 +79,17 @@ def main(Z: int, a0: float, w_force: float = 3.0, name: str = "seed") -> None:
     r = r[np.isreal(r)].real
     amin = float(r[np.argmin(np.abs(r - a0))])
     B = 4 * np.polyval(np.polyder(c, 2), amin) / (9 * amin) * GPA
-    dE_bcc = (E_cell((amin ** 3 / 2) ** (1 / 3), "bcc") - E_cell(amin)) * HA_EV * 1000
-    # the same difference in the DFT labels themselves: bcc and fcc cells nearest each one's minimum
+    # the other cubic structure at the same volume per atom, above the ground one
+    v_atom = amin ** 3 / per_atom[structure]
+    dE_other = (E_cell((v_atom * per_atom[other]) ** (1 / 3), other) - E_cell(amin)) * HA_EV * 1000
+    # the same difference in the DFT labels themselves: each structure's lowest cell
     lab = lambda tag: min((d["energy"] / len(d["charges"]) for d in data if d["tag"] == tag), default=np.nan)
-    dE_bcc_dft = (lab("bcc") - lab("fcc-volume")) * HA_EV * 1000
+    dE_other_dft = (lab(other) - lab(f"{structure}-volume")) * HA_EV * 1000
     out = {"element": el, "n_train": len(train), "n_test": len(test), "short_range": sr,
            "E_meV_train": etr, "F_eVA_train": ftr, "E_meV_test": ete, "F_eVA_test": fte,
            "a0_A": amin * BOHR_A, "a0_A_dft": a0 * BOHR_A, "B_GPa": float(B),
-           "bcc_minus_fcc_meV": float(dE_bcc), "bcc_minus_fcc_meV_dft_labels": float(dE_bcc_dft),
+           "structure": structure, f"{other}_minus_{structure}_meV": float(dE_other),
+           f"{other}_minus_{structure}_meV_dft_labels": float(dE_other_dft),
            "w_force": w_force, "tags": {t: sum(d["tag"] == t for d in data) for t in sorted({d["tag"] for d in data})}}
     print(json.dumps(out, indent=1), flush=True)
     m.save(ROOT / "results" / f"{el.lower()}_eam_{name}.npz")
@@ -91,4 +98,4 @@ def main(Z: int, a0: float, w_force: float = 3.0, name: str = "seed") -> None:
 
 if __name__ == "__main__":
     main(int(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3]) if len(sys.argv) > 3 else 3.0,
-         sys.argv[4] if len(sys.argv) > 4 else "seed")
+         sys.argv[4] if len(sys.argv) > 4 else "seed", sys.argv[5] if len(sys.argv) > 5 else "fcc")
