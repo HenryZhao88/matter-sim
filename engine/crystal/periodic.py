@@ -151,6 +151,8 @@ class PeriodicDFT:
     # per cell too high) while hybrid reached the ferromagnet (2.22 uB/atom) and converged in 61 iterations.
     mix_m: str = "pulay"
     HYBRID_SWITCH = 0.1
+    # (Tried and dropped: holding the magnetisation at its start until the charge settled. On 4-atom
+    # iron the moment then flipped sign and stalled 1.8 Ha per cell above the ferromagnet.)
     def __init__(self, crystal: Crystal, h: float = 0.3, kmesh: int | tuple = 6, T_e: float = 0.005,
                  symmetry: bool = True, extra_bands: int = 6, smearing: str = "fd", xc_grid: int = 1,
                  spin: bool = False, moments=None, functional: str = "lda") -> None:

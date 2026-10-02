@@ -74,10 +74,13 @@ hard-won lessons; read it too.
   `results/cu_eam_final.*`: 14 meV/atom on unseen configurations, a₀ 3.553 Å. Experiments
   (`results/cu_results.json`, downstairs): T_melt 1209.8 K (1202–1217), latent heat 118.8 meV/atom
   (measured 137.4), melting expansion 4.7 %; all three validation rows pass.
-- **Memory decides which h is usable.** Both DFT paths keep every k-point's wavefunctions resident.
-  For copper's 8-atom cells (98 k-points, 50 bands): h = 0.19 needs 3.4 GB on fp32 and ~11 GB on
-  NumPy; h = 0.16 (7.6 GB / ~25 GB) fits nowhere until wavefunctions are streamed per k-point or
-  stored as G-sphere coefficients. The fp32 path against float64 at h = 0.16 is still owed.
+- **Memory decides which h is usable.** The NumPy path keeps every k-point's wavefunctions resident
+  (copper's 8-atom cells: ~11 GB at h = 0.19, ~25 GB at 0.16). The GPU path now **streams** them
+  through host memory one k-point at a time when they would take over a third of the GPU
+  (`PeriodicDFTTorch(stream=)`, `9fdd9f0`, bit-for-bit the same answers). Spin-polarised 8-atom iron
+  (7.9 GB of wavefunctions) had spilled 7.9 GB into shared system memory and run ~5× slower. With
+  streaming, h = 0.16 is limited by host RAM, not GPU memory. The fp32 path against float64 at
+  h = 0.16 is still owed.
 - **Iron (magnetism done; PBE training set being labelled downstairs, 71 configurations).** Spin-polarised DFT runs on NumPy and the GPU
   (`PeriodicDFT(spin=True, moments=...)`, `PeriodicDFTTorch` too). Iron's pseudopotential was fixed
   by D1 (cap 1.25×), grid h = 0.20, xc_grid 2 under LDA and PBE. **LDA gets the structure wrong, PBE
@@ -99,12 +102,14 @@ hard-won lessons; read it too.
 
 Take an item, say so in the log, and move it to the log when done. Items are ordered by value.
 
-**Downstairs PC** (running: iron's PBE crystal set on the GPU, ~20–30 min a label, so ~1–2 days):
+**Downstairs PC** (iron's PBE crystal set on the GPU: 2- and 4-atom cells ~10–30 min, 8-atom ~1–3 h):
 - **Iron's training set**, then its float64 cross-check (spin-polarised NumPy: slow, one at a time),
-  a seed fit (`scripts/seed_fit.py 26 5.4655`), bcc MD snapshots (`md_snapshots` is fcc-only today)
-  and the final fit. If the Mac changes iron's pseudopotential (the 2 % size question), the labels are
-  stale: each records `pseudo_version`.
-- Candidates after: cross-check copper's three MD tags (~7 h each on the CPU, one at a time).
+  a seed fit (`scripts/seed_fit.py 26 5.4655`), bcc MD snapshots (`md_snapshots(structure="bcc")`,
+  `scripts/label_md.py ... bcc`) and the final fit. If the Mac changes iron's pseudopotential (the 2 %
+  size question), the labels are stale: each records `pseudo_version`.
+- **One GPU job at a time on this machine, and never force-kill a CUDA process while another runs:**
+  stopping one triggered an NVIDIA driver reset (System log, `nvlddmkm` event 153) that killed the
+  labelling running beside it.
 
 **Windows (item 3 owner), a request from downstairs — done 2026-09-29, run half-finished:**
 copper's experiments now run (`4212c63`, `7d852f4`): `md.fcc_state(a, n, mass_amu)`, every
@@ -233,6 +238,14 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-10-02 00:50, Downstairs PC (Claude).** Iron's 8-atom labels took 2.6–5.9 h each: their wavefunctions
+  overflowed the GPU into shared memory, now fixed by streaming (`9fdd9f0`). A displaced 8-atom cell
+  then runs ~1 min per SCF iteration but needs ~100+ iterations (#52: drho 9e-4 at 100, 1.54 μB/atom),
+  so spin labels get 200 iterations. Tried and dropped: holding the magnetisation at its push while
+  the charge settles (4-atom #11 flipped to −10 μB, 1.8 Ha per cell too high). A force-killed GPU
+  test caused an NVIDIA driver reset that crashed the labelling beside it; one GPU job at a time here.
+  Copper's cross-check finished: all 9 tags within budget (MD tags −0.11 to −0.12 meV/atom).
+  Iron labelling restarted alone.
 - **2026-09-30 01:30, Downstairs PC (Claude).** **Iron's magnetic labels: Pulay mixing can land on the
   non-magnetic state.** Refused cells (#9 at 1.10 a₀; #10, #11 4-atom thermal cells near equilibrium)
   were traced on the GPU: the cell's moment rose and then collapsed (#11: 3.2 → 0.2 μB), damped or not,

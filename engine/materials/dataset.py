@@ -172,7 +172,9 @@ def label(conf: dict, solver: str = "numpy") -> dict:
     return out
 
 
-SPIN_MAX_ITER = 100          # SCF iterations for a spin-polarised label (hybrid mixing: see label())
+# SCF iterations for a spin-polarised label (hybrid mixing: see label()). A displaced 8-atom iron cell
+# was still closing at 100 (drho 9e-4, the moment settled at 1.54 uB/atom, E steady to 1e-6 Ha)
+SPIN_MAX_ITER = 200
 TOP_BAND_LIMIT = 1e-3        # electrons in the highest band a label may have (more: too few bands)
 CROSS_CHECK_FRACTION = 0.05     # of each kind of configuration, also computed on the NumPy float64 path
 
