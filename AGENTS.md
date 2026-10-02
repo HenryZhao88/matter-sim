@@ -81,7 +81,7 @@ hard-won lessons; read it too.
   (7.9 GB of wavefunctions) had spilled 7.9 GB into shared system memory and run ~5× slower. With
   streaming, h = 0.16 is limited by host RAM, not GPU memory. The fp32 path against float64 at
   h = 0.16 is still owed.
-- **Iron (magnetism done; PBE training set being labelled downstairs, 71 configurations).** Spin-polarised DFT runs on NumPy and the GPU
+- **Iron (PBE crystal set labelled: 68/71; seed potential done; 18 MD snapshots being labelled downstairs).** Spin-polarised DFT runs on NumPy and the GPU
   (`PeriodicDFT(spin=True, moments=...)`, `PeriodicDFTTorch` too). Iron's pseudopotential was fixed
   by D1 (cap 1.25×), grid h = 0.20, xc_grid 2 under LDA and PBE. **LDA gets the structure wrong, PBE
   right** (`results/fe_magnetism_pbe.json`). `dataset.GRID[26]` now labels iron with PBE, spin-polarised
@@ -102,10 +102,13 @@ hard-won lessons; read it too.
 
 Take an item, say so in the log, and move it to the log when done. Items are ordered by value.
 
-**Downstairs PC** (iron's PBE crystal set on the GPU: 2- and 4-atom cells ~10–30 min, 8-atom ~1–3 h):
-- **Iron's training set**, then its float64 cross-check (spin-polarised NumPy: slow, one at a time),
-  a seed fit (`scripts/seed_fit.py 26 5.4655`), bcc MD snapshots (`md_snapshots(structure="bcc")`,
-  `scripts/label_md.py ... bcc`) and the final fit. If the Mac changes iron's pseudopotential (the 2 %
+**Downstairs PC** (running: iron's 18 MD snapshots on the GPU, 8-atom, ~1–2 days; iron's 2-atom float64
+cross-checks on the CPU):
+- **Iron:** after the MD labels, the final fit (`scripts/seed_fit.py 26 5.4655 3.0 final bcc`) and the
+  experiments (`scripts/element_experiments.py` is fcc-only; iron is bcc). Cross-check owed for the
+  4- and 8-atom tags: the NumPy spin path holds every k-point in complex128 (4-atom ~10–15 GB, 8-atom
+  >30 GB), so it needs streaming on the NumPy path or a bigger machine. Note that the NumPy cross-check
+  mixes with plain Pulay, not the labels' hybrid. If the Mac changes iron's pseudopotential (the 2 %
   size question), the labels are stale: each records `pseudo_version`.
 - **One GPU job at a time on this machine, and never force-kill a CUDA process while another runs:**
   stopping one triggered an NVIDIA driver reset (System log, `nvlddmkm` event 153) that killed the
@@ -238,6 +241,12 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-10-02 20:30, Downstairs PC (Claude).** **Iron's crystal set: 68/71 converged** (18.8 h; 3 refused at
+  200 iterations). All bcc labels are ferromagnetic (1.33–2.81 μB/atom, none collapsed); the fcc cells' moment
+  rises 0 → 2.79 μB/atom with volume, as in the PBE scan. **Seed potential** `results/fe_eam_seed.*`:
+  a₀ 2.898 Å (DFT 2.892), fcc − bcc 101 meV/atom (labels 100), test 7.9 meV/atom and 0.056 eV/Å, but **bulk
+  modulus 288 GPa against DFT's 146** (twice too stiff; watch it in the final fit). 18 bcc MD snapshots
+  (1160/1940/2720 K) generated and being labelled.
 - **2026-10-02 00:50, Downstairs PC (Claude).** Iron's 8-atom labels took 2.6–5.9 h each: their wavefunctions
   overflowed the GPU into shared memory, now fixed by streaming (`9fdd9f0`). A displaced 8-atom cell
   then runs ~1 min per SCF iteration but needs ~100+ iterations (#52: drho 9e-4 at 100, 1.54 μB/atom),
