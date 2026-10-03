@@ -202,7 +202,13 @@ def cross_check(lab: dict) -> dict:
         return pickle.loads(path.read_bytes())
     c = Crystal(lab["cell"], lab["charges"], lab["positions"])
     dft, provenance = _solver("numpy", c)
-    r = dft.run(forces=True)
+    if dft.nspin == 2:
+        # the same SCF procedure as the label (see label()): the check is of the arithmetic, not of the
+        # mixing; with plain Pulay the most expanded iron cell did not converge in 60 iterations
+        dft.mix_m = "hybrid"
+        r = dft.run(forces=True, max_iter=SPIN_MAX_ITER)
+    else:
+        r = dft.run(forces=True)
     if not r.converged:
         raise NotConverged(f"{lab.get('tag', '')}: cross-check SCF not converged in {r.iterations} iterations")
     out = {"energy": r.free_energy, "forces": r.forces, "tag": lab.get("tag", ""), "kspacing": K_SPACING,
