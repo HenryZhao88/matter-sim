@@ -10,6 +10,15 @@ restarted at will. Writes results/fe_magnetism.json.
 
 With pbe it uses PBE and PBE pseudopotentials, caches apart, and writes results/fe_magnetism_pbe.json.
 
+    uv run python scripts/fe_magnetism.py recheck [lda|pbe] [workers] [phase:V,phase:V,...|suspect]
+
+reruns points of a committed scan with hybrid magnetisation mixing (linear until the density is close,
+then Pulay; as the training labels use) and writes them beside the scan's own values in
+results/fe_magnetism[_pbe]_hybrid.json. The scans ran on plain Pulay mixing, which finds stationary
+points whether stable or not, and the non-magnetic state is always one (AGENTS.md, 2026-09-30).
+"suspect" picks every magnetic point whose moment went to zero or whose energy lies above the
+non-magnetic one at the same volume. The scan files themselves are not changed.
+
 Grid h = 0.20 bohr, xc_grid = 2 (scripts/fe_grid.py, v5 potential): within 1.1 meV/atom of h = 0.16 on
 volume energy, FM − NM and egg-box, and 1e-4 μB on the moment. k_bcc = 8 is within ~3 meV and 0.02 μB
 of 12. Phases can be split across machines; each machine caches its own points.
@@ -57,10 +66,12 @@ def out_path(functional: str) -> Path:
 
 
 def point(args):
-    phase, v, h, k, xc, fn = args
+    phase, v, h, k, xc, fn = args[:6]
+    mix = args[6] if len(args) > 6 else "pulay"
     kind, moments = PHASES[phase]
     k = kmesh(kind, k)
     tag = "" if fn == "lda" else f"_{fn}"
+    tag += "" if mix == "pulay" else f"_{mix}"
     key = CACHE / f"{phase}_v{v:.3f}_h{h}_x{xc}_k{k}{tag}.json"
     if key.exists():
         return json.loads(key.read_text())
@@ -68,7 +79,9 @@ def point(args):
     a = lattice_constant(kind, v)
     kw = dict(h=h, kmesh=k, smearing="mp", T_e=0.01, xc_grid=xc, functional=fn)
     dft = PeriodicDFT(cubic(kind, a, Z), spin=moments is not None, moments=moments, **kw)
-    r = dft.run(max_iter=100)
+    if mix != "pulay":
+        dft.mix_m = mix                        # the labels' 200 iterations: linear mixing converges slower
+    r = dft.run(max_iter=100 if mix == "pulay" else 200)
     per_atom = None
     if r.rho_spin is not None:
         # moment on each atom: ∫ (ρ↑ − ρ↓) inside a sphere of half the nearest-neighbour distance
@@ -82,7 +95,7 @@ def point(args):
     rec = dict(phase=phase, v_atom=v, a=a, h=h, xc_grid=xc, k=k, functional=fn, E_atom=r.energy / n, converged=r.converged,
                iterations=r.iterations, seconds=r.seconds, grid=list(dft.N), n_k=len(dft.kpts),
                moment_atom=r.moment / n, abs_moment_atom=r.abs_moment / n, sphere_moments=per_atom,
-               top_band_occupation=r.notes.get("top_band_occupation"))
+               top_band_occupation=r.notes.get("top_band_occupation"), mixing=mix)
     key.parent.mkdir(parents=True, exist_ok=True)
     key.write_text(json.dumps(rec))
     return rec
@@ -93,7 +106,7 @@ def main(h: float = 0.20, k: int = 8, workers: int = 1, phases=None, xc: int = 2
     phases = phases or list(PHASES)
     jobs = [(p, round(float(v), 3), h, k, xc, fn) for p in phases for v in V_ATOM]
     rows = [json.loads(f.read_text()) for f in CACHE.glob(f"*_h{h}_x{xc}_*.json")] if CACHE.exists() else []
-    rows = [r for r in rows if r.get("functional", "lda") == fn]
+    rows = [r for r in rows if r.get("functional", "lda") == fn and r.get("mixing", "pulay") == "pulay"]
     if out_path(fn).exists():         # phases another machine computed and committed, same grid
         old = json.loads(out_path(fn).read_text())
         if old.get("h") == h and old.get("xc_grid") == xc and old.get("k") == k:
@@ -141,7 +154,51 @@ def write(rows, h, k, xc, own=(), fn: str = "lda") -> dict:
     return fits
 
 
+def suspects(scan: dict) -> list[tuple[str, float]]:
+    """Magnetic points whose moment went to zero, or that lie above non-magnetic at the same volume."""
+    nm = {(r["phase"].split("-")[0], r["v_atom"]): r["E_atom"] for r in scan["points"] if PHASES[r["phase"]][1] is None}
+    return [(r["phase"], r["v_atom"]) for r in sorted(scan["points"], key=lambda r: (r["phase"], r["v_atom"]))
+            if PHASES[r["phase"]][1] is not None
+            and (r["abs_moment_atom"] < 0.01 or r["E_atom"] > nm[(r["phase"].split("-")[0], r["v_atom"])])]
+
+
+def recheck(fn: str = "lda", workers: int = 1, which=None) -> None:
+    t0 = time.time()
+    scan = json.loads(out_path(fn).read_text())
+    h, k, xc = scan["h"], scan["k"], scan["xc_grid"]
+    which = which or suspects(scan)
+    old = {(r["phase"], r["v_atom"]): r for r in scan["points"]}
+    nm = {(r["phase"].split("-")[0], r["v_atom"]): r["E_atom"] for r in scan["points"] if PHASES[r["phase"]][1] is None}
+    out = out_path(fn).with_name(out_path(fn).stem + "_hybrid.json")
+    rows = []
+    with cf.ProcessPoolExecutor(max_workers=workers) as pool:
+        for (phase, v), rec in zip(which, pool.map(point, [(p, v, h, k, xc, fn, "hybrid") for p, v in which])):
+            o, e_nm = old[(phase, v)], nm.get((phase.split("-")[0], v))
+            row = {"phase": phase, "v_atom": v,
+                   "pulay": {q: o[q] for q in ("E_atom", "moment_atom", "abs_moment_atom", "converged", "iterations")},
+                   "hybrid": {q: rec[q] for q in ("E_atom", "moment_atom", "abs_moment_atom", "converged", "iterations",
+                                                  "seconds", "sphere_moments", "top_band_occupation")},
+                   "hybrid_minus_pulay_meV": (rec["E_atom"] - o["E_atom"]) * HA_MEV,
+                   "hybrid_minus_nonmagnetic_meV": None if e_nm is None else (rec["E_atom"] - e_nm) * HA_MEV}
+            rows.append(row)
+            print(f"{phase:22s} V={v:6.2f}  |m| {o['abs_moment_atom']:.3f} -> {rec['abs_moment_atom']:.3f}  "
+                  f"E(hybrid) - E(Pulay) {row['hybrid_minus_pulay_meV']:+.3f} meV/atom  conv={rec['converged']}  "
+                  f"it={rec['iterations']}  {rec['seconds']:.0f}s  [{time.time() - t0:.0f}s]", flush=True)
+            out.write_text(json.dumps({"functional": fn, "h": h, "k": k, "xc_grid": xc, "smearing": scan.get("smearing"),
+                                       "mixing": "magnetisation linear until drho < "
+                                                 f"{PeriodicDFT.HYBRID_SWITCH} e, then Pulay; 200 iterations",
+                                       "points": rows}, indent=1))
+    print(f"wrote {out}  ({time.time() - t0:.0f}s)")
+
+
+HA_MEV = 27211.386245988
+
+
 if __name__ == "__main__":
     a = sys.argv[1:]
+    if a and a[0] == "recheck":
+        sel = None if len(a) < 4 or a[3] == "suspect" else [(s.split(":")[0], float(s.split(":")[1])) for s in a[3].split(",")]
+        recheck(a[1] if len(a) > 1 else "lda", int(a[2]) if len(a) > 2 else 1, sel)
+        raise SystemExit
     main(float(a[0]) if a else 0.20, int(a[1]) if len(a) > 1 else 8, int(a[2]) if len(a) > 2 else 1,
          a[3].split(",") if len(a) > 3 and a[3] != "all" else None, fn=a[4] if len(a) > 4 else "lda")

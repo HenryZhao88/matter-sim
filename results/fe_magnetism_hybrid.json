@@ -1,0 +1,234 @@
+{
+ "functional": "lda",
+ "h": 0.2,
+ "k": 8,
+ "xc_grid": 2,
+ "smearing": "mp 0.01 Ha",
+ "mixing": "magnetisation linear until drho < 0.1 e, then Pulay; 200 iterations",
+ "points": [
+  {
+   "phase": "fcc-antiferromagnetic",
+   "v_atom": 60.0,
+   "pulay": {
+    "E_atom": -28.73733263334158,
+    "moment_atom": 4.785902121499393e-06,
+    "abs_moment_atom": 9.692462920188858e-05,
+    "converged": true,
+    "iterations": 23
+   },
+   "hybrid": {
+    "E_atom": -28.737332633058884,
+    "moment_atom": -9.611292067192481e-07,
+    "abs_moment_atom": 0.00010756849122641807,
+    "converged": true,
+    "iterations": 60,
+    "seconds": 7641.661736499984,
+    "sphere_moments": [
+     0.00015952883421658083,
+     -0.00010679031259120166,
+     -0.00010679031259114954,
+     5.010515023954732e-05
+    ],
+    "top_band_occupation": 0.0
+   },
+   "hybrid_minus_pulay_meV": 7.692564545769745e-06,
+   "hybrid_minus_nonmagnetic_meV": 0.00015474842808656998
+  },
+  {
+   "phase": "fcc-antiferromagnetic",
+   "v_atom": 64.0,
+   "pulay": {
+    "E_atom": -28.74141879531959,
+    "moment_atom": 5.932960693865573e-06,
+    "abs_moment_atom": 0.00023828546985778788,
+    "converged": true,
+    "iterations": 39
+   },
+   "hybrid": {
+    "E_atom": -28.741418794991247,
+    "moment_atom": -1.0519502158852878e-05,
+    "abs_moment_atom": 0.00011881970132270456,
+    "converged": true,
+    "iterations": 72,
+    "seconds": 9040.462297500111,
+    "sphere_moments": [
+     -4.702057905009979e-06,
+     9.899897797278094e-05,
+     9.899897797273192e-05,
+     -0.00023664664508807722
+    ],
+    "top_band_occupation": 0.0
+   },
+   "hybrid_minus_pulay_meV": 8.934635491379378e-06,
+   "hybrid_minus_nonmagnetic_meV": 9.821969892171142e-05
+  },
+  {
+   "phase": "fcc-antiferromagnetic",
+   "v_atom": 68.0,
+   "pulay": {
+    "E_atom": -28.741828927827612,
+    "moment_atom": -1.0853991268614063e-06,
+    "abs_moment_atom": 0.5838952142439148,
+    "converged": true,
+    "iterations": 36
+   },
+   "hybrid": {
+    "E_atom": -28.74182892878524,
+    "moment_atom": -2.743782665672735e-06,
+    "abs_moment_atom": 0.5838944278266541,
+    "converged": true,
+    "iterations": 88,
+    "seconds": 14408.859263500199,
+    "sphere_moments": [
+     0.577939833851666,
+     -0.5778767810916474,
+     -0.5778767810916474,
+     0.5777312718440529
+    ],
+    "top_band_occupation": 0.0
+   },
+   "hybrid_minus_pulay_meV": -2.605835454912712e-05,
+   "hybrid_minus_nonmagnetic_meV": 6.133151773430536
+  },
+  {
+   "phase": "fcc-ferromagnetic",
+   "v_atom": 60.0,
+   "pulay": {
+    "E_atom": -28.737332639284404,
+    "moment_atom": -1.1214125132672338e-06,
+    "abs_moment_atom": 3.760948333510996e-05,
+    "converged": true,
+    "iterations": 23
+   },
+   "hybrid": {
+    "E_atom": -28.737332640029706,
+    "moment_atom": -1.1793878102809673e-05,
+    "abs_moment_atom": 1.5453191053673935e-05,
+    "converged": true,
+    "iterations": 43,
+    "seconds": 3130.5823145001195,
+    "sphere_moments": [
+     -3.440496996678368e-05,
+     -4.81240809797698e-06,
+     -4.812408097921883e-06,
+     -4.812408097901219e-06
+    ],
+    "top_band_occupation": 0.0
+   },
+   "hybrid_minus_pulay_meV": -2.0280713827348318e-05,
+   "hybrid_minus_nonmagnetic_meV": -3.4937305664364595e-05
+  },
+  {
+   "phase": "fcc-ferromagnetic",
+   "v_atom": 64.0,
+   "pulay": {
+    "E_atom": -28.7414187993571,
+    "moment_atom": -2.167186527810568e-06,
+    "abs_moment_atom": 2.5184632860006284e-05,
+    "converged": true,
+    "iterations": 30
+   },
+   "hybrid": {
+    "E_atom": -28.7414187992739,
+    "moment_atom": -8.368597444044409e-06,
+    "abs_moment_atom": 3.640666264826846e-05,
+    "converged": true,
+    "iterations": 54,
+    "seconds": 3723.2566010002047,
+    "sphere_moments": [
+     5.509178440018869e-05,
+     -2.9645889524487585e-05,
+     -2.964588952440243e-05,
+     -2.964588952442323e-05
+    ],
+    "top_band_occupation": 0.0
+   },
+   "hybrid_minus_pulay_meV": 2.2639179175191763e-06,
+   "hybrid_minus_nonmagnetic_meV": -1.8317259522761484e-05
+  },
+  {
+   "phase": "fcc-ferromagnetic",
+   "v_atom": 68.0,
+   "pulay": {
+    "E_atom": -28.742054318121845,
+    "moment_atom": 3.4869994607167115e-05,
+    "abs_moment_atom": 0.00017456308045351758,
+    "converged": true,
+    "iterations": 39
+   },
+   "hybrid": {
+    "E_atom": -28.742054317442452,
+    "moment_atom": -1.4147059698921406e-05,
+    "abs_moment_atom": 0.00020037770912492228,
+    "converged": true,
+    "iterations": 75,
+    "seconds": 6965.55704799993,
+    "sphere_moments": [
+     -0.00042474764436916887,
+     0.0001222907016670163,
+     0.0001222907016670845,
+     0.00012228664878514013
+    ],
+    "top_band_occupation": 0.0
+   },
+   "hybrid_minus_pulay_meV": 1.8487212879111245e-05,
+   "hybrid_minus_nonmagnetic_meV": 1.39665309396189e-05
+  },
+  {
+   "phase": "fcc-ferromagnetic",
+   "v_atom": 72.0,
+   "pulay": {
+    "E_atom": -28.740260160885533,
+    "moment_atom": -3.821222646504337e-05,
+    "abs_moment_atom": 4.1265045093426645e-05,
+    "converged": true,
+    "iterations": 45
+   },
+   "hybrid": {
+    "E_atom": -28.74026016191506,
+    "moment_atom": -2.4289335287609723e-05,
+    "abs_moment_atom": 3.199485508695553e-05,
+    "converged": true,
+    "iterations": 109,
+    "seconds": 8842.383540899958,
+    "sphere_moments": [
+     1.203728855095305e-05,
+     -3.72199617744885e-05,
+     -3.7219961774522745e-05,
+     -3.721996177447513e-05
+    ],
+    "top_band_occupation": 0.0
+   },
+   "hybrid_minus_pulay_meV": -2.8014848306696217e-05,
+   "hybrid_minus_nonmagnetic_meV": -9.593953972781752e-06
+  },
+  {
+   "phase": "fcc-ferromagnetic",
+   "v_atom": 76.0,
+   "pulay": {
+    "E_atom": -28.736224001118842,
+    "moment_atom": 1.0113454134952615,
+    "abs_moment_atom": 1.0357888509211224,
+    "converged": true,
+    "iterations": 29
+   },
+   "hybrid": {
+    "E_atom": -28.736224042060243,
+    "moment_atom": 1.0113877768128297,
+    "abs_moment_atom": 1.035831584719243,
+    "converged": true,
+    "iterations": 45,
+    "seconds": 4350.933214899618,
+    "sphere_moments": [
+     1.0220203721153156,
+     1.0219252989230563,
+     1.0219252989230565,
+     1.0219252989230565
+    ],
+    "top_band_occupation": 0.0
+   },
+   "hybrid_minus_pulay_meV": -0.001114072286409285,
+   "hybrid_minus_nonmagnetic_meV": 12.94496866220302
+  }
+ ]
+}

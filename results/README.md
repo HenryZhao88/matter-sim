@@ -19,6 +19,7 @@ final numbers live here so every machine can read them without copying anything:
 | `cu_results.json`, `fe_results.json` | `scripts/element_experiments.py` (melting point, latent heat, thermal curve in MD; the potential's sha256 is recorded) | validation |
 | `fe_md_snapshots.json`, `fe_eam_seed.*`, `fe_eam_final.*` | as copper's, for iron (`seed_fit.py 26 5.4655 3.0 final bcc`; the final one with the test split stratified by tag) | iron's experiments |
 | `fe_magnetism.json`, `fe_magnetism_pbe.json` | `scripts/fe_magnetism.py` (iron's phases: bcc/fcc, non-magnetic, ferro- and antiferromagnetic; LDA / PBE) | validation |
+| `fe_magnetism_hybrid.json`, `fe_magnetism_pbe_hybrid.json` | `scripts/fe_magnetism.py recheck lda\|pbe 4 suspect` (the scans' zero-moment and metastable points rerun with hybrid magnetisation mixing, beside the Pulay values) | anyone judging the scans |
 | `machines/<machine>/` | `scripts/share_cache.py export <machine>` (each machine's cached DFT labels, E(V) points and scans as JSON; `share_cache.py import` loads every machine's into the local cache, never overwriting, and reports disagreements) | every machine |
 
 Rules:
