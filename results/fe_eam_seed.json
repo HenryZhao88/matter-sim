@@ -14,7 +14,7 @@
  "F_eVA_test": 0.05594655406447521,
  "a0_A": 2.8978391035207074,
  "a0_A_dft": 2.892218046190346,
- "B_GPa": 287.58628478250125,
+ "B_GPa": 143.79314239125063,
  "structure": "bcc",
  "fcc_minus_bcc_meV": 101.03944392033706,
  "fcc_minus_bcc_meV_dft_labels": 99.77566920741802,
@@ -25,5 +25,6 @@
   "bcc-thermal": 23,
   "bcc-volume": 9,
   "fcc": 6
- }
+ },
+ "B_note": "recomputed with V = a^3/2 for bcc (first written with fcc a^3/4: 2x too high)"
 }

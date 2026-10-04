@@ -81,7 +81,7 @@ hard-won lessons; read it too.
   (7.9 GB of wavefunctions) had spilled 7.9 GB into shared system memory and run ~5× slower. With
   streaming, h = 0.16 is limited by host RAM, not GPU memory. The fp32 path against float64 at
   h = 0.16 is still owed.
-- **Iron (PBE crystal set labelled: 68/71; seed potential done; 18 MD snapshots being labelled downstairs).** Spin-polarised DFT runs on NumPy and the GPU
+- **Iron (training set done: 86 labels; final potential `results/fe_eam_final.*`; experiments need bcc).** Spin-polarised DFT runs on NumPy and the GPU
   (`PeriodicDFT(spin=True, moments=...)`, `PeriodicDFTTorch` too). Iron's pseudopotential was fixed
   by D1 (cap 1.25×), grid h = 0.20, xc_grid 2 under LDA and PBE. **LDA gets the structure wrong, PBE
   right** (`results/fe_magnetism_pbe.json`). `dataset.GRID[26]` now labels iron with PBE, spin-polarised
@@ -241,12 +241,25 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-10-03 23:50, Downstairs PC (Claude).** **Iron's training set is complete: 86 labels** (68 crystal + 18 MD,
+  all MD converged). Float64 cross-checks pass: bcc-strain −0.013, bcc-volume (the expanded cell) −0.33
+  meV/atom, forces ≤1.9e-5 Ha/bohr. `cross_check` now uses the label's SCF procedure for spin (plain
+  Pulay had failed the expanded cell); 4- and 8-atom checks need more RAM than this path has. **Final
+  potential** `results/fe_eam_final.*`: a₀ 2.899 Å (DFT 2.892), B 138 GPa (DFT 146), fcc − bcc 91
+  meV/atom (labels 100), train 7.7 meV/atom, but **test 176 meV/atom**. The three most compressed
+  configurations (fcc V 65.7, bcc V 59.5 and 64.6 bohr³/atom, errors +497/+285/+87) all fell in the
+  held-out seventh, so the fit never saw strong compression and cannot extrapolate to it. Fitted on all
+  86 the worst error is 33 meV/atom, so the form and weighting are not the problem. Irrelevant for
+  melting at ambient pressure, but **don't use it under compression**. A split stratified by tag would
+  fix it. Bugs of mine fixed: `seed_fit.py`'s bulk modulus assumed fcc (2× for bcc); and it silently
+  overwrote committed potentials (it did, here: copper's final and iron's seed, both restored from git),
+  so it now refuses unless `MATTER_SIM_OVERWRITE=1`.
 - **2026-10-02 20:30, Downstairs PC (Claude).** **Iron's crystal set: 68/71 converged** (18.8 h; 3 refused at
   200 iterations). All bcc labels are ferromagnetic (1.33–2.81 μB/atom, none collapsed); the fcc cells' moment
   rises 0 → 2.79 μB/atom with volume, as in the PBE scan. **Seed potential** `results/fe_eam_seed.*`:
-  a₀ 2.898 Å (DFT 2.892), fcc − bcc 101 meV/atom (labels 100), test 7.9 meV/atom and 0.056 eV/Å, but **bulk
-  modulus 288 GPa against DFT's 146** (twice too stiff; watch it in the final fit). 18 bcc MD snapshots
-  (1160/1940/2720 K) generated and being labelled.
+  a₀ 2.898 Å (DFT 2.892), fcc − bcc 101 meV/atom (labels 100), test 7.9 meV/atom and 0.056 eV/Å. (Its bulk
+  modulus first read 288 GPa from a formula of mine that assumed fcc's volume per atom; corrected:
+  144 GPa, against DFT's 146.) 18 bcc MD snapshots (1160/1940/2720 K) generated and labelled.
 - **2026-10-02 00:50, Downstairs PC (Claude).** Iron's 8-atom labels took 2.6–5.9 h each: their wavefunctions
   overflowed the GPU into shared memory, now fixed by streaming (`9fdd9f0`). A displaced 8-atom cell
   then runs ~1 min per SCF iteration but needs ~100+ iterations (#52: drho 9e-4 at 100, 1.54 μB/atom),

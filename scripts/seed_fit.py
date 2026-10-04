@@ -18,6 +18,7 @@ Writes results/<el>_eam_<name>.npz (the model, pickled like aluminium's) and <el
 
 import glob
 import json
+import os
 import pickle
 import sys
 import time
@@ -78,7 +79,9 @@ def main(Z: int, a0: float, w_force: float = 3.0, name: str = "seed", structure:
     r = np.roots(np.polyder(c))
     r = r[np.isreal(r)].real
     amin = float(r[np.argmin(np.abs(r - a0))])
-    B = 4 * np.polyval(np.polyder(c, 2), amin) / (9 * amin) * GPA
+    # B = V d2E/dV2 with V = a^3 / n per atom: (n / 9a) d2E/da2. Was written with fcc's n = 4 for
+    # every structure, which doubled bcc iron's (288 GPa reported for ~144)
+    B = per_atom[structure] * np.polyval(np.polyder(c, 2), amin) / (9 * amin) * GPA
     # the other cubic structure at the same volume per atom, above the ground one
     v_atom = amin ** 3 / per_atom[structure]
     dE_other = (E_cell((v_atom * per_atom[other]) ** (1 / 3), other) - E_cell(amin)) * HA_EV * 1000
@@ -92,7 +95,12 @@ def main(Z: int, a0: float, w_force: float = 3.0, name: str = "seed", structure:
            f"{other}_minus_{structure}_meV_dft_labels": float(dE_other_dft),
            "w_force": w_force, "tags": {t: sum(d["tag"] == t for d in data) for t in sorted({d["tag"] for d in data})}}
     print(json.dumps(out, indent=1), flush=True)
-    m.save(ROOT / "results" / f"{el.lower()}_eam_{name}.npz")
+    target = ROOT / "results" / f"{el.lower()}_eam_{name}.npz"
+    if target.exists() and os.environ.get("MATTER_SIM_OVERWRITE") != "1":
+        # a committed potential is a record (copper's melting point was computed with its final one)
+        print(f"{target.name} exists: not overwritten (set MATTER_SIM_OVERWRITE=1 to replace it)", flush=True)
+        return
+    m.save(target)
     (ROOT / "results" / f"{el.lower()}_eam_{name}.json").write_text(json.dumps(out, indent=1))
 
 
