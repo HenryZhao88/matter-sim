@@ -288,6 +288,19 @@ def test_a_label_whose_top_band_holds_electrons_is_refused(monkeypatch, tmp_path
     with pytest.raises(dataset.NotConverged, match="too few bands"):
         dataset.label({"cell": c.cell, "charges": c.charges, "positions": c.positions, "tag": "test"})
 
+def test_latent_heat_refuses_a_solid_that_melted(monkeypatch):
+    """If the reference solid is no longer a crystal at the end of its run, liquid minus 'solid' is liquid
+    minus liquid: the latent heat is withheld, or taken against the solid enthalpy the caller supplies."""
+    from engine.materials import experiments as X
+    real = X.npt_lattice_constant
+    monkeypatch.setattr(X, "npt_lattice_constant", lambda *a, **k: {**real(*a, **k), "order": 0.05})
+    kw = dict(n=(2, 2, 2), steps=20, mass_amu=55.845, melt_T=3000.0, structure="bcc")
+    r = X.latent_heat(toy_model(), 2000.0, 2.9, **kw)
+    assert r["solid_melted"] and r["latent_eV"] is None and r["dV_melt_frac"] is None
+    r = X.latent_heat(toy_model(), 2000.0, 2.9, solid_H_eV=-1.0, **kw)
+    assert r["solid_melted"] and r["latent_eV"] is not None and "extrapolated" in r["solid_H_method"]
+
+
 def test_bcc_crystal_for_the_experiments():
     """A bcc crystal for the MD experiments: two atoms per cubic cell, nearest neighbours a√3/2 apart,
     and the order parameter that tells solid from liquid reads 1 on it, as on fcc."""

@@ -111,10 +111,17 @@ def melting_point(model: EAM, a_of_T, lo: float, hi: float, iters: int = 5, log=
 
 def latent_heat(model: EAM, T: float, a_T: float, n=(4, 4, 4), steps: int = 5000,
                 mass_amu: float = AL_MASS_AMU, melt_T: float = MELT_T, engine: str = "numpy",
-                structure: str = "fcc") -> dict:
-    """Enthalpy per atom of liquid minus solid, both held at T and zero pressure."""
+                structure: str = "fcc", solid_H_eV: float | None = None) -> dict:
+    """Enthalpy per atom of liquid minus solid, both held at T and zero pressure.
+
+    The solid must still be a solid at the end of its run. A crystal whose order goes only just above
+    its melting point can melt on its own there (iron: T_order 2300 K, T_m 2201 K; its 'solid' ended at
+    order 0.07 and the latent heat came out 18.8 meV/atom, liquid minus liquid). Then the solid's
+    enthalpy at T is ``solid_H_eV`` (its own H(T) extrapolated, given by the caller) if there is one;
+    without it the result is marked invalid rather than reported."""
     solid = npt_lattice_constant(model, a_T / BOHR_A, T, n=n, steps=steps, engine=engine, mass_amu=mass_amu,
                                  structure=structure)
+    solid_melted = solid["order"] < 0.5
     state = crystal_state(a_T / BOHR_A, n, mass_amu, structure)
     md = make_md(model, state, seed=3, engine=engine)
     md.thermalise(melt_T)
@@ -126,7 +133,15 @@ def latent_heat(model: EAM, T: float, a_T: float, n=(4, 4, 4), steps: int = 5000
     H_liq = float(np.mean([r["E"] for r in tail])) / N
     V_liq = float(np.mean([r["V"] for r in tail])) / N
     V_sol = (solid["a"] ** 3) / ATOMS_PER_CELL[structure]
-    return {"latent_eV": (H_liq - solid["H_per_atom"]) * HA_EV, "dV_melt_frac": V_liq / V_sol - 1}
+    if not solid_melted:
+        return {"latent_eV": (H_liq - solid["H_per_atom"]) * HA_EV, "dV_melt_frac": V_liq / V_sol - 1}
+    out = {"solid_melted": True, "solid_order": solid["order"],
+           "solid_H_method": "extrapolated from the solid's thermal curve" if solid_H_eV is not None else None}
+    if solid_H_eV is None:
+        return {**out, "latent_eV": None, "dV_melt_frac": None}
+    # the solid's volume likewise from its thermal curve: a_T is the caller's a(T) extrapolated to T
+    V_sol_extrap = (a_T / BOHR_A) ** 3 / ATOMS_PER_CELL[structure]
+    return {**out, "latent_eV": H_liq * HA_EV - solid_H_eV, "dV_melt_frac": V_liq / V_sol_extrap - 1}
 
 
 def run_all(model: EAM, a0_A: float, log=print, element: str = "al", mass_amu: float = AL_MASS_AMU,

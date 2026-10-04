@@ -94,12 +94,18 @@ def main(el: str, pot: str, mass: float, n=(20, 20, 60), structure: str = "fcc")
         else:
             lo = T
     Tm = 0.5 * (lo + hi)
-    lat = cached(cache / f"latent_{Tm:.4f}.json", lambda: latent_heat(model, Tm, float(np.polyval(ca, Tm)),
-                                                                         mass_amu=mass, melt_T=sched["melt_T"], structure=structure))
+    # the solid's own enthalpy at T_m from its thermal curve (all solid): used only if the solid run
+    # at T_m melts by itself (see experiments.latent_heat); a classical solid's H(T) is nearly linear
+    th, hh = np.array([(r["T"], r["H_eV"]) for r in curve]).T
+    H_sol = float(np.polyval(np.polyfit(th, hh, 1), Tm))
+    # v2: the solid is checked to still be a solid (the first iron run's 'solid' had melted; its file stays)
+    lat = cached(cache / f"latent_v2_{Tm:.4f}.json", lambda: latent_heat(model, Tm, float(np.polyval(ca, Tm)),
+                                                                            mass_amu=mass, melt_T=sched["melt_T"],
+                                                                            structure=structure, solid_H_eV=H_sol))
     out = {"element": el, "structure": structure, "potential": pot, "mass_amu": mass, "a0_A": a0 * BOHR_A, "schedule": sched,
            "T_order": sc["T_order"], "thermal": curve,
            "melting": {"T_melt": Tm, "bracket": [lo, hi], "trail": trail, "atoms": atoms, "engine": engine},
-           "latent": {k: lat[k] for k in ("latent_eV", "dV_melt_frac")}}
+           "latent": {k: v for k, v in lat.items() if k != "seconds"}}
     result.write_text(json.dumps(out, indent=1))
     print(f"{el}: T_melt = {Tm:.1f} K ({lo:.1f}-{hi:.1f}), latent heat {lat['latent_eV'] * 1000:.1f} meV/atom, "
           f"melting expansion {lat['dV_melt_frac'] * 100:.1f}%", flush=True)

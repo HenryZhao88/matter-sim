@@ -225,8 +225,11 @@ def npt_lattice_constant(model: EAM, a0: float, T: float, n=(6, 6, 6), steps=300
     V = np.mean([r["V"] for r in tail])
     N = len(md.s.pos)
     H = np.mean([r["E"] for r in tail]) / N               # P ≈ 0, so H ≈ E
+    # whether it is still a crystal at the end (|<exp(2 pi i 2x)>|, x in cell units: ~1 solid, ~0 liquid)
+    f = md.s.pos / md.s.box * np.asarray(n)
+    order = float(np.mean([abs(np.mean(np.exp(2j * np.pi * 2 * f[:, k]))) for k in range(3)]))
     return {"T": T, "a": (V / (N / ATOMS_PER_CELL[structure])) ** (1 / 3), "H_per_atom": H,
-            "T_measured": float(np.mean([r["T"] for r in tail]))}
+            "T_measured": float(np.mean([r["T"] for r in tail])), "order": order}
 
 
 def coexistence(model: EAM, a_T: float, T: float, n=(5, 5, 12), steps=6000, seed=0,
