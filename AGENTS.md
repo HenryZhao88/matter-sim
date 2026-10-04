@@ -241,6 +241,9 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-10-04, Downstairs PC (Claude).** Taking **bcc materials experiments** (for iron): touching
+  `engine/materials/md.py`, `engine/materials/experiments.py` and `scripts/element_experiments.py`
+  (Windows' last change to them was 2026-09-29). fcc stays the default and is checked bit for bit.
 - **2026-10-03 23:50, Downstairs PC (Claude).** **Iron's training set is complete: 86 labels** (68 crystal + 18 MD,
   all MD converged). Float64 cross-checks pass: bcc-strain −0.013, bcc-volume (the expanded cell) −0.33
   meV/atom, forces ≤1.9e-5 Ha/bohr. `cross_check` now uses the label's SCF procedure for spin (plain
