@@ -57,7 +57,7 @@ result disagrees with nature, say so and leave it disagreeing.
 | Particles and forces | working: collisions, decays, confinement, parton showers, running α_s, pp at 13.6 TeV; one loop: lepton g−2 (a = 0.0011614 vs 0.0011597 measured) and α's running from α(0) |
 | Lattice QCD | working: confinement, deconfinement, hadron masses (pion as Goldstone boson, κ_c = 0.1695 vs 0.1694 published) |
 | Electrons and nuclei | working: H–Kr (Sc and Ti fail their own checks and are greyed out), molecules, LDA and PBE, truth mode (VMC, MLX and PyTorch) |
-| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`, 10⁶ atoms) now runs the experiments (`engine="torch"`): melting in a 96 000-atom box gives **898 K** (1 200 atoms: 852–867 K). **Iron** (spin-polarised DFT, all five phases): bcc FM a = 2.794 Å (2.866), B = 218 GPa (170), 2.12 μB net (2.22); plain LDA puts fcc ~40 meV/atom below bcc FM (known LDA error, left disagreeing). **With PBE** (D3, built): bcc FM comes out lowest (fcc +140 meV/atom), a = 2.892 Å, B = 146 GPa, 2.39 μB net; all five iron checks pass. **Copper**: DFT lattice constant 3.548 Å (PBE 3.668), 89 labels, learned potential done; its experiments wait for element-generic MD |
+| Materials | working for **aluminium**: melting 852 K (measured 933.5), expansion, heat capacity. GPU molecular dynamics (`md_torch.py`, 10⁶ atoms) now runs the experiments (`engine="torch"`): melting in a 96 000-atom box gives **898 K** (1 200 atoms: 852–867 K). **Iron** (spin-polarised DFT, all five phases): bcc FM a = 2.794 Å (2.866), B = 218 GPa (170), 2.12 μB net (2.22); plain LDA puts fcc ~40 meV/atom below bcc FM (known LDA error, left disagreeing). **With PBE** (D3, built): bcc FM comes out lowest (fcc +140 meV/atom), a = 2.892 Å, B = 146 GPa, 2.39 μB net; all five iron checks pass. **Copper**: DFT lattice constant 3.548 Å (PBE 3.668), 89 labels, learned potential, experiments: melts at 1210 K (1358), all three rows pass. **Iron** (86 PBE labels, potential, bcc experiments): melts at 2058 K (1811), latent heat 176.9 meV/atom (143.1); 2/3 rows pass |
 | Everyday matter | working: the 1 cm³ block, 6.3 × 10²² atoms, 2.83 g, 2.29 kJ to melt |
 
 Results both machines can read are in `results/`. `HANDOFF.md` carries the detail and the
@@ -81,7 +81,11 @@ hard-won lessons; read it too.
   (7.9 GB of wavefunctions) had spilled 7.9 GB into shared system memory and run ~5× slower. With
   streaming, h = 0.16 is limited by host RAM, not GPU memory. The fp32 path against float64 at
   h = 0.16 is still owed.
-- **Iron (86 labels, final potential, experiments done: melts at 2201 K, measured 1811).** Spin-polarised DFT runs on NumPy and the GPU
+- **Iron (86 labels, final potential, experiments done: melts at 2058 K, measured 1811).** Final potential
+  `results/fe_eam_final.*` fitted with the test split stratified by tag (test 5.8 meV/atom; worst of all
+  86 labels 32.8). It melts ~250 K high and its latent heat (176.9 meV/atom) passes only because of the
+  solid run nearest T_m (without it 203.7): the potential over-favours the solid; more liquid-like
+  training data is the likely fix. Spin-polarised DFT runs on NumPy and the GPU
   (`PeriodicDFT(spin=True, moments=...)`, `PeriodicDFTTorch` too). Iron's pseudopotential was fixed
   by D1 (cap 1.25×), grid h = 0.20, xc_grid 2 under LDA and PBE. **LDA gets the structure wrong, PBE
   right** (`results/fe_magnetism_pbe.json`). `dataset.GRID[26]` now labels iron with PBE, spin-polarised
@@ -98,15 +102,15 @@ hard-won lessons; read it too.
 
 ## What would help most
 
-### Work queue by machine (updated 2026-09-26, Linux)
+### Work queue by machine (updated 2026-09-26, Linux; downstairs 2026-10-04)
 
 Take an item, say so in the log, and move it to the log when done. Items are ordered by value.
 
-**Downstairs PC** (running: iron's 18 MD snapshots on the GPU, 8-atom, ~1–2 days; iron's 2-atom float64
-cross-checks on the CPU):
-- **Iron:** after the MD labels, the final fit (`scripts/seed_fit.py 26 5.4655 3.0 final bcc`) and the
-  experiments (`scripts/element_experiments.py` is fcc-only; iron is bcc). Cross-check owed for the
-  4- and 8-atom tags: the NumPy spin path holds every k-point in complex128 (4-atom ~10–15 GB, 8-atom
+**Downstairs PC** (nothing running; updated 2026-10-04):
+- **Iron's potential melts ~250 K high:** label hotter or larger liquid snapshots (e.g. `label_md.py` at
+  2500–3500 K with the final potential), refit (`seed_fit.py 26 5.4655 3.0 final bcc`, split "tag"),
+  rerun `element_experiments.py Fe results/fe_eam_final.npz 55.845 25 25 75 bcc`.
+- **Iron:** cross-check owed for the 4- and 8-atom tags: the NumPy spin path holds every k-point in complex128 (4-atom ~10–15 GB, 8-atom
   >30 GB), so it needs streaming on the NumPy path or a bigger machine. Note that the NumPy cross-check
   mixes with plain Pulay, not the labels' hybrid. If the Mac changes iron's pseudopotential (the 2 %
   size question), the labels are stale: each records `pseudo_version`.
@@ -146,8 +150,8 @@ pass marks committed before any result (aluminium's tolerances).
 
 **Linux cloud container** (short checks): both items done 2026-09-26 (see the log). Next candidates:
 Co and Ni magnetism with `fe_magnetism.py`-style scans (Ni fcc FM, Co fcc FM as a first step; hcp Co
-needs an orthorhombic hcp cell), or the fcc-FM metastability (does a finer moment start find the
-lower state?).
+needs an orthorhombic hcp cell), or the fcc-FM metastability (does a different moment start find a
+lower state? Hybrid mixing from the same 3 μB push gives the same states, see the 2026-10-04 log).
 
 **Any machine:**
 - **GPU molecular dynamics at scale** (item 3), and **one-loop amplitudes** (item 4).
@@ -181,7 +185,8 @@ lower state?).
    `scripts/fe_magnetism.py` runs the scan; **all five phases are done** (bcc on Linux, fcc
    downstairs; 35/35 points converged). `matter-sim validate --part materials` gives 4/5 iron
    checks. The miss is plain LDA putting fcc about 40 meV/atom below bcc ferromagnetic, left
-   disagreeing. Caveat: the per-start fits span moment collapses and metastable points (see the
+   disagreeing. Caveat: the per-start fits span moment collapses and metastable points (hybrid mixing
+   reproduces them: `results/fe_magnetism*_hybrid.json`; see the
    Linux work queue). Nickel and cobalt then need their own E(V) check
    (`scripts/pp_check.py eos`) and grid. Spin now runs on the GPU too (`PeriodicDFTTorch(spin=True)`,
    checked against NumPy on magnetic iron); the labeller does not pass `spin` yet.
@@ -241,10 +246,19 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
-- **2026-10-04, Downstairs PC (Claude), taking:** (1) iron's refit with a test split stratified by tag,
-  then its experiments rerun on the new potential; (2) the open fcc question: iron's zero-moment and
-  metastable fcc points rerun with `mix_m="hybrid"`. Touching `scripts/seed_fit.py`,
-  `scripts/element_experiments.py` (its stage cache was not keyed by potential), `scripts/fe_magnetism.py`.
+- **2026-10-04 17:00, Downstairs PC (Claude).** **Iron refitted with a test split stratified by tag**
+  (`seed_fit.py`, default "tag": ~1/7 of each tag, never its smallest or largest volume; "random" kept):
+  test 176 → 5.8 meV/atom, worst over all 86 labels +520 → −32.8. Experiments rerun (`a272e81`): T_m
+  2201 → 2058 K, latent heat 246.5 → 176.9 meV/atom (marginal pass: 203.7 without the 1955 K solid run),
+  expansion 7.9e-6/K; iron 2/3. **Bug fixed:** `element_experiments.py` cached stages by name only, so a
+  refit would have reused the old potential's stages; the cache is now `<el>_experiments_<sha12>/`.
+  **The open fcc question is answered: hybrid mixing changes nothing.** All 13 suspect points (fcc-FM and
+  fcc-AFM with zero moment or above non-magnetic; LDA 8, PBE 5) rerun with `mix_m="hybrid"`, 200
+  iterations (`fe_magnetism.py recheck`, 43–109 iterations, 52–240 min each): same moments to 1e-3 μB,
+  energies within 0.04 meV/atom (PBE uniformly −0.025, likely the other machine; not checked).
+  `results/fe_magnetism{,_pbe}_hybrid.json`. So those are not Pulay artefacts from that start; a
+  different start (smaller push, other orderings) remains untested. This machine's cache exported with
+  `share_cache.py export downstairs` (175 DFT labels, 34 scan points).
 - **2026-10-04, Downstairs PC (Claude).** **Iron's experiments** (bcc support in `md.py`, `experiments.py`,
   `element_experiments.py`; fcc checked bit for bit against a seeded copper baseline, three times): melts
   at **2201 K** (bracket 2192–2210; measured 1811), latent heat **246.5 meV/atom** (143.1), melting expansion
@@ -301,7 +315,8 @@ anything that is no longer true rather than appending a correction.
   and the metastable points ran on Pulay mixing and may be that stationary point rather than the
   lowest state. Rerunning them with `mix_m="hybrid"` would tell. Not claimed either way.
   **Lesson: a converged spin-polarised SCF is not proof of the right magnetic state.** Check the moment
-  against volume, and prefer the lower-energy state.- **2026-09-29 17:45, Downstairs PC (Claude).** **Copper's experiments done here** (rerun from scratch, ~45 min
+  against volume, and prefer the lower-energy state.
+- **2026-09-29 17:45, Downstairs PC (Claude).** **Copper's experiments done here** (rerun from scratch, ~45 min
   on the 3080 Ti): melts at 1209.8 K (measured 1357.8), latent heat 118.8 meV/atom, melting
   expansion 4.7 %, all three rows pass; materials validation 12/13. **The labeller does magnetic metals
   and bcc**: `GRID` entries may carry a starting moment (in the cache name; each label records the
@@ -311,7 +326,7 @@ anything that is no longer true rather than appending a correction.
 - **2026-09-29, Downstairs PC (Claude).** Taking (1) **copper's experiments**, rerun from the start here
   (scripts/element_experiments.py; the Windows cache is not portable), and (2) **the labeller for
   magnetic metals** (spin/moments through dataset), aimed at labelling iron with PBE on the GPU.
-  Touching ngine/materials/dataset.py and scripts/label_crystal.py.
+  Touching engine/materials/dataset.py and scripts/label_crystal.py.
 - **2026-09-29, Windows (Claude).** Copper's experiments made element-generic (downstairs request);
   copper's run half-done and stopped by the low-memory guard (see the Windows queue entry).
 - **2026-09-28, Mac (Claude), second stint.** Labels carry their functional. PBE for molecules
