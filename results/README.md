@@ -17,6 +17,7 @@ final numbers live here so every machine can read them without copying anything:
 | `cu_md_snapshots.json` | `scripts/label_md.py 29 ...` (hot 8-atom configurations the seed potential visits; kept because the dynamics cannot be regenerated bit for bit elsewhere) | copper labelling |
 | `cu_eam_seed.*`, `cu_eam_final.*` | `scripts/seed_fit.py 29 6.704 [w] seed|final` (copper's learned potential and its errors: seed from crystal labels, final with MD labels too) | molecular dynamics |
 | `fe_magnetism.json`, `fe_magnetism_pbe.json` | `scripts/fe_magnetism.py` (iron's phases: bcc/fcc, non-magnetic, ferro- and antiferromagnetic; LDA / PBE) | validation |
+| `machines/<machine>/` | `scripts/share_cache.py export <machine>` (each machine's cached DFT labels, E(V) points and scans as JSON; `share_cache.py import` loads every machine's into the local cache, never overwriting, and reports disagreements) | every machine |
 
 Rules:
 
