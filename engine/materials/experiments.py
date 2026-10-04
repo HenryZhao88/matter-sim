@@ -4,9 +4,10 @@ Each function runs molecular dynamics with a learned potential and returns what 
 experimentalist would record. Together they supply every per-atom property the continuum
 block (continuum.py) needs.
 
-Any fcc element: pass its mass, and let ``temperature_scale`` find its temperatures from its own
-potential (the temperature at which a crystal heated in steps loses its order). Aluminium's
-original settings stay the defaults, so its recorded results reproduce.
+Any fcc or bcc element: pass its mass (and ``structure="bcc"`` for a bcc one), and let
+``temperature_scale`` find its temperatures from its own potential (the temperature at which a
+crystal heated in steps loses its order). Aluminium's original settings stay the defaults, so its
+recorded results reproduce.
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from pathlib import Path
 import numpy as np
 
 from .eam import EAM
-from .md import AL_MASS_AMU, coexistence, fcc_state, make_md, npt_lattice_constant
+from .md import ATOMS_PER_CELL, AL_MASS_AMU, coexistence, crystal_state, make_md, npt_lattice_constant
 
 HA_EV = 27.211386245988
 BOHR_A = 0.529177210903
@@ -32,11 +33,11 @@ AL_SCHEDULE = {"thermal_T": [100, 300, 500, 700, 900], "melt_bracket": (500.0, 1
 
 
 def thermal_curve(model: EAM, a0: float, temps, n=(4, 4, 4), steps: int = 4000, log=None,
-                  mass_amu: float = AL_MASS_AMU, engine: str = "numpy") -> list[dict]:
+                  mass_amu: float = AL_MASS_AMU, engine: str = "numpy", structure: str = "fcc") -> list[dict]:
     """Lattice constant and enthalpy of the crystal at zero pressure, temperature by temperature."""
     rows = []
     for T in temps:
-        r = npt_lattice_constant(model, a0, T, n=n, steps=steps, engine=engine, mass_amu=mass_amu)
+        r = npt_lattice_constant(model, a0, T, n=n, steps=steps, engine=engine, mass_amu=mass_amu, structure=structure)
         rows.append({"T": T, "a_A": r["a"] * BOHR_A, "H_eV": r["H_per_atom"] * HA_EV, "T_measured": r["T_measured"]})
         if log:
             log(rows[-1])
@@ -44,20 +45,21 @@ def thermal_curve(model: EAM, a0: float, temps, n=(4, 4, 4), steps: int = 4000, 
 
 
 def crystal_order(pos, box, n) -> float:
-    """|⟨exp(2πi·2x)⟩| over atoms and the three axes, x in cell units: ~1 for an fcc crystal (its
-    (200) reflection), ~N^(−1/2) for a liquid."""
+    """|⟨exp(2πi·2x)⟩| over atoms and the three axes, x in cell units: ~1 for an fcc or bcc crystal
+    (their (200) reflection; every atom sits at 0 or ½ of a cell), ~N^(−1/2) for a liquid."""
     f = np.asarray(pos) / np.asarray(box) * np.asarray(n)
     return float(np.mean([abs(np.mean(np.exp(2j * np.pi * 2 * f[:, k]))) for k in range(3)]))
 
 
 def temperature_scale(model: EAM, a0: float, mass_amu: float, n=(5, 5, 5), dT: float = 50.0,
-                      steps: int = 1000, T_max: float = 6000.0, engine: str = "numpy", log=None) -> dict:
+                      steps: int = 1000, T_max: float = 6000.0, engine: str = "numpy", log=None,
+                      structure: str = "fcc") -> dict:
     """The temperature at which a crystal heated in steps of dT at zero pressure loses its order.
 
     It is above the melting point (a perfect crystal with no surface superheats), so it bounds the
     melting search from above and sets the scale of every other temperature. It comes from the
     element's own potential: no measured temperature enters."""
-    md = make_md(model, fcc_state(a0, n, mass_amu), seed=11, engine=engine)
+    md = make_md(model, crystal_state(a0, n, mass_amu, structure), seed=11, engine=engine)
     T = dT
     md.thermalise(T)
     trail = []
@@ -88,14 +90,15 @@ def schedule_from_scale(T_order: float) -> dict:
 
 def melting_point(model: EAM, a_of_T, lo: float, hi: float, iters: int = 5, log=None,
                   n=(5, 5, 12), engine: str = "numpy", mass_amu: float = AL_MASS_AMU,
-                  melt_T: float = MELT_T) -> dict:
+                  melt_T: float = MELT_T, structure: str = "fcc") -> dict:
     """Bisection on the direction a half-solid, half-liquid box moves: the crystal grows below
     the melting point (potential energy falls) and melts above it (potential energy rises).
-    ``n`` is the box in fcc cells (4 atoms each); ``engine="torch"`` runs it on a GPU."""
+    ``n`` is the box in cubic cells (fcc 4 atoms each, bcc 2); ``engine="torch"`` runs it on a GPU."""
     trail = []
     for _ in range(iters):
         T = 0.5 * (lo + hi)
-        r = coexistence(model, a_of_T(T) / BOHR_A, T, n=n, engine=engine, mass_amu=mass_amu, melt_T=melt_T)
+        r = coexistence(model, a_of_T(T) / BOHR_A, T, n=n, engine=engine, mass_amu=mass_amu, melt_T=melt_T,
+                        structure=structure)
         trail.append({"T": T, "slope": r["slope"]})
         if log:
             log(trail[-1])
@@ -107,10 +110,12 @@ def melting_point(model: EAM, a_of_T, lo: float, hi: float, iters: int = 5, log=
 
 
 def latent_heat(model: EAM, T: float, a_T: float, n=(4, 4, 4), steps: int = 5000,
-                mass_amu: float = AL_MASS_AMU, melt_T: float = MELT_T, engine: str = "numpy") -> dict:
+                mass_amu: float = AL_MASS_AMU, melt_T: float = MELT_T, engine: str = "numpy",
+                structure: str = "fcc") -> dict:
     """Enthalpy per atom of liquid minus solid, both held at T and zero pressure."""
-    solid = npt_lattice_constant(model, a_T / BOHR_A, T, n=n, steps=steps, engine=engine, mass_amu=mass_amu)
-    state = fcc_state(a_T / BOHR_A, n, mass_amu)
+    solid = npt_lattice_constant(model, a_T / BOHR_A, T, n=n, steps=steps, engine=engine, mass_amu=mass_amu,
+                                 structure=structure)
+    state = crystal_state(a_T / BOHR_A, n, mass_amu, structure)
     md = make_md(model, state, seed=3, engine=engine)
     md.thermalise(melt_T)
     md.run(2000, T=melt_T, sample_every=100)                  # melt it at fixed volume
@@ -120,12 +125,13 @@ def latent_heat(model: EAM, T: float, a_T: float, n=(4, 4, 4), steps: int = 5000
     N = len(state.pos)
     H_liq = float(np.mean([r["E"] for r in tail])) / N
     V_liq = float(np.mean([r["V"] for r in tail])) / N
-    V_sol = (solid["a"] ** 3) / 4
+    V_sol = (solid["a"] ** 3) / ATOMS_PER_CELL[structure]
     return {"latent_eV": (H_liq - solid["H_per_atom"]) * HA_EV, "dV_melt_frac": V_liq / V_sol - 1}
 
 
 def run_all(model: EAM, a0_A: float, log=print, element: str = "al", mass_amu: float = AL_MASS_AMU,
-            schedule: dict | str | None = None, engine: str = "numpy", coexist_n=(5, 5, 12)) -> dict:
+            schedule: dict | str | None = None, engine: str = "numpy", coexist_n=(5, 5, 12),
+            structure: str = "fcc") -> dict:
     """Thermal curve, melting point and latent heat, written to .cache/materials/<element>_results.json.
 
     ``schedule``: None for aluminium's original temperatures, "auto" to derive them from this
@@ -135,18 +141,18 @@ def run_all(model: EAM, a0_A: float, log=print, element: str = "al", mass_amu: f
         schedule = AL_SCHEDULE
     elif schedule == "auto":
         sc = temperature_scale(model, a0_A / BOHR_A, mass_amu, engine=engine,
-                               log=lambda r: log("order", r))
+                               log=lambda r: log("order", r), structure=structure)
         schedule = schedule_from_scale(sc["T_order"])
     curve = thermal_curve(model, a0_A / BOHR_A, schedule["thermal_T"], log=lambda r: log("thermal", r),
-                          mass_amu=mass_amu, engine=engine)
+                          mass_amu=mass_amu, engine=engine, structure=structure)
     t, a = np.array([(r["T"], r["a_A"]) for r in curve]).T
     ca = np.polyfit(t, a, 2)
     a_of_T = lambda T: float(np.polyval(ca, T))
     lo, hi = schedule["melt_bracket"]
     melt = melting_point(model, a_of_T, lo, hi, iters=6, log=lambda r: log("coexistence", r), n=coexist_n,
-                         engine=engine, mass_amu=mass_amu, melt_T=schedule["melt_T"])
+                         engine=engine, mass_amu=mass_amu, melt_T=schedule["melt_T"], structure=structure)
     lat = latent_heat(model, melt["T_melt"], a_of_T(melt["T_melt"]), mass_amu=mass_amu,
-                      melt_T=schedule["melt_T"], engine=engine)
+                      melt_T=schedule["melt_T"], engine=engine, structure=structure)
     out = {"element": element, "mass_amu": mass_amu, "schedule": {k: (list(v) if isinstance(v, tuple) else v)
                                                                   for k, v in schedule.items()},
            "thermal": curve, "melting": melt, "latent": lat, "seconds": time.perf_counter() - t0}

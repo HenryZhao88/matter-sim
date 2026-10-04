@@ -45,6 +45,16 @@ def fcc_lattice(a: float, n: tuple[int, int, int]) -> tuple[np.ndarray, np.ndarr
     return pos, a * np.asarray(n, float)
 
 
+def bcc_lattice(a: float, n: tuple[int, int, int]) -> tuple[np.ndarray, np.ndarray]:
+    basis = np.array([[0, 0, 0], [0.5, 0.5, 0.5]])
+    cells = np.array([[i, j, k] for i in range(n[0]) for j in range(n[1]) for k in range(n[2])])
+    pos = (cells[:, None, :] + basis[None]).reshape(-1, 3) * a
+    return pos, a * np.asarray(n, float)
+
+
+ATOMS_PER_CELL = {"fcc": 4, "bcc": 2}      # cubic cell: a^3 / n is the volume per atom
+
+
 class EAMForceField:
     def __init__(self, model: EAM) -> None:
         self.m = model
@@ -191,26 +201,37 @@ def fcc_state(a: float, n=(6, 6, 6), mass_amu: float = AL_MASS_AMU) -> State:
     return State(pos, np.zeros_like(pos), box, mass_amu * AMU_ME)
 
 
+def crystal_state(a: float, n=(6, 6, 6), mass_amu: float = AL_MASS_AMU, structure: str = "fcc") -> State:
+    """A cubic crystal of n cells at rest: fcc (fcc_state exactly) or bcc."""
+    if structure == "fcc":
+        return fcc_state(a, n, mass_amu)
+    if structure != "bcc":
+        raise ValueError(f"no crystal state for {structure!r}")
+    pos, box = bcc_lattice(a, n)
+    return State(pos, np.zeros_like(pos), box, mass_amu * AMU_ME)
+
+
 def al_state(model: EAM, a: float, n=(6, 6, 6)) -> State:
     return fcc_state(a, n, AL_MASS_AMU)
 
 
 def npt_lattice_constant(model: EAM, a0: float, T: float, n=(6, 6, 6), steps=3000, seed=0,
-                         engine: str = "numpy", mass_amu: float = AL_MASS_AMU) -> dict:
+                         engine: str = "numpy", mass_amu: float = AL_MASS_AMU, structure: str = "fcc") -> dict:
     """Mean lattice constant and enthalpy per atom at temperature T and zero pressure."""
-    md = make_md(model, fcc_state(a0, n, mass_amu), seed=seed, engine=engine)
+    md = make_md(model, crystal_state(a0, n, mass_amu, structure), seed=seed, engine=engine)
     md.thermalise(T)
     rows = md.run(steps, T=T, P_GPa=0.0, sample_every=10)
     tail = rows[len(rows) // 2:]
     V = np.mean([r["V"] for r in tail])
     N = len(md.s.pos)
     H = np.mean([r["E"] for r in tail]) / N               # P ≈ 0, so H ≈ E
-    return {"T": T, "a": (V / (N / 4)) ** (1 / 3), "H_per_atom": H,
+    return {"T": T, "a": (V / (N / ATOMS_PER_CELL[structure])) ** (1 / 3), "H_per_atom": H,
             "T_measured": float(np.mean([r["T"] for r in tail]))}
 
 
 def coexistence(model: EAM, a_T: float, T: float, n=(5, 5, 12), steps=6000, seed=0,
-                engine: str = "numpy", mass_amu: float = AL_MASS_AMU, melt_T: float = 1800.0) -> dict:
+                engine: str = "numpy", mass_amu: float = AL_MASS_AMU, melt_T: float = 1800.0,
+                structure: str = "fcc") -> dict:
     """Half crystal, half liquid at temperature T, at fixed volume.
 
     The solid and the liquid share a box whose density is the solid's at T, opened by the few
@@ -219,7 +240,7 @@ def coexistence(model: EAM, a_T: float, T: float, n=(5, 5, 12), steps=6000, seed
     the liquid eats the crystal and the energy rises. Fixed volume on purpose — a barostat on a
     two-phase cell chases a pressure that neither phase alone defines. ``melt_T`` melts the top
     half first: well above the melting point, not so hot that atoms reach each other's cores."""
-    state = fcc_state(a_T, n, mass_amu)
+    state = crystal_state(a_T, n, mass_amu, structure)
     state.box = state.box * (1 + 0.02)                 # liquid is a few per cent less dense
     state.pos = state.pos * (1 + 0.02)
     md = make_md(model, state, seed=seed, engine=engine)

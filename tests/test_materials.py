@@ -288,6 +288,22 @@ def test_a_label_whose_top_band_holds_electrons_is_refused(monkeypatch, tmp_path
     with pytest.raises(dataset.NotConverged, match="too few bands"):
         dataset.label({"cell": c.cell, "charges": c.charges, "positions": c.positions, "tag": "test"})
 
+def test_bcc_crystal_for_the_experiments():
+    """A bcc crystal for the MD experiments: two atoms per cubic cell, nearest neighbours a√3/2 apart,
+    and the order parameter that tells solid from liquid reads 1 on it, as on fcc."""
+    from engine.materials.eam import pairs_with_images
+    from engine.materials.experiments import crystal_order
+    from engine.materials.md import ATOMS_PER_CELL, crystal_state
+    a, n = 5.4655, (3, 3, 3)
+    s = crystal_state(a, n, 55.845, "bcc")
+    assert len(s.pos) == ATOMS_PER_CELL["bcc"] * 27 and np.allclose(s.box, 3 * a)
+    r = np.linalg.norm(pairs_with_images(s.box, s.pos, rc=6.0)[2], axis=1)
+    assert r.min() == pytest.approx(a * np.sqrt(3) / 2)
+    assert crystal_order(s.pos, s.box, n) == pytest.approx(1.0)
+    with pytest.raises(ValueError):
+        crystal_state(a, n, 55.845, "hcp")
+
+
 def test_md_snapshots_of_a_bcc_metal_start_from_its_own_crystal():
     """bcc snapshots run in a 2x2x1 bcc cell (8 atoms) around the bcc lattice constant; the defaults
     are fcc's, which reproduce copper's saved snapshots bit for bit (checked when this was added)."""
