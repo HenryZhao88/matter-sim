@@ -16,6 +16,8 @@ final numbers live here so every machine can read them without copying anything:
 | `cu_crosscheck.json` | `scripts/cross_check.py 29` (fp32 labels recomputed in float64) | anyone judging copper's labels |
 | `cu_md_snapshots.json` | `scripts/label_md.py 29 ...` (hot 8-atom configurations the seed potential visits; kept because the dynamics cannot be regenerated bit for bit elsewhere) | copper labelling |
 | `cu_eam_seed.*`, `cu_eam_final.*` | `scripts/seed_fit.py 29 6.704 [w] seed|final` (copper's learned potential and its errors: seed from crystal labels, final with MD labels too) | molecular dynamics |
+| `cu_results.json`, `fe_results.json` | `scripts/element_experiments.py` (melting point, latent heat, thermal curve in MD; the potential's sha256 is recorded) | validation |
+| `fe_md_snapshots.json`, `fe_eam_seed.*`, `fe_eam_final.*` | as copper's, for iron (`seed_fit.py 26 5.4655 3.0 final bcc`; the final one with the test split stratified by tag) | iron's experiments |
 | `fe_magnetism.json`, `fe_magnetism_pbe.json` | `scripts/fe_magnetism.py` (iron's phases: bcc/fcc, non-magnetic, ferro- and antiferromagnetic; LDA / PBE) | validation |
 | `machines/<machine>/` | `scripts/share_cache.py export <machine>` (each machine's cached DFT labels, E(V) points and scans as JSON; `share_cache.py import` loads every machine's into the local cache, never overwriting, and reports disagreements) | every machine |
 

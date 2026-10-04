@@ -2,8 +2,10 @@
 
 Temperature scale (the potential's own), thermal curve, melting point by solid-liquid
 coexistence (a large box, on the GPU when there is one) and latent heat: the same functions as
-experiments.run_all, each stage cached in .cache/materials/<el>_experiments/ so a stopped run
-resumes where it was. The lattice constant is the potential's own zero-temperature minimum.
+experiments.run_all, each stage cached in .cache/materials/<el>_experiments_<hash>/ so a stopped run
+resumes where it was. <hash> is the potential file's (first 12 hex of its sha256): a refitted potential
+starts its own cache rather than reading the old one's stages (before 2026-10-04 the directory was
+<el>_experiments/ for every potential, which a refit would have reused silently). The lattice constant is the potential's own zero-temperature minimum.
 
     uv run --extra gpu python scripts/element_experiments.py Cu results/cu_eam_final.npz 63.546 20 20 60
     uv run --extra gpu python scripts/element_experiments.py Fe results/fe_eam_final.npz 55.845 25 25 75 bcc
@@ -12,6 +14,7 @@ The mass is the element's standard atomic weight (the natural isotope mix, amu).
 results/<el>_results.json, and never over an existing one (set MATTER_SIM_OVERWRITE=1 to replace it).
 """
 
+import hashlib
 import json
 import os
 import sys
@@ -63,7 +66,8 @@ def main(el: str, pot: str, mass: float, n=(20, 20, 60), structure: str = "fcc")
     if result.exists() and os.environ.get("MATTER_SIM_OVERWRITE") != "1":
         raise SystemExit(f"{result.name} exists: not overwritten (set MATTER_SIM_OVERWRITE=1 to replace it)")
     atoms = ATOMS_PER_CELL[structure] * n[0] * n[1] * n[2]
-    cache = ROOT / ".cache" / "materials" / f"{el.lower()}_experiments"
+    pot_hash = hashlib.sha256((ROOT / pot).read_bytes()).hexdigest()[:12]
+    cache = ROOT / ".cache" / "materials" / f"{el.lower()}_experiments_{pot_hash}"
     cache.mkdir(parents=True, exist_ok=True)
     engine = "torch" if have_cuda() else "numpy"
     a0 = potential_a0(model, Z, structure)
@@ -112,7 +116,7 @@ def main(el: str, pot: str, mass: float, n=(20, 20, 60), structure: str = "fcc")
                 "solid_near_melting": near["points"]}
 
     lat = cached(cache / f"latent_v3_{Tm:.4f}.json", latent)
-    out = {"element": el, "structure": structure, "potential": pot, "mass_amu": mass, "a0_A": a0 * BOHR_A, "schedule": sched,
+    out = {"element": el, "structure": structure, "potential": pot, "potential_sha256_12": pot_hash, "mass_amu": mass, "a0_A": a0 * BOHR_A, "schedule": sched,
            "T_order": sc["T_order"], "thermal": curve,
            "melting": {"T_melt": Tm, "bracket": [lo, hi], "trail": trail, "atoms": atoms, "engine": engine},
            "latent": {k: v for k, v in lat.items() if k != "seconds"}}

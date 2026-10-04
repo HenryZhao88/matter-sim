@@ -202,21 +202,30 @@ the physics rather than papered over; `engine/materials/` says where.
 
 The same chain, started on two more metals. Copper's crystal comes from its own DFT (never from
 the measured lattice constant), its training set is labelled (89 configurations, 6 recomputed
-in float64 to check the GPU labels: worst 0.62 meV/atom), and its learned potential is fitted;
-its melting and expansion experiments are next. Iron needed spin-polarised DFT, since its
-structure comes from its magnetism.
+in float64 to check the GPU labels: worst 0.62 meV/atom), and its learned potential is fitted
+and measured in a 96 000-atom box. Iron needed spin-polarised DFT, since its structure comes from
+its magnetism; its potential is trained on 86 PBE labels and melts in a 93 750-atom box. The
+potential has no magnetism of its own, so it stays bcc up to melting (real iron is fcc from 1185 to
+1667 K and melts from bcc again).
 
 | Result | Simulated | Experiment | Notes |
 |---|---|---|---|
 | Copper lattice constant, LDA / PBE | 3.548 / 3.668 Å | 3.603 Å (0 K) | static lattice; LDA short and PBE long, as usual |
 | Copper bulk modulus, LDA / PBE | 168 / 150 GPa | 142 GPa | |
 | Copper's learned potential | a₀ 3.553 Å, bcc − fcc 37 meV | DFT: 3.548 Å, 42 meV | 14 meV/atom on configurations it never saw |
+| Copper melting point | 1210 K | 1358 K | solid–liquid coexistence, 96 000 atoms |
+| Copper latent heat of fusion | 118.8 meV/atom | 137.4 meV/atom | melting expansion 4.7 % |
+| Copper thermal expansion at 293 K | 8.9 × 10⁻⁶/K | 16.5 × 10⁻⁶/K | classical nuclei |
 | Iron chooses to be a magnet | yes: bcc FM − NM = −581 meV/atom (PBE) | ferromagnetic | the starting moment is only a push; aluminium gives it back |
 | Iron's crystal, LDA | fcc non-magnetic, 44 meV below bcc | bcc ferromagnetic | **wrong**: plain LDA's known failure for iron, left disagreeing |
 | Iron's crystal, PBE | **bcc ferromagnetic**, fcc 140 meV above | bcc ferromagnetic | the gradient correction fixes it; nothing tuned |
 | Iron lattice constant (bcc FM), LDA / PBE | 2.794 / 2.892 Å | 2.866 Å | possibly ~2% large for a pseudopotential reason: under investigation (AGENTS.md) |
 | Iron bulk modulus, LDA / PBE | 218 / 146 GPa | 170 GPa | |
 | Iron magnetic moment, LDA / PBE | 2.12 / 2.39 μB | 2.22 μB | net moment at the computed lattice constant |
+| Iron's learned potential (PBE labels) | a₀ 2.901 Å, fcc − bcc 97 meV | DFT: 2.892 Å, 100 meV | 5.8 meV/atom on configurations it never saw |
+| Iron melting point | 2058 K | 1811 K | **too high**: the potential over-favours the solid |
+| Iron latent heat of fusion | 176.9 meV/atom | 143.1 meV/atom | melting expansion 13.6 % (measured ~3.4 %); 204 without the solid run nearest T_m |
+| Iron thermal expansion at 293 K | 7.9 × 10⁻⁶/K | 11.8 × 10⁻⁶/K | classical nuclei, no magnetism in the potential |
 
 ## How it works
 
@@ -303,8 +312,8 @@ tests/             pytest (fast: `uv run pytest -m "not slow"`)
    correlators and much more statistics. Lighter quarks and quark loops are a matter of compute.
 3. **A relativistic atom solver**: scalar-relativistic radial equations, which the fourth row
    wants and anything heavier needs.
-4. **More metals and alloys**: copper has its potential; its experiments, then iron's training set
-   (magnetic, PBE), then nickel and cobalt. Alloys after that.
+4. **More metals and alloys**: copper and iron run end to end; iron's potential needs more
+   liquid-like training data (it melts ~250 K too high). Then nickel and cobalt, and alloys.
 5. **Grains, defects and cracks**: the GPU molecular dynamics reaches 10⁶ atoms; the experiments
    that need that size are next.
 6. **Semicore electrons in the pseudopotentials**: the next suspect for iron's possibly-large

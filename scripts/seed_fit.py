@@ -1,6 +1,6 @@
 """A seed potential for an element from its crystal labels, checked against the element's own DFT.
 
-    uv run python scripts/seed_fit.py 29 6.704 [force_weight] [name] [structure]
+    uv run python scripts/seed_fit.py 29 6.704 [force_weight] [name] [structure] [split]
     uv run python scripts/seed_fit.py 26 5.4655 3.0 seed bcc        # iron
 
 ``name`` (default "seed") names the output: the same fit on crystal + MD labels is the final potential
@@ -12,6 +12,12 @@ result, so nothing here compares with experiment: the checks are against this en
 (the lattice constant a0 given, and each label). The short-range settings come from the data
 (eam.short_range_for): the element's nuclear charge, and a splice below the shortest distance
 the labels sampled.
+
+``split`` picks the held-out seventh. "tag" (the default): about a seventh of each tag's labels, never a
+tag's smallest or largest volume per atom, so every kind of configuration and the whole range of
+compression is trained on and the test asks only for interpolation. "random": a seventh of all labels
+at random, as copper's committed potentials and iron's first final potential were fitted; for iron it
+held out all three most compressed cells, so the fit never saw strong compression (test 176 meV/atom).
 
 Writes results/<el>_eam_<name>.npz (the model, pickled like aluminium's) and <el>_eam_<name>.json.
 """
@@ -35,7 +41,22 @@ HA_EV, BOHR_A, GPA = 27.211386245988, 0.529177210903, 29421.02648438959
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def main(Z: int, a0: float, w_force: float = 3.0, name: str = "seed", structure: str = "fcc") -> None:
+def split_by_tag(data: list, seed: int = 1) -> tuple[list[int], list[int]]:
+    """(test, train) indices: round(n/7) of each tag held out, chosen at random from the tag's labels
+    other than its smallest and largest volume per atom (ties broken by the stable cache-key order)."""
+    rng = np.random.default_rng(seed)
+    test = []
+    for tag in sorted({d["tag"] for d in data}):
+        own = [i for i, d in enumerate(data) if d["tag"] == tag]
+        own.sort(key=lambda i: np.prod(data[i]["cell"]) / len(data[i]["charges"]))    # cells are orthorhombic
+        inner = own[1:-1]
+        k = min(len(inner), round(len(own) / 7))
+        test += [inner[j] for j in sorted(rng.choice(len(inner), size=k, replace=False))] if k else []
+    test = sorted(test)
+    return test, [i for i in range(len(data)) if i not in set(test)]
+
+
+def main(Z: int, a0: float, w_force: float = 3.0, name: str = "seed", structure: str = "fcc", split: str = "tag") -> None:
     el = ELEMENTS[Z].symbol
     data = []
     for f in sorted(glob.glob(str(CACHE / "dft/*.pkl"))):
@@ -45,10 +66,15 @@ def main(Z: int, a0: float, w_force: float = 3.0, name: str = "seed", structure:
     data.sort(key=cache_key)                           # the split must not depend on directory order
     sr = short_range_for(data, Z)
     print(f"{el}: {len(data)} labels; short range {sr}", flush=True)
-    rng = np.random.default_rng(1)
-    idx = rng.permutation(len(data))
-    nt = max(4, len(data) // 7)
-    test, train = [data[i] for i in idx[:nt]], [data[i] for i in idx[nt:]]
+    if split == "random":
+        idx = np.random.default_rng(1).permutation(len(data))
+        nt = max(4, len(data) // 7)
+        i_test, i_train = list(idx[:nt]), list(idx[nt:])
+    else:
+        i_test, i_train = split_by_tag(data)
+    test, train = [data[i] for i in i_test], [data[i] for i in i_train]
+    print(f"split {split}: {len(train)} train, {len(test)} test "
+          f"({', '.join(sorted({d['tag'] for d in test}))})", flush=True)
     t = time.time()
     m = fit(train, iters=12000, e_scale_eV=0.3, short_range=sr,
             log=lambda i, l: print("fit", i, f"{l:.3g}", f"{time.time() - t:.0f}s", flush=True))
@@ -93,7 +119,8 @@ def main(Z: int, a0: float, w_force: float = 3.0, name: str = "seed", structure:
            "a0_A": amin * BOHR_A, "a0_A_dft": a0 * BOHR_A, "B_GPa": float(B),
            "structure": structure, f"{other}_minus_{structure}_meV": float(dE_other),
            f"{other}_minus_{structure}_meV_dft_labels": float(dE_other_dft),
-           "w_force": w_force, "tags": {t: sum(d["tag"] == t for d in data) for t in sorted({d["tag"] for d in data})}}
+           "w_force": w_force, "split": split,
+           "test_set": [{"tag": d["tag"], "key": cache_key(d)} for d in test], "tags": {t: sum(d["tag"] == t for d in data) for t in sorted({d["tag"] for d in data})}}
     print(json.dumps(out, indent=1), flush=True)
     target = ROOT / "results" / f"{el.lower()}_eam_{name}.npz"
     if target.exists() and os.environ.get("MATTER_SIM_OVERWRITE") != "1":
@@ -106,4 +133,5 @@ def main(Z: int, a0: float, w_force: float = 3.0, name: str = "seed", structure:
 
 if __name__ == "__main__":
     main(int(sys.argv[1]), float(sys.argv[2]), float(sys.argv[3]) if len(sys.argv) > 3 else 3.0,
-         sys.argv[4] if len(sys.argv) > 4 else "seed", sys.argv[5] if len(sys.argv) > 5 else "fcc")
+         sys.argv[4] if len(sys.argv) > 4 else "seed", sys.argv[5] if len(sys.argv) > 5 else "fcc",
+         sys.argv[6] if len(sys.argv) > 6 else "tag")

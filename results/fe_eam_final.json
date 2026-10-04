@@ -8,17 +8,68 @@
   "core_in": 1.9402676776741279,
   "core_out": 3.1402676776741276
  },
- "E_meV_train": 7.747451808749481,
- "F_eVA_train": 0.19421208249903238,
- "E_meV_test": 176.02963518376276,
- "F_eVA_test": 0.1433898989354738,
- "a0_A": 2.8989304120236015,
+ "E_meV_train": 10.498990434324597,
+ "F_eVA_train": 0.19184969020877285,
+ "E_meV_test": 5.824237802318216,
+ "F_eVA_test": 0.11586815597340454,
+ "a0_A": 2.9013698891802178,
  "a0_A_dft": 2.892218046190346,
- "B_GPa": 138.27299602503012,
+ "B_GPa": 137.9914140324098,
  "structure": "bcc",
- "fcc_minus_bcc_meV": 90.78394847141817,
+ "fcc_minus_bcc_meV": 97.39828907005626,
  "fcc_minus_bcc_meV_dft_labels": 99.77566920741802,
  "w_force": 3.0,
+ "split": "tag",
+ "test_set": [
+  {
+   "tag": "fcc",
+   "key": "0504941f94d7623a"
+  },
+  {
+   "tag": "bcc-thermal",
+   "key": "1ef43382e44b66ee"
+  },
+  {
+   "tag": "bcc-thermal",
+   "key": "21aeaa8f3f88421f"
+  },
+  {
+   "tag": "bcc-strain",
+   "key": "30ebd41da8c12285"
+  },
+  {
+   "tag": "md-1940",
+   "key": "3ca46827156ad983"
+  },
+  {
+   "tag": "bcc-8",
+   "key": "51ab09012ac3ba69"
+  },
+  {
+   "tag": "bcc-strain",
+   "key": "8a22828b972be8ea"
+  },
+  {
+   "tag": "md-2720",
+   "key": "a97c1909d52acfd8"
+  },
+  {
+   "tag": "bcc-thermal",
+   "key": "b33fd1beeae8a929"
+  },
+  {
+   "tag": "bcc-volume",
+   "key": "d90db39e6938026c"
+  },
+  {
+   "tag": "md-1160",
+   "key": "efd759658bb98c8d"
+  },
+  {
+   "tag": "bcc-8",
+   "key": "f872431ac764d0b2"
+  }
+ ],
  "tags": {
   "bcc-8": 14,
   "bcc-strain": 16,
