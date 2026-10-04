@@ -23,8 +23,8 @@ import numpy as np
 from engine.core.accel import have_cuda
 from engine.crystal.periodic import cubic
 from engine.materials.eam import EAM, energy_forces
-from engine.materials.experiments import (BOHR_A, HA_EV, latent_heat, schedule_from_scale, temperature_scale,
-                                          thermal_curve)
+from engine.materials.experiments import (BOHR_A, HA_EV, latent_heat, schedule_from_scale, solid_near_melting,
+                                          temperature_scale, thermal_curve)
 from engine.materials.md import ATOMS_PER_CELL, coexistence
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,21 +94,32 @@ def main(el: str, pot: str, mass: float, n=(20, 20, 60), structure: str = "fcc")
         else:
             lo = T
     Tm = 0.5 * (lo + hi)
-    # the solid's own enthalpy at T_m from its thermal curve (all solid): used only if the solid run
-    # at T_m melts by itself (see experiments.latent_heat); a classical solid's H(T) is nearly linear
-    th, hh = np.array([(r["T"], r["H_eV"]) for r in curve]).T
-    H_sol = float(np.polyval(np.polyfit(th, hh, 1), Tm))
-    # v2: the solid is checked to still be a solid (the first iron run's 'solid' had melted; its file stays)
-    lat = cached(cache / f"latent_v2_{Tm:.4f}.json", lambda: latent_heat(model, Tm, float(np.polyval(ca, Tm)),
-                                                                            mass_amu=mass, melt_T=sched["melt_T"],
-                                                                            structure=structure, solid_H_eV=H_sol))
+    # v3: the reference solid is checked to still be a solid at T_m; where it is not (iron), its H and V at
+    # T_m come from crystalline runs just below (solid_near_melting). Earlier files are kept: v1's 'solid'
+    # had melted (liquid minus liquid, 18.8 meV/atom); v2 extrapolated the 161-1150 K curve 1050 K (312).
+    a_of_T = lambda T: float(np.polyval(ca, T))
+
+    def latent():
+        lat = latent_heat(model, Tm, a_of_T(Tm), mass_amu=mass, melt_T=sched["melt_T"], structure=structure)
+        if not lat.get("solid_melted"):
+            return lat
+        near = cached(cache / f"solid_near_{Tm:.4f}.json",
+                      lambda: solid_near_melting(model, a_of_T, Tm, mass, structure, engine=engine))
+        if near["H_eV"] is None:
+            return {**lat, "solid_near_melting": near["points"]}
+        return {**latent_heat(model, Tm, a_of_T(Tm), mass_amu=mass, melt_T=sched["melt_T"], structure=structure,
+                              solid_H_eV=near["H_eV"], solid_V_bohr3=near["V_bohr3"], solid_method=near["method"]),
+                "solid_near_melting": near["points"]}
+
+    lat = cached(cache / f"latent_v3_{Tm:.4f}.json", latent)
     out = {"element": el, "structure": structure, "potential": pot, "mass_amu": mass, "a0_A": a0 * BOHR_A, "schedule": sched,
            "T_order": sc["T_order"], "thermal": curve,
            "melting": {"T_melt": Tm, "bracket": [lo, hi], "trail": trail, "atoms": atoms, "engine": engine},
            "latent": {k: v for k, v in lat.items() if k != "seconds"}}
     result.write_text(json.dumps(out, indent=1))
-    print(f"{el}: T_melt = {Tm:.1f} K ({lo:.1f}-{hi:.1f}), latent heat {lat['latent_eV'] * 1000:.1f} meV/atom, "
-          f"melting expansion {lat['dV_melt_frac'] * 100:.1f}%", flush=True)
+    L = "withheld (the reference solid melted)" if lat["latent_eV"] is None else f"{lat['latent_eV'] * 1000:.1f} meV/atom"
+    dV = "-" if lat["dV_melt_frac"] is None else f"{lat['dV_melt_frac'] * 100:.1f}%"
+    print(f"{el}: T_melt = {Tm:.1f} K ({lo:.1f}-{hi:.1f}), latent heat {L}, melting expansion {dV}", flush=True)
 
 
 if __name__ == "__main__":

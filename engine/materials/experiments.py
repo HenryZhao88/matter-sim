@@ -109,9 +109,34 @@ def melting_point(model: EAM, a_of_T, lo: float, hi: float, iters: int = 5, log=
     return {"T_melt": 0.5 * (lo + hi), "bracket": [lo, hi], "trail": trail}
 
 
+def solid_near_melting(model: EAM, a_of_T, T_m: float, mass_amu: float, structure: str = "fcc",
+                       fractions=(0.80, 0.85, 0.90, 0.95), n=(6, 6, 6), steps: int = 5000,
+                       engine: str = "numpy") -> dict:
+    """The solid's enthalpy and volume per atom at T_m, for a crystal that will not stay a crystal at T_m
+    itself: measured at fractions of T_m, kept only where the run ends still crystalline (order >= 0.5),
+    and fitted linearly to T_m. Iron's potential: crystalline to 2050 K, melted by 2150 K, T_m 2201 K;
+    its H(T) steepens near the top (~4.2 k_B), which a fit to its low-temperature curve missed by
+    ~0.1 eV/atom."""
+    pts = []
+    for f in fractions:
+        T = f * T_m
+        s = npt_lattice_constant(model, a_of_T(T) / BOHR_A, T, n=n, steps=steps, engine=engine,
+                                 mass_amu=mass_amu, structure=structure)
+        pts.append({"T": T, "order": s["order"], "H_eV": s["H_per_atom"] * HA_EV,
+                    "V_bohr3": s["a"] ** 3 / ATOMS_PER_CELL[structure]})
+    good = [p for p in pts if p["order"] >= 0.5]
+    if len(good) < 2:
+        return {"points": pts, "H_eV": None, "V_bohr3": None}
+    T_, H_, V_ = np.array([(p["T"], p["H_eV"], p["V_bohr3"]) for p in good]).T
+    return {"points": pts, "H_eV": float(np.polyval(np.polyfit(T_, H_, 1), T_m)),
+            "V_bohr3": float(np.polyval(np.polyfit(T_, V_, 1), T_m)),
+            "method": f"linear fit of the crystalline solid at {T_.min():.0f}-{T_.max():.0f} K"}
+
+
 def latent_heat(model: EAM, T: float, a_T: float, n=(4, 4, 4), steps: int = 5000,
                 mass_amu: float = AL_MASS_AMU, melt_T: float = MELT_T, engine: str = "numpy",
-                structure: str = "fcc", solid_H_eV: float | None = None) -> dict:
+                structure: str = "fcc", solid_H_eV: float | None = None, solid_V_bohr3: float | None = None,
+                solid_method: str | None = None) -> dict:
     """Enthalpy per atom of liquid minus solid, both held at T and zero pressure.
 
     The solid must still be a solid at the end of its run. A crystal whose order goes only just above
@@ -136,12 +161,12 @@ def latent_heat(model: EAM, T: float, a_T: float, n=(4, 4, 4), steps: int = 5000
     if not solid_melted:
         return {"latent_eV": (H_liq - solid["H_per_atom"]) * HA_EV, "dV_melt_frac": V_liq / V_sol - 1}
     out = {"solid_melted": True, "solid_order": solid["order"],
-           "solid_H_method": "extrapolated from the solid's thermal curve" if solid_H_eV is not None else None}
+           "solid_H_method": (solid_method or "supplied by the caller") if solid_H_eV is not None else None}
     if solid_H_eV is None:
         return {**out, "latent_eV": None, "dV_melt_frac": None}
-    # the solid's volume likewise from its thermal curve: a_T is the caller's a(T) extrapolated to T
-    V_sol_extrap = (a_T / BOHR_A) ** 3 / ATOMS_PER_CELL[structure]
-    return {**out, "latent_eV": H_liq * HA_EV - solid_H_eV, "dV_melt_frac": V_liq / V_sol_extrap - 1}
+    # the solid's volume likewise: supplied, or else from the caller's a(T) extrapolated to T
+    V_sol = solid_V_bohr3 if solid_V_bohr3 is not None else (a_T / BOHR_A) ** 3 / ATOMS_PER_CELL[structure]
+    return {**out, "latent_eV": H_liq * HA_EV - solid_H_eV, "dV_melt_frac": V_liq / V_sol - 1}
 
 
 def run_all(model: EAM, a0_A: float, log=print, element: str = "al", mass_amu: float = AL_MASS_AMU,
