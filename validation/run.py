@@ -78,6 +78,7 @@ def main(quick: bool = False, part: str = "all") -> None:
         materials_section()
         iron_section()
         iron_section("pbe")
+        iron_experiments_section()
     ok = [r["ok"] for r in rows if r["ok"] is not None]
     print(f"\n{sum(ok)}/{len(ok)} checks pass  ({time.time() - t0:.0f} s)")
     OUT.write_text(json.dumps({"quick": quick, "part": part, "rows": rows}, indent=2, default=float))
@@ -117,6 +118,30 @@ def copper_section() -> None:
         alpha = float(np.polyval(np.polyder(ca), 293.15) / np.polyval(ca, 293.15))
         record("materials", "Cu linear thermal expansion at 293 K", alpha * 1e6, 16.5, "10⁻⁶/K", "classical nuclei",
                abs(alpha - 16.5e-6) < 8e-6)
+
+
+def iron_experiments_section() -> None:
+    """Iron's learned potential (PBE, spin-polarised labels) in molecular dynamics (scripts/
+    element_experiments.py ... bcc). Pass marks: copper's, i.e. aluminium's tolerances unchanged,
+    committed before iron's numbers were looked at. The potential has no magnetism of its own and
+    knows only what its labels taught it, so the run stays bcc up to melting; real iron is fcc
+    from 1185 to 1667 K and melts from bcc (delta) iron, which is the transition compared here."""
+    res = Path(__file__).resolve().parents[1] / "results" / "fe_results.json"
+    if not res.exists():
+        return
+    r = json.loads(res.read_text())
+    section(f"Iron: learned potential from its own PBE labels, then molecular dynamics "
+            f"({r['melting']['atoms']:,}-atom bcc coexistence box)")
+    record("materials", "Fe melting point (solid–liquid coexistence)", r["melting"]["T_melt"], 1811.0, "K",
+           f"bracket {r['melting']['bracket'][0]:.0f}–{r['melting']['bracket'][1]:.0f} K; melts from bcc",
+           abs(r["melting"]["T_melt"] - 1811.0) < 150)
+    record("materials", "Fe latent heat of fusion", r["latent"]["latent_eV"] * 1000, 143.1, "meV/atom",
+           "13.81 kJ/mol", abs(r["latent"]["latent_eV"] * 1000 - 143.1) < 40)
+    t, a = np.array([(x["T"], x["a_A"]) for x in r["thermal"]]).T
+    ca = np.polyfit(t, a, 2)
+    alpha = float(np.polyval(np.polyder(ca), 293.15) / np.polyval(ca, 293.15))
+    record("materials", "Fe linear thermal expansion at 293 K", alpha * 1e6, 11.8, "10⁻⁶/K",
+           "classical nuclei, no magnetism in the potential", abs(alpha - 11.8e-6) < 8e-6)
 
 
 def materials_section() -> None:
