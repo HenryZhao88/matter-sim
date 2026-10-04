@@ -81,7 +81,7 @@ hard-won lessons; read it too.
   (7.9 GB of wavefunctions) had spilled 7.9 GB into shared system memory and run ~5× slower. With
   streaming, h = 0.16 is limited by host RAM, not GPU memory. The fp32 path against float64 at
   h = 0.16 is still owed.
-- **Iron (training set done: 86 labels; final potential `results/fe_eam_final.*`; experiments need bcc).** Spin-polarised DFT runs on NumPy and the GPU
+- **Iron (86 labels, final potential, experiments done: melts at 2201 K, measured 1811).** Spin-polarised DFT runs on NumPy and the GPU
   (`PeriodicDFT(spin=True, moments=...)`, `PeriodicDFTTorch` too). Iron's pseudopotential was fixed
   by D1 (cap 1.25×), grid h = 0.20, xc_grid 2 under LDA and PBE. **LDA gets the structure wrong, PBE
   right** (`results/fe_magnetism_pbe.json`). `dataset.GRID[26]` now labels iron with PBE, spin-polarised
@@ -241,9 +241,17 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
-- **2026-10-04, Downstairs PC (Claude).** Taking **bcc materials experiments** (for iron): touching
-  `engine/materials/md.py`, `engine/materials/experiments.py` and `scripts/element_experiments.py`
-  (Windows' last change to them was 2026-09-29). fcc stays the default and is checked bit for bit.
+- **2026-10-04, Downstairs PC (Claude).** **Iron's experiments** (bcc support in `md.py`, `experiments.py`,
+  `element_experiments.py`; fcc checked bit for bit against a seeded copper baseline, three times): melts
+  at **2201 K** (bracket 2192–2210; measured 1811), latent heat **246.5 meV/atom** (143.1), melting expansion
+  17 % (~3.4), thermal expansion 7.9e-6/K (11.8). Validation 1/3 for iron, with pass marks committed before
+  the numbers. Read: this potential makes the liquid too high and too open, and the solid over-favoured.
+  **Methods found wanting on the way:** (1) at T_m iron's reference solid melts by itself (its order
+  goes at 2300 K, only 4 % above T_m; Al and Cu ~60 %), so liquid minus "solid" gave 18.8 meV/atom; (2)
+  extrapolating the 161–1150 K curve 1050 K gave 312. Now `latent_heat` checks the solid's order and, if it
+  melted, uses crystalline runs at 0.80–0.95 T_m (`solid_near_melting`; all four crystalline, 110 K
+  extrapolation). Every write is guarded: `element_experiments.py` and `seed_fit.py` refuse to replace a
+  result without `MATTER_SIM_OVERWRITE=1`. Earlier cache files kept, not deleted.
 - **2026-10-03 23:50, Downstairs PC (Claude).** **Iron's training set is complete: 86 labels** (68 crystal + 18 MD,
   all MD converged). Float64 cross-checks pass: bcc-strain −0.013, bcc-volume (the expanded cell) −0.33
   meV/atom, forces ≤1.9e-5 Ha/bohr. `cross_check` now uses the label's SCF procedure for spin (plain
