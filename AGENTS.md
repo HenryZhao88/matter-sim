@@ -241,6 +241,10 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-10-04, Downstairs PC (Claude), taking:** (1) iron's refit with a test split stratified by tag,
+  then its experiments rerun on the new potential; (2) the open fcc question: iron's zero-moment and
+  metastable fcc points rerun with `mix_m="hybrid"`. Touching `scripts/seed_fit.py`,
+  `scripts/element_experiments.py` (its stage cache was not keyed by potential), `scripts/fe_magnetism.py`.
 - **2026-10-04, Downstairs PC (Claude).** **Iron's experiments** (bcc support in `md.py`, `experiments.py`,
   `element_experiments.py`; fcc checked bit for bit against a seeded copper baseline, three times): melts
   at **2201 K** (bracket 2192–2210; measured 1811), latent heat **246.5 meV/atom** (143.1), melting expansion
