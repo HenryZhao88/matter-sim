@@ -118,7 +118,8 @@ Take an item, say so in the log, and move it to the log when done. Items are ord
   stopping one triggered an NVIDIA driver reset (System log, `nvlddmkm` event 153) that killed the
   labelling running beside it.
 
-**Windows (item 3 owner), a request from downstairs — done 2026-09-29, run half-finished:**
+**Windows (item 3 owner), a request from downstairs — done 2026-09-29; copper's run was then finished
+downstairs (`results/cu_results.json`, melts at 1210 K), so the Windows partial cache below is superseded:**
 copper's experiments now run (`4212c63`, `7d852f4`): `md.fcc_state(a, n, mass_amu)`, every
 experiment takes `mass_amu`/`engine`, and `run_all(..., schedule="auto")` scales every temperature
 from the potential's own `temperature_scale` (a crystal heated in 50 K steps until its order goes;
@@ -156,28 +157,9 @@ lower state? Hybrid mixing from the same 3 μB push gives the same states, see t
 **Any machine:**
 - **GPU molecular dynamics at scale** (item 3), and **one-loop amplitudes** (item 4).
 
-1. **Label copper's crystal set — labelled on the downstairs PC (2026-09-26, 16 h on the RTX 3080 Ti):
-   66 of 71 converged, 5 refused** (fcc-volume at 1.00, 1.075 and 1.10 × a₀, two fcc-strain), from an
-   fp32 eigensolver fault since fixed (`1cdae28`); the 5 are being relabelled with the fix, which
-   agrees with the existing labels to 0.0002 meV/atom.
-   - Command: `uv run python scripts/label_crystal.py 29 6.704 <solver> [workers]` — 71
-     configurations (`initial_configurations(29, 6.704)` without sc/disordered), resumable through
-     the cache, grid from `dataset.GRID` (h 0.19, xc_grid 2), provenance on every label.
-   - Solver: `torch` on a CUDA GPU (fp32, measured against float64 at h 0.19: −0.147 meV/atom,
-     1.1e-5 Ha/bohr; run it with 1 worker, the GPU does the work). `numpy` anywhere else (float64;
-     bound workers by RAM). Not `torch` on a Mac: MPS is slower than NumPy.
-   - Cost, measured (fp32): 4-atom 430–600 s on the RTX 3080 Ti when the CPU is free (732 s on the
-     laptop's 4050), 8-atom 1100–1900 s, 2-atom bcc 330–540 s. An 8-atom cell holds ~11.6 GB of
-     the 3080 Ti's 12 GB (allocator cache included).
-   - Caches are per machine and not in git: all 66 copper labels are in the downstairs PC's
-     `.cache/materials/dft/`. The fit and MD snapshots should run there.
-   - Cross-check done: 6 float64 recomputations (one per tag), worst −0.62 meV/atom (the most
-     compressed fcc-volume cell: single precision at high compression, since the fixed code reproduces
-     it to 0.005 meV/atom; the rest ≤0.17) and
-     2.9e-5 Ha/bohr, none over budget (`results/cu_crosscheck.json`).
-   - Seed fit done (`results/cu_eam_seed.json`: a₀ 3.554 Å vs DFT 3.548, B 169 vs 168 GPa); 18 MD
-     snapshots at 870/1450/2040 K in `results/cu_md_snapshots.json`, being labelled. Final
-     potential `results/cu_eam_final.*` (see the log).
+1. ~~Label copper's crystal set~~ **done** (downstairs, 2026-09-26/27): 89 labels, cross-checked, final
+   potential and experiments (see In flight). `label_crystal.py Z a0 torch 1` is the command for any
+   element; labels are shared through `scripts/share_cache.py` (`results/machines/`), not only per machine.
 2. **Iron, then nickel and cobalt**, on the spin-polarised DFT. Iron is unblocked (D1 applied). Its
    grid is **h = 0.20, xc_grid = 2** (`scripts/fe_grid.py`, Linux: within 1.1 meV/atom of h = 0.16
    on volume energy, FM − NM and egg-box, 1e-4 μB on the moment; xc_grid moves it only 0.4 meV;
@@ -189,7 +171,8 @@ lower state? Hybrid mixing from the same 3 μB push gives the same states, see t
    reproduces them: `results/fe_magnetism*_hybrid.json`; see the
    Linux work queue). Nickel and cobalt then need their own E(V) check
    (`scripts/pp_check.py eos`) and grid. Spin now runs on the GPU too (`PeriodicDFTTorch(spin=True)`,
-   checked against NumPy on magnetic iron); the labeller does not pass `spin` yet.
+   checked against NumPy on magnetic iron); the labeller passes it for any `dataset.GRID` entry with a
+   "moment" (iron's 86 labels are spin-polarised PBE).
 3. **GPU molecular dynamics at scale — started (Windows, 2026-09-26).** `md.make_md(engine="torch")`
    runs the experiments on `md_torch.MDTorch` (tested equal to `md.py`); `scripts/melting_large.py`
    gives aluminium's melting point by coexistence at **898.4 K in a 96 000-atom box** (bracket
