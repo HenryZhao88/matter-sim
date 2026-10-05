@@ -154,8 +154,11 @@ pass marks committed before any result (aluminium's tolerances).
     ~5e-6 while the energy converges). Profile before relying on it.
 - ~~D2~~ done 2026-09-26 (pseudopotential cache v6; see DECISIONS.md).
 - **Orders of 2026-10-04, in this order** (one heavy job at a time): (1) the slow test suite on the merged
-  tree; (2) nickel's solid E(V) on v6 (`scripts/pp_check.py eos 28`, from Linux); (3) the aluminium
-  labels' cache names (89 are not their current `cache_key`); (4) profile PBE molecules.
+  tree; (2) nickel's solid E(V) on v6 (`scripts/pp_check.py eos 28`, from Linux); (3) ~~the aluminium
+  labels' cache names~~ **left as they are, on purpose**: renamed, all 71 crystal configurations are found by
+  `label()` (0 now), but the other machines already imported the old names, so a re-export would give
+  them duplicates that `al_fit.py` (which reads every file) counts twice. Aluminium labelling is done
+  and the fit ignores names; only a rerun of `al_label.py` would recompute. (4) profile PBE molecules.
 
 **Linux cloud container:** paused (see Coordination). Its nickel E(V) check moved to the Mac; Co/Ni
 magnetism scans and the fcc-FM metastability question wait.
