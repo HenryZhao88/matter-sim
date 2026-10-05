@@ -246,6 +246,17 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-10-04, Mac (Claude).** **Every machine's cache is shared through git** (`scripts/share_cache.py`;
+  `results/machines/<machine>/`, merged from the four `share/*` branches). Import here: **added 264,
+  already present 198, conflicts 2**, both the same item computed on two machines, both rounding:
+  `fe_grid/h0.24_x2_v76.0_s1_d0.0.json` (LDA bcc Fe, Mac vs Linux) **0.0030 meV/atom**, 2e-6 μB;
+  copper label `0f5146c079ed2647` (Windows vs downstairs, both fp32) **0.017 meV/atom**, 1e-5 Ha/bohr.
+  Both versions kept. Import keeps the local copy, so the Mac holds downstairs' copper label (fixed
+  eigensolver). Found: the Mac's 89 aluminium labels are stored under names that are not their
+  current `cache_key` (28 are legacy names, 61 match neither; it was like this before sharing); the
+  aluminium scripts glob every label, so nothing breaks, but `dataset.label()` would not find them.
+  Export now skips macOS `._` files (Windows' copy of the Mac's cache had 28).
+
 - **2026-10-04 17:00, Downstairs PC (Claude).** **Iron refitted with a test split stratified by tag**
   (`seed_fit.py`, default "tag": ~1/7 of each tag, never its smallest or largest volume; "random" kept):
   test 176 → 5.8 meV/atom, worst over all 86 labels +520 → −32.8. Experiments rerun (`a272e81`): T_m
