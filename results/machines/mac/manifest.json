@@ -1,0 +1,13 @@
+{
+ "machine": "mac",
+ "host": "Henrys-MacBook-Pro-2.local",
+ "platform": "macOS-26.6.2-arm64-arm-64bit",
+ "exported": "2026-10-05T02:30:45+00:00",
+ "commit": "4d0c532",
+ "items": {
+  "materials/dft": 89,
+  "materials/eos": 20,
+  "fe_grid": 16,
+  "fe_magnetism": 45
+ }
+}
