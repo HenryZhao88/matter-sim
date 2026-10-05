@@ -1,0 +1,5 @@
+floor   30 eps*|H|: converged True in 9 it, 61 s; dE +0.0065 meV/atom, max|dF| 1.44e-04
+floor   10 eps*|H|: converged True in 9 it, 68 s; dE +0.0018 meV/atom, max|dF| 9.22e-05
+floor    3 eps*|H|: converged True in 9 it, 79 s; dE -0.0005 meV/atom, max|dF| 2.87e-05
+floor    1 eps*|H|: converged True in 8 it, 85 s; dE -0.0007 meV/atom, max|dF| 1.39e-06
+exit 0

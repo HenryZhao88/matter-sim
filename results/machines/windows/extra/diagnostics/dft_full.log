@@ -1,0 +1,14 @@
+93dad324731bbc73 (fcc-thermal, label kspacing 45.0, T_e 0.01): grid (30, 30, 30), 108 k, 12 bands
+  it  1  E = -8.38496643  dρ = 1.59e+00
+  it  2  E = -8.38674085  dρ = 1.24e+00
+  it  3  E = -8.38957169  dρ = 1.02e-01
+  it  4  E = -8.38957102  dρ = 4.78e-02
+  it  5  E = -8.38957096  dρ = 6.50e-03
+  it  6  E = -8.38957076  dρ = 5.06e-03
+  it  7  E = -8.38957042  dρ = 9.27e-04
+  it  8  E = -8.38957026  dρ = 2.04e-04
+  it  9  E = -8.38957027  dρ = 8.79e-05
+  torch fp32: F = -8.40437735 Ha, converged True in 9 it (energy tol 2.4e-06), 65 s, peak VRAM 369 MB
+  label f64 : F = -8.40437831 Ha
+  dE = +0.0065 meV/atom; max |dF| = 1.44e-04 Ha/bohr (max |F| 4.97e-03)
+exit 0

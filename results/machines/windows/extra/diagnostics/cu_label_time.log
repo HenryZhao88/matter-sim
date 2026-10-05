@@ -1,0 +1,8 @@
+  [mem] working set 27 MB, commit 371 MB
+  [mem] working set 1236 MB, commit 5584 MB
+  [mem] working set 1247 MB, commit 5629 MB
+  [mem] working set 1248 MB, commit 5598 MB
+  [mem] working set 1249 MB, commit 5599 MB
+  [mem] working set 1182 MB, commit 5601 MB
+  [mem] working set 1182 MB, commit 5601 MB
+fcc-volume: 4 atoms, cell [6.034 6.034 6.034], k (8, 8, 8), h 0.19 xc_grid 2: 15 SCF it, 732 s; E -241.485975 Ha; peak VRAM 2044 MB, peak working set 1320 MB, peak commit 5699 MB; key 0f5146c079ed2647
