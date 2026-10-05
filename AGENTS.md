@@ -246,6 +246,13 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-10-04 22:45, Downstairs PC (Claude).** `share_cache.py import` of all four machines' exports:
+  **added 225, already present 237, conflicts 2**, both tiny, and both versions kept in `results/machines/`.
+  (1) `fe_grid/h0.24_x2_v76.0_s1_d0.0.json`, Linux vs Mac (bcc FM iron, 2-atom): Mac − Linux
+  **−0.0030 meV/atom**, moment 2.1277546 vs 2.1277525 μB. (2) copper label `materials/dft/0f5146c079ed2647.pkl`
+  (fcc-volume, 4-atom, fp32), Windows laptop (RTX 4050, 15 SCF iterations) − downstairs (3080 Ti, 42):
+  **+0.017 meV/atom**, max |ΔF| 9.8e-6 Ha/bohr (the 2026-09-26 comparison, now in both caches). Locally
+  the first one read wins: Linux's grid point and downstairs' own label.
 - **2026-10-04, Mac (Claude).** **Every machine's cache is shared through git** (`scripts/share_cache.py`;
   `results/machines/<machine>/`, merged from the four `share/*` branches). Import here: **added 264,
   already present 198, conflicts 2**, both the same item computed on two machines, both rounding:
