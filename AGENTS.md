@@ -110,6 +110,8 @@ Take an item, say so in the log, and move it to the log when done. Items are ord
 each machine its work; the human relays the orders. **The Linux cloud container is not used for now**:
 its items have moved to other machines. If you finish your item, log it and wait for the next order
 rather than picking from another machine's list.
+**Two sessions on the Mac:** the coordinator (no heavy jobs) and a Mac worker that runs the Mac's queue.
+Only the worker starts tests or DFT on the Mac; two heavy jobs on its CPU slow both.
 
 **Downstairs PC** (nothing running; updated 2026-10-04):
 - **Iron's potential melts ~250 K high:** label hotter or larger liquid snapshots (e.g. `label_md.py` at
@@ -153,7 +155,7 @@ pass marks committed before any result (aluminium's tolerances).
     per XC call, and more SCF iterations near convergence, where the density change floors at
     ~5e-6 while the energy converges). Profile before relying on it.
 - ~~D2~~ done 2026-09-26 (pseudopotential cache v6; see DECISIONS.md).
-- **Orders of 2026-10-04, in this order** (one heavy job at a time): (1) the slow test suite on the merged
+- **Orders of 2026-10-04, for the Mac worker, in this order** (one heavy job at a time): (1) the slow test suite on the merged
   tree; (2) nickel's solid E(V) on v6 (`scripts/pp_check.py eos 28`, from Linux); (3) ~~the aluminium
   labels' cache names~~ **left as they are, on purpose**: renamed, all 71 crystal configurations are found by
   `label()` (0 now), but the other machines already imported the old names, so a re-export would give
