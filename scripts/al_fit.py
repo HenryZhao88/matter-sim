@@ -21,12 +21,13 @@ HA_EV = 27.211386245988; BOHR_A = 0.529177210903; GPA = 29421.02648438959
 C = Path(__file__).resolve().parents[1] / ".cache" / "materials"
 tag = sys.argv[1] if len(sys.argv) > 1 else "round1"
 w_force = float(sys.argv[2]) if len(sys.argv) > 2 else 3.0
-# only the labels computed with the converged, uniform k-mesh (dataset.K_SPACING = 45)
+# only aluminium (the cache holds every element once machines share it) and only the labels
+# computed with the converged, uniform k-mesh (dataset.K_SPACING = 45)
 from engine.materials.dataset import K_SPACING
 data = []
 for f in sorted(glob.glob(str(C / "dft/*.pkl"))):
     d = pickle.loads(open(f, "rb").read())
-    if d["converged"] and d.get("kspacing", K_SPACING) == K_SPACING:
+    if set(d["charges"]) == {13} and d["converged"] and d.get("kspacing", K_SPACING) == K_SPACING:
         data.append(d)
 print(len(data), "labels", flush=True)
 rng = np.random.default_rng(1)

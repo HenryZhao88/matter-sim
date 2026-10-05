@@ -28,6 +28,7 @@ def main(workers: int = 3) -> None:
     t = time.time()
     a0 = angstrom_to_bohr(A0_ANGSTROM)
     cached = [pickle.loads(open(f, "rb").read()) for f in glob.glob(str(CACHE / "dft/*.pkl"))]
+    cached = [d for d in cached if set(d["charges"]) == {13}]       # the cache holds every element
     crystal = [d for d in cached if d.get("tag") in ("fcc-volume", "fcc-strain", "fcc-thermal")]
     if len(crystal) < 12:
         raise SystemExit("label the crystal configurations first: they seed the snapshot dynamics")
