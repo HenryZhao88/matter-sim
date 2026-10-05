@@ -1,0 +1,27 @@
+  if np.isfinite(vals[i]) and np.isfinite(vals[i + 1]) and vals[i] * vals[i + 1] < 0:
+{"Z": 28, "pp": "default", "v": 60.0, "a_A": 3.2886, "E": -48.849225774453444, "converged": true, "seconds": 230}
+{"Z": 28, "pp": "default", "v": 68.0, "a_A": 3.4287, "E": -48.85893462301147, "converged": true, "seconds": 250}
+{"Z": 28, "pp": "default", "v": 76.0, "a_A": 3.5582, "E": -48.85881168287222, "converged": true, "seconds": 274}
+{"Z": 28, "pp": "default", "v": 84.0, "a_A": 3.6789, "E": -48.8537280116153, "converged": true, "seconds": 331}
+successive dE (mHa/atom): [-9.71, 0.12, 5.08]
+  if np.isfinite(vals[i]) and np.isfinite(vals[i + 1]) and vals[i] * vals[i + 1] < 0:
+{"Z": 27, "pp": "default", "v": 60.0, "a_A": 3.2886, "E": -38.20265327602917, "converged": true, "seconds": 194}
+{"Z": 27, "pp": "default", "v": 68.0, "a_A": 3.4287, "E": -38.210066810621875, "converged": true, "seconds": 202}
+{"Z": 27, "pp": "default", "v": 76.0, "a_A": 3.5582, "E": -38.2071155329731, "converged": true, "seconds": 210}
+{"Z": 27, "pp": "default", "v": 84.0, "a_A": 3.6789, "E": -38.198963099699235, "converged": true, "seconds": 206}
+successive dE (mHa/atom): [-7.41, 2.95, 8.15]
+{"Z": 24, "pp": "default", "v": 64.0, "a_A": 2.6669, "E": -14.172093125378407, "converged": true, "seconds": 37}
+{"Z": 24, "pp": "default", "v": 72.0, "a_A": 2.7737, "E": -14.184958619452889, "converged": true, "seconds": 36}
+{"Z": 24, "pp": "default", "v": 80.0, "a_A": 2.8728, "E": -14.186490430431125, "converged": true, "seconds": 32}
+{"Z": 24, "pp": "default", "v": 88.0, "a_A": 2.9655, "E": -14.181302698389391, "converged": true, "seconds": 36}
+successive dE (mHa/atom): [-12.87, -1.53, 5.19]
+{"Z": 23, "pp": "default", "v": 76.0, "a_A": 2.8241, "E": -8.964004007820304, "converged": true, "seconds": 25}
+{"Z": 23, "pp": "default", "v": 84.0, "a_A": 2.9199, "E": -8.973274946280121, "converged": true, "seconds": 25}
+{"Z": 23, "pp": "default", "v": 92.0, "a_A": 3.0098, "E": -8.975214416827402, "converged": true, "seconds": 29}
+{"Z": 23, "pp": "default", "v": 100.0, "a_A": 3.0946, "E": -8.972393592782979, "converged": true, "seconds": 74}
+successive dE (mHa/atom): [-9.27, -1.94, 2.82]
+{"Z": 25, "pp": "default", "v": 64.0, "a_A": 2.6669, "E": -20.759801214695823, "converged": true, "seconds": 33}
+{"Z": 25, "pp": "default", "v": 72.0, "a_A": 2.7737, "E": -20.763665938929584, "converged": true, "seconds": 38}
+{"Z": 25, "pp": "default", "v": 80.0, "a_A": 2.8728, "E": -20.758549593928233, "converged": true, "seconds": 38}
+{"Z": 25, "pp": "default", "v": 88.0, "a_A": 2.9655, "E": -20.748590560237865, "converged": true, "seconds": 47}
+successive dE (mHa/atom): [-3.86, 5.12, 9.96]
