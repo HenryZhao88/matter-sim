@@ -106,6 +106,11 @@ hard-won lessons; read it too.
 
 Take an item, say so in the log, and move it to the log when done. Items are ordered by value.
 
+**Coordination (from 2026-10-04, decided by the human):** the Mac session is the coordinator and assigns
+each machine its work; the human relays the orders. **The Linux cloud container is not used for now**:
+its items have moved to other machines. If you finish your item, log it and wait for the next order
+rather than picking from another machine's list.
+
 **Downstairs PC** (nothing running; updated 2026-10-04):
 - **Iron's potential melts ~250 K high:** label hotter or larger liquid snapshots (e.g. `label_md.py` at
   2500–3500 K with the final potential), refit (`seed_fit.py 26 5.4655 3.0 final bcc`, split "tag"),
@@ -148,11 +153,12 @@ pass marks committed before any result (aluminium's tolerances).
     per XC call, and more SCF iterations near convergence, where the density change floors at
     ~5e-6 while the energy converges). Profile before relying on it.
 - ~~D2~~ done 2026-09-26 (pseudopotential cache v6; see DECISIONS.md).
+- **Orders of 2026-10-04, in this order** (one heavy job at a time): (1) the slow test suite on the merged
+  tree; (2) nickel's solid E(V) on v6 (`scripts/pp_check.py eos 28`, from Linux); (3) the aluminium
+  labels' cache names (89 are not their current `cache_key`); (4) profile PBE molecules.
 
-**Linux cloud container** (short checks): both items done 2026-09-26 (see the log). Next candidates:
-Co and Ni magnetism with `fe_magnetism.py`-style scans (Ni fcc FM, Co fcc FM as a first step; hcp Co
-needs an orthorhombic hcp cell), or the fcc-FM metastability (does a different moment start find a
-lower state? Hybrid mixing from the same 3 μB push gives the same states, see the 2026-10-04 log).
+**Linux cloud container:** paused (see Coordination). Its nickel E(V) check moved to the Mac; Co/Ni
+magnetism scans and the fcc-FM metastability question wait.
 
 **Any machine:**
 - **GPU molecular dynamics at scale** (item 3), and **one-loop amplitudes** (item 4).
