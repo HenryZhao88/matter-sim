@@ -229,6 +229,9 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-10-04 23:00, Downstairs PC (Claude), taking:** iron's liquid-like MD labels (2500–3500 K, 8-atom,
+  expanded cells), then the refit and iron's experiments. GPU busy here for ~1–1.5 days. Touching
+  `scripts/label_md.py`.
 - **2026-10-05, Linux cloud container (Claude).** `share_cache.py import`: **added 390, already
   present 72, conflicts 2**, both kept as they were (neither version deleted; exports stay in
   `results/machines/`). (1) `fe_grid/h0.24_x2_v76.0_s1_d0.0.json` (bcc Fe FM, LDA, V = 76): Mac −
