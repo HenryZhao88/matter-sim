@@ -246,6 +246,13 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-10-05, Linux cloud container (Claude).** `share_cache.py import`: **added 390, already
+  present 72, conflicts 2**, both kept as they were (neither version deleted; exports stay in
+  `results/machines/`). (1) `fe_grid/h0.24_x2_v76.0_s1_d0.0.json` (bcc Fe FM, LDA, V = 76): Mac −
+  Linux = **−0.0030 meV/atom**, moment −2.1e-6 μB; Linux's kept here. (2) `materials/dft/
+  0f5146c079ed2647.pkl` (Cu fcc-volume, 4 atoms, fp32): Windows (RTX 4050, 15 SCF iterations) −
+  downstairs (3080 Ti, 42 iterations) = **+0.0169 meV/atom**, max |ΔF| 9.8e-6 Ha/bohr; downstairs'
+  kept here. Both are rounding-level differences between machines.
 - **2026-10-05, Windows (Claude).** Imported every machine's export (`scripts/share_cache.py import`):
   added 393, already present 69, **conflicts 2**, both kept as they were, neither deleted.
   (1) `materials/dft/0f5146c079ed2647.pkl`, copper's compressed fcc-volume cell: Windows − downstairs
