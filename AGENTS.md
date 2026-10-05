@@ -246,6 +246,15 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-10-05, Windows (Claude).** Imported every machine's export (`scripts/share_cache.py import`):
+  added 393, already present 69, **conflicts 2**, both kept as they were, neither deleted.
+  (1) `materials/dft/0f5146c079ed2647.pkl`, copper's compressed fcc-volume cell: Windows − downstairs
+  = **+0.0169 meV/atom**, forces within 9.8e-6 Ha/bohr. Both fp32 (RTX 4050, 15 SCF iterations, before
+  `1cdae28`; RTX 3080 Ti, 42 iterations). The local copy here is Windows'. (2) `fe_grid/h0.24_x2_v76.0_s1_d0.0.json`,
+  Mac against Linux (this machine had none of its own): Linux − Mac = **+0.0030 meV/atom** (E per
+  atom), moment 2.12775 μB on both (differing by 2.1e-6). The local copy came from Linux, imported
+  first. Both are at single-precision or SCF-tolerance level, so neither is a disagreement about
+  physics.
 - **2026-10-04 22:45, Downstairs PC (Claude).** `share_cache.py import` of all four machines' exports:
   **added 225, already present 237, conflicts 2**, both tiny, and both versions kept in `results/machines/`.
   (1) `fe_grid/h0.24_x2_v76.0_s1_d0.0.json`, Linux vs Mac (bcc FM iron, 2-atom): Mac − Linux
