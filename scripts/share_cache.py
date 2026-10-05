@@ -76,7 +76,7 @@ def export(machine: str) -> None:
         out = dest / (rel.replace("/", "__") + ".json")
         items = json.loads(out.read_text())["items"] if out.exists() else {}
         for f in sorted(d.iterdir()):
-            if f.suffix in (".pkl", ".json"):
+            if f.suffix in (".pkl", ".json") and not f.name.startswith("."):   # skip macOS ._ metadata
                 items[f.name] = _enc(_read(f))
         out.write_text(json.dumps({"cache_dir": rel, "items": dict(sorted(items.items()))}, indent=1) + "\n")
         counts[rel] = len(items)
