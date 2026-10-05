@@ -151,3 +151,76 @@ def delta_alpha(q2: float, model, alpha: float = ALPHA_0, which=None) -> dict:
             continue
         out[f.name] = vacuum_polarisation(q2, f.mass, f.charge, f.colours, alpha).real
     return out
+
+
+# ------------------------------------------------------------------ W and Z self-energies: Δρ and the W mass
+def _x_points(n: int = 96):
+    t, w = np.polynomial.legendre.leggauss(n)
+    return 0.5 * (t + 1), 0.5 * w
+
+
+def vector_self_energy_0(model, vector: str, mu: float, n: int = 96) -> tuple[float, float]:
+    """Transverse self-energy Π_T(0) of a weak vector boson from every fermion loop, in
+    dimensional regularisation (d = 4 − 2ε, MS-bar scale ``mu``): returns (pole, finite) with
+    Π_T(0) = pole/ε̄ + finite. Couplings, CKM mixing, colours and masses are the model's own.
+
+    With L ⊃ V_μ ψ̄_i γ^μ (L_ij P_L + R_ij P_R) ψ_j, the loop with vertices (ij) and (ji) is
+        iΠ^{μν} = −∫dx ∫ d^dl/(2π)^d tr[Γ^μ_ij (l̸ + m_j) Γ^ν_ji (l̸ + m_i)] / (l² − Δ)²,
+    Δ = x m_i² + (1−x) m_j². The only d-dependent Dirac algebra is the contraction left by
+    l^α l^β → l² g^{αβ}/d: γ^α γ^ν (L P_L + R P_R) γ_α = −(d−2) γ^ν (L P_R + R P_L), taken
+    analytically (anticommuting γ5); the remaining 4×4 traces are numbers. With the standard
+    integrals, −((d−2)/d) ∫ l²/(l²−Δ)² and ∫ 1/(l²−Δ)² combine into
+        Π^{μν} = −(1/16π²) Σ ∫dx [1/ε̄ − ln(Δ/μ²)] (m_i m_j tr[Γ^μ Γ^ν] − Δ tr[Γ^μ γ^ν Γ̃^ν]),
+    Γ̃ the projector-swapped vertex. Π_T is the g^{μν} part, read from the (1,1) component."""
+    v = model.vector(vector).index
+    L, R = model.ffv_L[v], model.ffv_R[v]
+    masses = model.masses_fstate
+    PL, PR = np.diag([1, 1, 0, 0]).astype(complex), np.diag([0, 0, 1, 1]).astype(complex)
+    g1 = GAMMA[1]
+    x, w = _x_points(n)
+    pole = finite = 0.0
+    idx = np.argwhere((np.abs(L) > 1e-14) | (np.abs(R) > 1e-14))
+    for i, j in idx:
+        if abs(L[j, i]) < 1e-14 and abs(R[j, i]) < 1e-14:
+            continue
+        Gmu = g1 @ (L[i, j] * PL + R[i, j] * PR)
+        Gnu = g1 @ (L[j, i] * PL + R[j, i] * PR)
+        Gnu_swap = g1 @ (L[j, i] * PR + R[j, i] * PL)
+        mi, mj = masses[i], masses[j]
+        M = mi * mj * np.trace(Gmu @ Gnu)
+        Q = np.trace(Gmu @ Gnu_swap)
+        D = x * mi * mi + (1 - x) * mj * mj
+        core = M - D * Q                                    # (1,1) component, per x
+        logs = np.where(D > 0, np.log(np.where(D > 0, D, 1.0) / (mu * mu)), 0.0)
+        pole += -np.sum(w * core).real / (16 * math.pi ** 2)
+        finite += np.sum(w * core * logs).real / (16 * math.pi ** 2)
+    # Π_T = Π^{11} / g^{11} = −Π^{11}
+    return -pole, -finite
+
+
+def delta_rho(model, mu: float | None = None) -> dict:
+    """Δρ = Π_T^W(0)/M_W² − Π_T^Z(0)/M_Z² from fermion loops: how much the W and Z masses' ratio
+    departs from its tree-level value. Each self-energy has a 1/ε pole; in Δρ the poles cancel
+    (a complete SU(2) doublet), which the result reports, and with it the dependence on μ."""
+    mu = mu or model.vector("Z").mass
+    MW, MZ = model.vector("W1").mass, model.vector("Z").mass
+    pw, fw = vector_self_energy_0(model, "W1", mu)
+    pz, fz = vector_self_energy_0(model, "Z", mu)
+    return {"delta_rho": fw / MW ** 2 - fz / MZ ** 2, "pole": pw / MW ** 2 - pz / MZ ** 2,
+            "pole_W": pw / MW ** 2, "mu": mu}
+
+
+def w_mass_one_loop(model) -> dict:
+    """The W mass with Δρ: from s²c² = πα/(√2 G_F M_Z²) (1 + Δr) with Δr = −(c²/s²) Δρ, the part of
+    the one-loop correction that grows with the top mass (α is already α(m_Z) in the model, so the
+    running of α is not counted again). The rest of Δr (vertex, box and bosonic loops) is not here."""
+    from .model import ALPHA_MZ, G_FERMI, M_Z_INPUT
+    MZ = M_Z_INPUT
+    A = math.pi * ALPHA_MZ / (math.sqrt(2) * G_FERMI)
+    dr = delta_rho(model)["delta_rho"]
+    MW = model.vector("W1").mass
+    for _ in range(50):                                    # Δr depends on c² = M_W²/M_Z² itself
+        c2 = MW * MW / (MZ * MZ)
+        Dr = -c2 / (1 - c2) * dr
+        MW = math.sqrt(0.5 * MZ * MZ * (1 + math.sqrt(1 - 4 * A * (1 + Dr) / (MZ * MZ))))
+    return {"M_W": MW, "M_W_tree": model.vector("W1").mass, "delta_rho": dr, "delta_r": Dr}

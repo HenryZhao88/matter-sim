@@ -135,3 +135,19 @@ def test_one_loop_vacuum_polarisation_screens_and_runs():
     assert abs((b - a) / math.log(100) / (ALPHA_0 * (4 / 9) * 3 / (3 * math.pi)) - 1) < 1e-4
     lep = sum(delta_alpha(91.1876 ** 2, model(), which=("e", "mu", "tau")).values())
     assert 0.030 < lep < 0.033                                  # positive: α grows toward m_Z
+
+
+def test_rho_parameter_from_the_top_bottom_doublet():
+    """W and Z self-energies from every fermion loop in dimensional regularisation: each has a 1/ε
+    pole, Δρ = Π_W/M_W² − Π_Z/M_Z² has none and does not depend on the scale μ; it is positive and
+    dominated by the top (the heavy-top limit 3 G_F m_t²/8√2π² is a check of the machinery)."""
+    from engine.particles.loops import delta_rho, vector_self_energy_0, w_mass_one_loop
+    from engine.particles.model import G_FERMI
+    m = model()
+    a, b = delta_rho(m, 10.0), delta_rho(m, 500.0)
+    assert abs(vector_self_energy_0(m, "W1", 91.0)[0]) > 1e-3          # each self-energy diverges
+    assert abs(a["pole"]) < 1e-12 and abs(a["delta_rho"] - b["delta_rho"]) < 1e-12
+    mt = m.fermion("t").mass
+    assert abs(a["delta_rho"] / (3 * G_FERMI * mt ** 2 / (8 * math.sqrt(2) * math.pi ** 2)) - 1) < 0.02
+    w = w_mass_one_loop(m)
+    assert w["M_W"] > w["M_W_tree"]                                       # the top raises the W mass

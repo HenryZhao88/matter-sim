@@ -306,6 +306,11 @@ def particles_section(quick: bool) -> None:
     inv_all = (1 - sum(da.values())) / ALPHA_0
     record("particles", "…adding quark loops at Lagrangian masses", inv_all, 127.951, "",
            "perturbative quarks below ~2 GeV: not trustworthy")
+    from engine.particles.loops import w_mass_one_loop
+    wl = w_mass_one_loop(m)
+    record("particles", "W mass with fermion loops (Δρ)", wl["M_W"], 80.37, "GeV",
+           f"Δρ = {wl['delta_rho']:.5f} (top-dominated); vertex, box, bosonic loops not included",
+           abs(wl["M_W"] - 80.37) / 80.37 < 0.01)
 
     from engine.particles.hadron import CACHE as HCACHE, HadronCollider
     probe = HadronCollider.__new__(HadronCollider)
