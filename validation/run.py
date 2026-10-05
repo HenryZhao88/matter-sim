@@ -166,6 +166,15 @@ def materials_section() -> None:
                abs(mb["T_melt"] - ref["T_melt"]) < 150)
     record("materials", "Latent heat of fusion", d.latent_eV * 1000, ref["latent_eV"] * 1000, "meV/atom",
            "", abs(d.latent_eV - ref["latent_eV"]) < 0.04)
+    lat_scale = Path(__file__).resolve().parents[1] / "results" / "al_latent_scale.json"
+    if lat_scale.exists():
+        ls = json.loads(lat_scale.read_text())
+        big = max(ls["rows"], key=lambda r: r["atoms"])
+        if big.get("latent_eV") is not None:
+            record("materials", f"…in a {big['atoms']:,}-atom box at {ls['T']:.0f} K (GPU MD)", big["latent_eV"] * 1000,
+                   ref["latent_eV"] * 1000, "meV/atom",
+                   ", ".join(f"{r['atoms']:,}: {r['latent_eV'] * 1000:.1f}" for r in ls["rows"]),
+                   abs(big["latent_eV"] - ref["latent_eV"]) < 0.04)
     record("materials", "Density at 293 K", b.density() / 1000, ref["density"] / 1000, "g/cm³",
            "from the lattice constant and the nuclear mass", abs(b.density() - ref["density"]) < 150)
     record("materials", "Linear thermal expansion", b.linear_expansion_per_K() * 1e6, ref["alpha_per_K"] * 1e6,

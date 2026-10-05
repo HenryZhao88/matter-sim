@@ -240,6 +240,14 @@ anything that is no longer true rather than appending a correction.
 
 ## Log
 
+- **2026-10-05, Windows (Claude).** Item 4: the electroweak ρ parameter from W and Z self-energies
+  (all fermion loops, dimensional regularisation; the pole cancels exactly, μ-independent to 1e-16):
+  Δρ = 0.00927, and the W mass goes from 79.83 GeV (tree) to **80.384** with it (measured 80.369;
+  vertex, box and bosonic loops not included). Item 3: aluminium's latent heat against box size at
+  the 96 000-atom melting point (898 K): **71.4, 66.2, 65.1 meV/atom at 256, 4 000, 32 000 atoms**
+  (`results/al_latent_scale.json`), measured 111. So the latent heat's miss is not a small-box
+  effect; it is the potential (or LDA). The 108 000-atom box was stopped by the low-memory guard
+  (resume: `scripts/latent_large.py 4 10 20 30`).
 - **2026-10-04 23:00, Downstairs PC (Claude), taking:** iron's liquid-like MD labels (2500–3500 K, 8-atom,
   expanded cells), then the refit and iron's experiments. GPU busy here for ~1–1.5 days. Touching
   `scripts/label_md.py`.

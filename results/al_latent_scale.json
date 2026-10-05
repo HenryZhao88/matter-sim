@@ -1,0 +1,35 @@
+{
+ "T": 898.4375,
+ "a_T_A": 4.047505580418863,
+ "engine": "torch",
+ "rows": [
+  {
+   "n": 4,
+   "atoms": 256,
+   "T": 898.4375,
+   "latent_eV": 0.07141162581883656,
+   "dV_melt_frac": 0.03104894544212744,
+   "seconds": 61.67038559913635,
+   "engine": "torch"
+  },
+  {
+   "n": 10,
+   "atoms": 4000,
+   "T": 898.4375,
+   "latent_eV": 0.06619664205374523,
+   "dV_melt_frac": 0.03070027842829748,
+   "seconds": 110.384206533432,
+   "engine": "torch"
+  },
+  {
+   "n": 20,
+   "atoms": 32000,
+   "T": 898.4375,
+   "latent_eV": 0.06507953365781234,
+   "dV_melt_frac": 0.03069168991939275,
+   "seconds": 380.2991590499878,
+   "engine": "torch"
+  }
+ ],
+ "method": "experiments.latent_heat at the 96 000-atom coexistence melting point, boxes of n^3 fcc cells"
+}
