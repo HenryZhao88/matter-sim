@@ -1,0 +1,88 @@
+{
+ "cache_dir": "materials/dft_superseded",
+ "items": {
+  "24efb2179ac725d1.pkl": {
+   "cell": {
+    "__ndarray__": [
+     10.788600514770707,
+     5.394300257385353,
+     5.394300257385353
+    ],
+    "dtype": "float64"
+   },
+   "charges": [
+    26,
+    26,
+    26,
+    26
+   ],
+   "positions": {
+    "__ndarray__": [
+     [
+      0.04087309080971066,
+      0.06618241504609487,
+      5.2817097740120325
+     ],
+     [
+      2.634232907160034,
+      2.6556521894530754,
+      2.585920871182232
+     ],
+     [
+      5.5596860344345975,
+      5.347147160993931,
+      0.031279695634971676
+     ],
+     [
+      8.066864315518094,
+      2.8477128106534284,
+      2.8226951216209892
+     ]
+    ],
+    "dtype": "float64"
+   },
+   "energy": -115.48413352749532,
+   "forces": {
+    "__ndarray__": [
+     [
+      -0.0024671276143239363,
+      -0.00153238230509929,
+      0.009243461472028522
+     ],
+     [
+      0.01352876576254481,
+      0.004744645551711665,
+      0.00488878276096437
+     ],
+     [
+      -0.02044786721341948,
+      0.009563833967348612,
+      -0.0003362221384804931
+     ],
+     [
+      0.009378049177180593,
+      -0.01277971486990274,
+      -0.013795479655987831
+     ]
+    ],
+    "dtype": "float64"
+   },
+   "converged": true,
+   "tag": "bcc-thermal",
+   "kspacing": 45.0,
+   "T_e": 0.01,
+   "h": 0.2,
+   "xc_grid": 2,
+   "functional": "pbe",
+   "moment": 3.0,
+   "solver": "torch",
+   "precision": "complex64 eigensolver (complex64 Rayleigh\u2013Ritz grams), float64 energy and force sums",
+   "device": "cuda (NVIDIA GeForce RTX 3080 Ti)",
+   "mixing": "magnetisation damped (beta_m 0.1) after the plain SCF did not converge",
+   "scf_iterations": 58,
+   "pseudo_version": 6,
+   "moment_per_atom": 2.180794826477769,
+   "abs_moment_per_atom": 2.2869219912779974
+  }
+ }
+}
