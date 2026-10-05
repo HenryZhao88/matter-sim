@@ -1,0 +1,22 @@
+  [mem] working set 27 MB, commit 372 MB (peaks 27 / 372)
+fcc-8: grid (54, 30, 30), 54 k, 18 bands
+  [mem] working set 1202 MB, commit 3485 MB (peaks 1202 / 3486)
+  it  1  E = -13.72719634  dρ = 1.27e+01
+  it  2  E = -14.62239845  dρ = 1.02e+01
+  it  3  E = -16.55754973  dρ = 2.46e+00
+  [mem] working set 1224 MB, commit 3580 MB (peaks 1226 / 3582)
+  it  4  E = -16.51111349  dρ = 2.05e+00
+  it  5  E = -16.59831298  dρ = 4.32e-01
+  it  6  E = -16.59968480  dρ = 2.34e-01
+  [mem] working set 1225 MB, commit 3582 MB (peaks 1230 / 3586)
+  it  7  E = -16.59972369  dρ = 5.01e-02
+  it  8  E = -16.59974046  dρ = 1.72e-02
+  it  9  E = -16.59974268  dρ = 5.92e-03
+  it 10  E = -16.59974261  dρ = 2.53e-03
+  it 11  E = -16.59974246  dρ = 9.63e-04
+  it 12  E = -16.59974238  dρ = 6.81e-04
+  it 13  E = -16.59974233  dρ = 2.28e-04
+  it 14  E = -16.59974234  dρ = 8.77e-05
+fp32: F = -16.63027006 Ha, converged True in 14 it, 112 s; peak host working set 1233 MB, peak commit 3607 MB, peak VRAM 610 MB
+vs Mac float64: dE = +0.0100 meV/atom; max|dF| = 2.91e-04 Ha/bohr (max |F| 1.36e-01)
+exit 0

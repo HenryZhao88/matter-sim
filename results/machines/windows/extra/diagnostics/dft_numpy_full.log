@@ -1,0 +1,12 @@
+  it  1  E = -8.38496842  dρ = 1.59e+00
+  it  2  E = -8.38677654  dρ = 1.24e+00
+  it  3  E = -8.38957254  dρ = 1.01e-01
+  it  4  E = -8.38957100  dρ = 3.01e-02
+  it  5  E = -8.38957202  dρ = 5.07e-03
+  it  6  E = -8.38957172  dρ = 5.42e-04
+  it  7  E = -8.38957174  dρ = 4.04e-04
+  it  8  E = -8.38957171  dρ = 6.09e-05
+  numpy f64 here: F = -8.40437831 Ha, converged True in 8 it, 1121 s
+  vs Mac label: dE = +0.0000 meV/atom, max|dF| 6.56e-12
+  vs torch fp32 here: max|dF| 1.44e-04 Ha/bohr
+exit 0
